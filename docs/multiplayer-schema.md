@@ -98,6 +98,13 @@ Therefore v1 stores widgets as a Y.Map keyed by **widget name**:
   pins the object_info catalog version its projections are computed against.
   `fixtures/catalog.json` is the spike's export of exactly this data (10
   types: `widget_order` + `autogrow_templates`).
+- Second consequence, pinned (V1-031 correction): **`add_node` needs the
+  pinned catalog at apply time** whenever its `op.node` payload carries a
+  non-empty positional `widgets_values` array — decomposing that array into
+  the name-keyed map requires `widget_order`. The vocabulary doc's "no
+  catalog is needed to apply an `add_node`" (§8.5 there) is true of Python's
+  positional storage, not of this layout; the payload stays authoritative
+  either way (values are never re-derived from the catalog, only re-keyed).
 
 Note the residual conflict semantics: a name-keyed Y.Map fixes the
 *structural* corruption, but Y.Map's native conflict pick is client-based,
@@ -258,7 +265,13 @@ Pins the code does not state (spike report, "what the freeze doc must pin"):
    still consumes its `op_id`. Malformed/unknown ops are rejected loudly,
    never silently (vocabulary §3).
 
-Stamped write targets (`__stamps` keys) are the spike applier's, normative:
+Write-target keys are the spike applier's, normative. Clarification (V1-031):
+in v1 only the `set_widget` rows — including the connect-embedded
+`inputcount` bump (§8.3), which shares the connect's stamp — are actually
+**gated and committed** through `__stamps`; that mirrors the Python applier,
+where `_lww_gate`/`_lww_commit` run only on widget writes. The `connect`/
+`add_node`/`delete_node` rows define conflict *identity* (for
+`detect_conflict`-style consumers) and reserve the key shapes:
 
 | Op | Target key |
 |---|---|
@@ -334,6 +347,17 @@ Y.Map "definitions"
 An interior `set_widget` is then exactly one widgets-map `set` + one
 `__stamps` set — bounded, and independently mergeable across different
 interior nodes.
+
+Interior ORDER, pinned (V1-031 correction): a definition's interior
+node/link arrays are **not** sorted at projection — the §7 sorted-by-id rule
+applies to the top-level arrays only. Python's `canonical` sorts
+`definitions.subgraphs` by id but leaves each definition's interior arrays
+in authored order, and the fixtures pin that (`session-subgraph`'s def lists
+node 27 before node 3). Since only `set_widget` is subgraph-scoped, interior
+membership and order are static after mint; the def Y.Map therefore stores
+plain `node_order`/`link_order` registers (written once at mint) and
+projection emits interior arrays in that order. Definitions themselves
+project sorted by definition id.
 
 ### 5.2 Addressing: three forms, one write target
 
@@ -455,6 +479,12 @@ node's `inputcount` widget, sharing the connect op's `op_id` and stamp, with
 the normal widget write target `("widget", to_node, "inputcount")`. One
 `__applied` entry, two `__stamps`-relevant effects. Idempotency holds because
 both halves key off the same op identity.
+
+Deviation from Python, pinned (V1-031): comfy-cli skips the count write when
+it has no catalog (`graph is None` — it cannot resolve name→index without
+one). This layout's widget writes are name-keyed and need no index, so the
+count write is unconditional here. Catalog-carrying hosts — the only
+conforming deployment — behave identically under both implementations.
 
 ---
 

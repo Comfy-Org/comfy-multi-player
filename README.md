@@ -12,20 +12,32 @@ the same JSON.
 
 ## What lives here
 
-- `applyOps(doc, ops, origin)` — apply a batch of stamped ops (idempotent per
-  `op_id`, convergent under reordering via the `[base_version, actor]` stamp).
-- `project(doc)` — deterministic projection of the doc to ComfyUI workflow JSON.
-- `mint(workflow)` — import an existing workflow JSON into a fresh doc
-  (lazy-mint at cutover).
-- `migrate(doc, fromVersion)` + `SCHEMA_VERSION` — doc-layout versioning.
-- Doc layout helpers (`initDoc`, `nodesMap`, `linksMap`, `metaMap`,
-  `createNodeMap`) for the v1 schema: `Y.Map 'nodes'` (per-node `Y.Map` with
-  `type`/`pos`/`flags`/`widgets_values` `Y.Array`), `Y.Map 'links'`,
-  `Y.Map 'meta'` (schema_version, id counters, `extra` passthrough).
+- `applyOps(doc, ops, catalog?)` — apply stamped ops: idempotent per `op_id`
+  (`__applied`, checked before any mutation), LWW-gated via `__stamps` with
+  the exact `[base_version, actor, op_id]` code-point order, delete-wins,
+  abort-remainder batches (`ApplyResult.failed = {index, op, code, message}`
+  with the applied prefix retained).
+- `project(doc, catalog)` — canonical projection to ComfyUI workflow JSON
+  (schema §7): nodes/links sorted by id, the name-keyed `widgets` map
+  assembled into positional `widgets_values` via the pinned catalog,
+  `links: null` preserved, passthrough keys verbatim.
+- `mint(workflow, catalog)` — import an existing workflow JSON into a fresh
+  doc (lazy-mint at cutover); the mint output is THE bootstrap snapshot every
+  replica forks from (schema §9).
+- `migrate(doc, fromVersion)` + `SCHEMA_VERSION` — doc-layout versioning;
+  validate + no-op at v1, fail-closed on newer docs (schema §10).
+- Stamp machinery (`compareStampKeys`, `stampKey`, `writeTarget`) and doc
+  layout helpers (`initDoc`, `nodesMap`, `linksMap`, `definitionsMap`,
+  `metaMap`, `createNodeMap`) for the v1 schema: `Y.Map 'nodes'` (per-node
+  `Y.Map` with a NAME-KEYED `widgets` `Y.Map` — schema §1.2), `Y.Map 'links'`,
+  first-class `Y.Map 'definitions'`, `Y.Map 'meta'` (schema_version,
+  catalog_version, id high-water marks, `groups`/`extra` passthrough).
 
-**Status: scaffold (V1-030).** `applyOps`/`project`/`mint`/`migrate` are typed
-stubs that throw `NotImplementedError`; the first-draft applier and recorded
-replay fixtures land in a separate spike.
+**Status: real (V1-031).** The applier/projection/mint/migrate are the
+production implementation, ported from the spike-proven semantics
+(`reference/spike/applier.mjs`) onto the schema's name-keyed widget layout.
+`reset_doc` stays rejected (`op_deferred`) per the vocabulary's deferred
+status. The full replay corpus is green — see acceptance gates below.
 
 ## The op vocabulary is frozen
 
@@ -60,18 +72,27 @@ by `npm run check:purity` (CI-gated), which:
 
 ## Acceptance gates (V1)
 
-1. **Purity** — `check:purity` green in CI (dependency tree + bare-Node import).
+1. **Purity** — `check:purity` green in CI (dependency tree + bare-Node
+   import). **Status: green.**
 2. **Fixtures green** — recorded op sessions in `fixtures/*.session.jsonl`
    replay through `applyOps` and `project` deep-equals the recorded final
    workflow (`test/replay.test.ts`; format in `fixtures/README.md`).
+   **Status: green (un-gated with V1-031)** — plus the permanent suites:
+   idempotency (byte-identical re-apply), two-doc convergence under
+   reordering, LWW parity (all 6 vectors, both orders), mint→project
+   round-trip, and the schema §11 bounded-writes guard.
 3. **Published SHA-pinnable artifact** — the package is consumable pinned to
    an exact commit/version by both the frontend and the server doc host.
+   **Status: git-SHA pinnable now** (`npm install github:Comfy-Org/comfy-multi-player#<sha>`
+   builds via `prepare`; `npm pack` produces the 0.1.0 tarball). Registry
+   publish is deliberately deferred — `private: true` stays until the scope /
+   registry-auth decision; consumers pin by git SHA in the interim.
 
 ## Develop
 
 ```bash
 npm install
 npm run build         # tsc → dist/
-npm test              # vitest: schema + purity pass; replay is todo until the applier lands
+npm test              # vitest: schema, purity, replay, lww, convergence, roundtrip, applier
 npm run check:purity  # dependency-tree + bare-Node import gate
 ```
