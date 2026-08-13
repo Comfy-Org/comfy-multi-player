@@ -59,11 +59,21 @@ export function stampKey(op: Op): StampKey {
 }
 
 /**
- * The conflict/write target of an op — comfy-cli `_write_target` verbatim
- * (schema §3 table). In v1 only `set_widget`-family writes (including the
- * connect-embedded inputcount bump, §8.4) are actually GATED and COMMITTED
- * through `__stamps`; the other kinds' targets define conflict identity for
+ * The conflict/write target of an op — comfy-cli `_write_target` (schema §3
+ * table). Gated and committed through `__stamps`: the `set_widget` rows, the
+ * connect-embedded inputcount bump (§8.4), and — since op-vocabulary-v1.md
+ * amendment v1.2 — a concrete `connect`'s `("input", to_node, to_slot)`. The
+ * `add_node`/`delete_node` rows define conflict identity for
  * `detect_conflict`-style consumers and reserve the key shapes.
+ *
+ * NODE IDS ARE NORMALIZED WITH `String()` (amendment v1.2). `NodeId` is
+ * `string | number` by contract — historical workflows carry string ids and
+ * subgraph addresses are strings like `"57:3"` — while the doc resolves every
+ * node through `String(node_id)`. Building the target key from the raw value
+ * gave `7` and `"7"` two different registers for one node, so the LWW gate
+ * never compared them and the pair converged by arrival order (adversarial
+ * finding, PR #6725). Interior writes already normalized (`path.map(String)`);
+ * every case now matches them.
  */
 export function writeTarget(op: Op): unknown[] {
   switch (op.op) {
@@ -71,15 +81,15 @@ export function writeTarget(op: Op): unknown[] {
       if (op.path && op.path.length > 0) {
         return ["widget", op.path.map(String), op.inner_widget];
       }
-      return ["widget", op.node_id, op.widget];
+      return ["widget", String(op.node_id), op.widget];
     case "add_node":
     case "delete_node":
-      return ["node", op.node_id];
+      return ["node", String(op.node_id)];
     case "connect":
       if (op.grow != null) {
-        return ["input", op.to_node, "grow", String(op.grow.name).split(".", 1)[0]];
+        return ["input", String(op.to_node), "grow", String(op.grow.name).split(".", 1)[0]];
       }
-      return ["input", op.to_node, op.to_slot];
+      return ["input", String(op.to_node), op.to_slot];
     default:
       return [op.op];
   }

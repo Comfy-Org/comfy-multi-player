@@ -325,13 +325,8 @@ function resolveInteriorNode(doc: Y.Doc, path: string[]): Y.Map<unknown> | null 
 // connect
 // ---------------------------------------------------------------------------
 
-function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): void {
-  const nodes = nodesMap(doc);
-  const dst = nodes.get(String(op.to_node));
-  const src = nodes.get(String(op.from_node));
-  if (!dst || !src) return; // either endpoint concurrently deleted → no-op (delete wins)
-
-  // Validate the source output slot BEFORE any mutation.
+/** The source node's `outputs` array, with `from_slot` validated before any mutation. */
+function requireOutputSlot(src: Y.Map<unknown>, op: ConnectOp): Y.Array<unknown> {
   const outs = src.get("outputs");
   if (!(outs instanceof Y.Array) || typeof op.from_slot !== "number" || op.from_slot >= outs.length) {
     throw new OpRejectedError(
@@ -339,9 +334,24 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): void 
       `connect: output slot ${op.from_slot} not found on node ${String(op.from_node)}`,
     );
   }
+  return outs as Y.Array<unknown>;
+}
+
+function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): void {
+  const nodes = nodesMap(doc);
+  const dst = nodes.get(String(op.to_node));
+  // The destination is gone → the target slot does not exist and never will
+  // (ids are never reused), so there is no register to claim: delete wins.
+  if (!dst) return;
 
   let toIdx: number;
   if (op.grow != null) {
+    // Autogrow is NOT a shared register: every grow mints its own slot keyed by
+    // `grow_id`, so two concurrent grows onto one base both survive and there
+    // is nothing to gate (vocabulary §1.2 / amendment v1.2's carve-out).
+    const src = nodes.get(String(op.from_node));
+    if (!src) return; // source concurrently deleted → no-op (delete wins)
+    requireOutputSlot(src, op);
     toIdx = growInputSlot(doc, dst, op, catalog);
   } else {
     if (typeof op.to_slot !== "number") {
@@ -359,11 +369,38 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): void 
     if (!(slot instanceof Y.Map)) {
       throw new OpRejectedError("input_slot_missing", `connect: input slot ${toIdx} is not a slot record`);
     }
-    // A concrete input holds at most one link; replacing it fully retires the
-    // prior link (tuple + the old source's out-links).
+
+    // ---- The concrete-input LWW register (op-vocabulary-v1.md amendment v1.2)
+    //
+    // A concrete input holds at most one link, so "who occupies this slot" is a
+    // SCALAR target — `("input", to_node, to_slot)` — gated by exactly the
+    // `[base_version, actor, op_id]` comparison `set_widget` uses. Without this
+    // gate the occupant was decided by ARRIVAL ORDER, and composed with
+    // delete-wins that produced graphs where a link exists in one interleaving
+    // and not in another (schema §2.5 violated; found adversarially, cloud
+    // PR #6722 FINDING 1).
+    const stamps = stampsMap(doc);
+    const targetKey = stampTargetKey(op);
+    const prior = stamps.get(targetKey) as StampKey | undefined;
+    const key = stampKey(op);
+    if (prior != null && compareStampKeys(key, prior) <= 0) return; // lww-dropped
+
+    // Claiming the register is UNCONDITIONAL once the gate passes — the prior
+    // occupant is retired even if this op then turns out to be a delete-wins
+    // no-op below. Deferring the retirement until the link is known to be
+    // installable would reintroduce order dependence: whether the incumbent
+    // survives would depend on whether the concurrent delete of THIS op's
+    // source had arrived yet.
+    mset(stamps, targetKey, key);
     const prev = slot.get("link");
     if (prev != null && prev !== op.link_id) removeLink(doc, prev);
   }
+
+  const src = nodes.get(String(op.from_node));
+  // Source concurrently deleted → the winning connect leaves the input EMPTY
+  // (delete wins over the link, not over the register claim).
+  if (!src) return;
+  const outs = requireOutputSlot(src, op);
 
   const links = linksMap(doc);
   const linkKey = String(op.link_id);

@@ -239,7 +239,30 @@ build this; it only refrains from making it impossible.
 For any set of ops O and any two arrival orders o₁, o₂ at the host:
 `project(apply(mint(base), o₁))` byte-equals `project(apply(mint(base), o₂))`.
 This is the property the fixture suite pins (checks c1/c2 + the six LWW
-vectors, both orders).
+vectors, both orders), plus the permutation suites of
+`test/connect-lww.test.ts` and `test/stamp-target-identity.test.ts`.
+
+**Three carve-outs, stated rather than implied** (Amendment A1; each is
+pinned by a test that will start failing the day it is closed):
+
+1. `outputs[].links` is a set projected as an ordered array, appended in
+   arrival order. Two connects out of ONE source into two DIFFERENT inputs
+   project the same set in two sequences. The SET converges; the byte
+   comparison does not.
+2. An autogrow `connect` grows a structural slot rather than writing a
+   register, so racing a delete of its source leaves the grown slot present
+   in one order and absent in the other. Two concurrent autogrows also
+   assign their display names (`images.image1` / `images.image2`) by
+   arrival — vocabulary §3 already says that ordering is the one decision a
+   leaderless writer cannot make; comfy-cli's `canonical()` folds it out,
+   `project()` does not.
+3. Two `add_node` ops with the same `node_id` and different payloads resolve
+   first-writer-wins by arrival. Vocabulary §1.1 rules this out by
+   construction (`mint_id` draws 53-bit random ids), so it is a property of
+   hand-authored or replayed streams only.
+
+Everything else — including concrete-input contention, which used to be a
+fourth, unstated carve-out — converges.
 
 ---
 
@@ -265,21 +288,25 @@ Pins the code does not state (spike report, "what the freeze doc must pin"):
    still consumes its `op_id`. Malformed/unknown ops are rejected loudly,
    never silently (vocabulary §3).
 
-Write-target keys are the spike applier's, normative. Clarification (V1-031):
-in v1 only the `set_widget` rows — including the connect-embedded
-`inputcount` bump (§8.3), which shares the connect's stamp — are actually
-**gated and committed** through `__stamps`; that mirrors the Python applier,
-where `_lww_gate`/`_lww_commit` run only on widget writes. The `connect`/
-`add_node`/`delete_node` rows define conflict *identity* (for
-`detect_conflict`-style consumers) and reserve the key shapes:
+Write-target keys are the spike applier's, normative. **Gated and committed**
+through `__stamps` (Amendment A1): the `set_widget` rows, the connect-embedded
+`inputcount` bump (§8.3, which shares the connect's stamp), and a **concrete**
+`connect`. The autogrow `connect` row and the `add_node`/`delete_node` rows
+define conflict *identity* (for `detect_conflict`-style consumers) and reserve
+the key shapes without gating — gating autogrow would silently discard one of
+two concurrent, deliberately non-clobbering grows.
 
-| Op | Target key |
-|---|---|
-| `set_widget` (top-level) | `("widget", node_id, widget_name)` |
-| `set_widget` (interior) | `("widget", resolved_path, inner_widget)` — all three address forms normalize here (§5.2) |
-| `connect` (concrete slot) | `("input", to_node, to_slot)` |
-| `connect` (autogrow) | `("input", to_node, "grow", base_name)` |
-| `add_node` / `delete_node` | `("node", node_id)` |
+**Node ids in a target key are `String()`-normalized** (Amendment A1). `NodeId`
+is `string | number` by contract and `nodesMap` is keyed by `String(node_id)`,
+so a raw key gave `7` and `"7"` two registers for one node.
+
+| Op | Target key | Gated? |
+|---|---|---|
+| `set_widget` (top-level) | `("widget", String(node_id), widget_name)` | yes |
+| `set_widget` (interior) | `("widget", resolved_path, inner_widget)` — all three address forms normalize here (§5.2) | yes |
+| `connect` (concrete slot) | `("input", String(to_node), to_slot)` | **yes (A1)** |
+| `connect` (autogrow) | `("input", String(to_node), "grow", base_name)` | no — identity only |
+| `add_node` / `delete_node` | `("node", String(node_id))` | no — identity only |
 
 ---
 
@@ -544,3 +571,74 @@ Post-v1 changes append `## Amendment v1.x — <date>` sections here; silent
 edits to decided sections are not valid. The OPEN items eligible for
 amendment: shared-definition forking (§5.3), group ops (§6), multi-writer
 topology (§2.2), watermark implementation status (§4).
+
+---
+
+## Amendment A1 — 2026-08-12 — concrete-input contention; id-type identity
+
+Tracks comfy-cli `docs/op-vocabulary-v1.md` **amendment v1.2**, cited by SHA:
+`1201b676275ce7e9b5cdb90f135b6e115ba9df10` (branch
+`kishore/v1-032-connect-lww`). This document and that one must move together;
+read §11.1/§11.2 there for the normative rule, the rejected alternatives, and
+the batch caveat. No `SCHEMA_VERSION` bump: the Y.Doc LAYOUT is unchanged —
+only which targets `__stamps` gates, and how a target key spells a node id.
+
+**Found by adversarial testing, not by review.** The cloud-side suite
+(`services/agent/internal/dochost/adversarial_crdt_test.go`, PR #6722
+FINDING 1) drove every order-preserving interleaving of two writers' causal
+sequences through the REAL applier and caught §2.5 claiming a property the
+code did not have. PR #6725 caught the id-type half the same way.
+
+### What changed
+
+1. **A concrete `connect` is stamp-gated** on `("input", to_node, to_slot)`,
+   by the same `[base_version, actor, op_id]` comparison as `set_widget`
+   (§3). Previously the occupant of a concrete input was decided by ARRIVAL
+   ORDER, and composed with delete-wins that produced graphs where a link
+   exists in one interleaving and not in another:
+
+   ```
+   A: [add_node 400, connect 400 -> 200.positive]
+   B: [connect 300 -> 200.positive, delete_node 300]
+   ```
+
+   A-then-B left `positive` empty; B-then-A left link 9003.
+
+   * The **winning** connect retires the prior occupant whole (`removeLink`:
+     link tuple + the old source's out-link entry). The displaced link is
+     deleted, never orphaned, never re-parented.
+   * The **losing** connect is dropped whole — no link tuple, no slot write,
+     no out-link entry — and still consumes its `op_id`, exactly like a
+     losing `set_widget`.
+   * The register claim is **unconditional once the gate passes** and happens
+     BEFORE the source endpoint is resolved. A winning connect whose source
+     was concurrently deleted therefore leaves the input EMPTY: delete wins
+     over the new link, not over the register claim. Deferring the
+     retirement until the link is known installable would make the
+     incumbent's survival depend on when the delete arrived — the same class
+     of bug, one layer down.
+   * A stamp outlives the node it names; that is what makes the composed
+     case converge, since a later lower-stamped connect is still dropped.
+   * Autogrow stays UNGATED by explicit carve-out (§2.5 item 2).
+
+2. **Node ids in target keys are `String()`-normalized.** `writeTarget` built
+   its key from the raw id while the applier resolved nodes with
+   `String(node_id)`, so `7` and `"7"` addressed one node through two
+   registers and converged by arrival order. Interior writes already
+   normalized (`path.map(String)`) and were unaffected; every case now
+   matches them.
+
+   This changes the BYTES of a `__stamps` key. `__stamps` lives only inside a
+   live document, so this is not a data migration — but a document mid-flight
+   across the upgrade loses prior claims for numerically-keyed targets and
+   falls back to first-writer-wins on those targets until the next write.
+   Consumers pinning this package by SHA must move the package pin and the
+   vocabulary SHA together.
+
+### Consumer impact
+
+`services/agent/dochost` pins this package by commit SHA
+(`package.json` + `package-lock.json`); the agent image pins comfy-cli
+separately. Because the two implementations must agree on the same register,
+**both pins move in the same change** — the applier first (it is the
+document's authority), then the CLI.
