@@ -70,6 +70,38 @@ flowchart LR
   Host -- "append raw ops + snapshot" --> DB
 ```
 
+## V1 replication & durability contract
+
+- **Follower model.** Followers are host-authoritative Yjs replicas: the room host applies semantic
+  ops to its in-memory Yjs doc and fans out incremental Yjs deltas (`apply_update`) that followers
+  integrate. Followers send semantic ops upstream and never write the shared doc directly. The
+  applier is identical everywhere, so this split is a V1 convenience, not a permanent authority
+  model.
+- **Catch-up after missed deltas.** V1 reconnect is a single naive full seeded snapshot: on
+  reconnect a follower discards its delta position and re-forks from one host-provided snapshot
+  (`applyUpdate` of a common snapshot). Incremental gap-fill from the op log is a post-V1
+  refinement.
+- **Room reconstruction after host loss.** A room is rebuildable from durable storage: rehydrate the
+  in-memory Yjs doc from the persisted snapshot, then replay the raw op log after it. This is why
+  raw-op persistence is load-bearing rather than optional.
+- **Durability is the commit point.** Raw ops are persisted durably before any delta is fanned out;
+  no delta is delivered before its operation can be reconstructed from durable storage. On restart
+  the writer recovers and replays pending (persisted-but-unacknowledged) ops. A persistence failure
+  aborts the op (nothing fanned out); a delivery failure retries using the original `op_id` (never
+  re-minted).
+- **Ordering is independent of arrival order.** The canonical winner of two concurrent ops is
+  computed from the op stamp `[base_version, actor, op_id]`, which every replica evaluates
+  identically offline — never from receive order. `base_version` is a scalar version cursor the host
+  advances on apply, not a causal clock; `actor` and `op_id` are pure tie-breakers applied only
+  after it. The known limitation — a scalar cursor cannot faithfully represent causality across long
+  independent offline branches — is the deferred logical-clock item, out of V1 scope. Convergence
+  tests must deliver concurrent ops in both arrival orders and assert an identical winner.
+- **Invalid-op batch semantics: valid-prefix commit, abort remainder.** Ops in a batch apply in
+  stamp order. The first invalid op aborts the remainder: the applied valid prefix is committed and
+  persisted, `base_version` advances only for committed ops, and the unprocessed suffix (from the
+  invalid op onward) is returned to the caller for correction/retry. Fan-out reflects only committed
+  ops. Test with an invalid op at the first, middle, and last positions.
+
 ## Invariants (a low-context contributor must not break these silently)
 
 **KEEP-ALIVE — guard these (preserve decentralization / offline / P2P / multiplayer):**
