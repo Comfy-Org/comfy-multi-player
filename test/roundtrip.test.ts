@@ -4,10 +4,12 @@
  * projection invents nothing (no default fields, no coerced nulls, no
  * dropped passthrough keys) and loses nothing but array order.
  *
- * Also pins migrate() (schema §10): validate + no-op at v1, fail-closed on
- * anything newer or unknown.
+ * Also pins migrate() (schema §10): validate the doc's own schema_version on
+ * every read, then an EXACT no-op at v1 that materializes no root type;
+ * fail-closed on anything newer, unknown, contradictory, or unreadable.
  */
 import { describe, expect, it } from "vitest";
+import * as Y from "yjs";
 import {
   SCHEMA_VERSION,
   SchemaVersionError,
@@ -99,9 +101,62 @@ describe("mint→project round trip", () => {
 describe("migrate (schema §10)", () => {
   it("is an exact no-op at the current version", () => {
     const doc = mint(loadSession(sessionFiles()[0]!).header.base_workflow, catalog);
-    const before = JSON.stringify(project(doc, catalog));
+    const before = Y.encodeStateAsUpdate(doc);
+    const rootsBefore = [...doc.share.keys()];
     migrate(doc, SCHEMA_VERSION);
-    expect(JSON.stringify(project(doc, catalog))).toBe(before);
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+    expect([...doc.share.keys()]).toEqual(rootsBefore);
+  });
+
+  // #20: the current-version path used to "validate" by calling the
+  // nodes/links/definitions/meta helpers, and `Y.Doc#getMap` CREATES an absent
+  // root. That silently repaired an incomplete doc instead of leaving it alone.
+  it("materializes no root map on the current-version path", () => {
+    // Carries a readable schema and nothing else — the three other roots are
+    // absent, which is what the old implementation would have conjured.
+    const doc = new Y.Doc();
+    doc.getMap("meta").set("schema_version", SCHEMA_VERSION);
+    const before = Y.encodeStateAsUpdate(doc);
+
+    migrate(doc, SCHEMA_VERSION);
+
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+    expect([...doc.share.keys()]).toEqual(["meta"]);
+  });
+
+  // The realistic host path (schema §9/§10): a replica forks from a seeded
+  // snapshot, so its roots arrive as untyped Yjs `AbstractType`s and `meta` is
+  // typed for the first time by this very read. Typing an already-present root
+  // adds no struct and no share key, so validating still costs zero bytes.
+  it("validates a snapshot-seeded doc without materializing anything", () => {
+    const source = mint(loadSession(sessionFiles()[0]!).header.base_workflow, catalog);
+    const replica = new Y.Doc();
+    Y.applyUpdate(replica, Y.encodeStateAsUpdate(source));
+    const before = Y.encodeStateAsUpdate(replica);
+    const rootsBefore = [...replica.share.keys()];
+
+    migrate(replica, SCHEMA_VERSION);
+
+    expect(Y.encodeStateAsUpdate(replica)).toEqual(before);
+    expect([...replica.share.keys()]).toEqual(rootsBefore);
+    // And the fail-closed gate is live on this path too, not bypassed.
+    expect(() => migrate(replica, SCHEMA_VERSION + 1)).toThrow(SchemaVersionError);
+  });
+
+  // KA-11 fail-closed: a doc whose schema cannot be read is rejected, NOT
+  // assumed to be current. Reading the claim must not create `meta` either.
+  it("fails closed on a doc with no readable schema_version, materializing nothing", () => {
+    const empty = new Y.Doc();
+    const before = Y.encodeStateAsUpdate(empty);
+    expect(() => migrate(empty, SCHEMA_VERSION)).toThrow(SchemaVersionError);
+    expect(() => migrate(empty, SCHEMA_VERSION)).toThrow(/no readable meta\.schema_version/);
+    expect(Y.encodeStateAsUpdate(empty)).toEqual(before);
+    expect([...empty.share.keys()]).toEqual([]);
+
+    // A `meta` root that exists but carries no version is equally unreadable.
+    const versionless = new Y.Doc();
+    versionless.getMap("meta").set("catalog_version", "deadbeef");
+    expect(() => migrate(versionless, SCHEMA_VERSION)).toThrow(SchemaVersionError);
   });
 
   it("fails closed on a doc newer than this package", () => {
@@ -116,9 +171,16 @@ describe("migrate (schema §10)", () => {
     expect(() => migrate(doc, Number.NaN)).toThrow(SchemaVersionError);
   });
 
+  // KA-11: the caller's `fromVersion` is a claim; the doc's stored version is
+  // the trusted value. The current-version path must not skip this check —
+  // that is exactly what an exact-no-op shortcut placed before it would do.
   it("rejects a fromVersion that contradicts the doc's own schema_version", () => {
     const doc = mint({ nodes: [], links: [] }, catalog);
     metaMap(doc).set("schema_version", SCHEMA_VERSION + 5);
+    const before = Y.encodeStateAsUpdate(doc);
     expect(() => migrate(doc, SCHEMA_VERSION)).toThrow(SchemaVersionError);
+    expect(() => migrate(doc, SCHEMA_VERSION)).toThrow(/does not match fromVersion/);
+    // Rejection is itself byte-exact: fail-closed never half-writes.
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
   });
 });
