@@ -2,7 +2,7 @@
 /** Verify that every checked-in conformance fixture matches its manifest hash. */
 
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,8 +28,13 @@ if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
   fail(["MANIFEST.json must contain a files object"]);
 }
 
+// Only hash regular top-level fixture files. Subdirectories (e.g.
+// golden-vectors/, owned by the parity conformance suite) are verified by their
+// own tests, not this corpus manifest — a flat readdir would otherwise try to
+// hash a directory and crash (EISDIR) or spuriously flag it as unlisted.
 const fixtureFiles = readdirSync(fixturesDir)
   .filter((name) => name !== "README.md" && name !== "MANIFEST.json")
+  .filter((name) => statSync(join(fixturesDir, name)).isFile())
   .sort();
 const manifestFiles = Object.keys(entries).sort();
 const errors = [];
