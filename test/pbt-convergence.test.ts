@@ -115,8 +115,16 @@ function ordered(phasesToOrder: Op[][], keys: number[]): Op[] {
   });
 }
 
+/**
+ * Duplicate ops two ways: immediately after the original (adjacent retry) and,
+ * for a deterministic subset, appended at the very end of the stream (delayed
+ * retry that lands after later ops and across batch boundaries). Every
+ * duplicate must be an idempotent no-op regardless of when it arrives.
+ */
 function withRetries(ops: Op[], mask: boolean[]): Op[] {
-  return ops.flatMap((op, i) => (mask[i % mask.length] ? [op, op] : [op]));
+  const adjacent = ops.flatMap((op, i) => (mask[i % mask.length] ? [op, op] : [op]));
+  const delayed = ops.filter((_op, i) => mask[(i + 1) % mask.length]);
+  return [...adjacent, ...delayed];
 }
 
 function applyInBatches(doc: Y.Doc, ops: Op[], sizes: number[]): void {
@@ -151,6 +159,27 @@ describe("property-based convergence and idempotency", () => {
         applyInBatches(b, withRetries(permuted, scenario.retryMask), scenario.batchSizes);
 
         expect(JSON.stringify(project(b, catalog))).toBe(JSON.stringify(project(a, catalog)));
+      }),
+      FC_OPTIONS,
+    );
+  });
+
+  // reset_doc is a DEFERRED op (rejected until un-deferred by amendment), so it
+  // cannot appear in a converging stream — the honest coverage is that it is
+  // rejected loudly and leaves the document byte-identical (abort-before-mutate).
+  it("rejects a deferred reset_doc op without mutating the document", () => {
+    fc.assert(
+      fc.property(scenarioArb, (scenario) => {
+        const doc = mint({ nodes: [], links: [] }, catalog);
+        expect(applyOps(doc, phases(scenario).flat(), catalog).failed).toBeNull();
+        const before = Y.encodeStateAsUpdate(doc);
+
+        const reset = { ...envelope(9999, scenario), op: "reset_doc" } as unknown as Op;
+        const result = applyOps(doc, [reset], catalog);
+
+        expect(result.failed).not.toBeNull();
+        expect(result.applied).toEqual([]);
+        expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
       }),
       FC_OPTIONS,
     );
