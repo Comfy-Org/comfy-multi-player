@@ -18,6 +18,7 @@ import {
   type WorkflowJSON,
   applyOps,
   mint,
+  project,
 } from "../src/index.js";
 
 const catalog: WidgetCatalog = {
@@ -63,15 +64,21 @@ function baseDoc(): Y.Doc {
 
 const codeOf = (r: ReturnType<typeof applyOps>) => r.failed?.code;
 
+/** Deterministic workflow projection; excludes op_id / `__`-prefixed metadata. */
+const snap = (doc: Y.Doc) => project(doc, catalog);
+
 describe("applier rejections — add_node", () => {
-  it("malformed_op when node_id/node payload is missing", () => {
+  it("malformed_op when node_id/node payload is missing, leaving the doc untouched", () => {
     const doc = baseDoc();
+    const before = snap(doc);
     const op = { op: "add_node", ...env("a", 1) } as unknown as Op; // no node_id/node
     expect(codeOf(applyOps(doc, [op], catalog))).toBe("malformed_op");
+    expect(snap(doc)).toEqual(before);
   });
 
-  it("invalid_node_payload when the node carries the reserved opaque-widgets key", () => {
+  it("invalid_node_payload when the node carries the reserved opaque-widgets key, leaving the doc untouched", () => {
     const doc = baseDoc();
+    const before = snap(doc);
     const op: AddNodeOp = {
       op: "add_node",
       ...env("a", 1),
@@ -79,31 +86,50 @@ describe("applier rejections — add_node", () => {
       node: { id: 9, type: "Note", [OPAQUE_WIDGETS_KEY]: [1, 2] } as never,
     };
     expect(codeOf(applyOps(doc, [op], catalog))).toBe("invalid_node_payload");
+    expect(snap(doc)).toEqual(before);
   });
 
   it("is a structural no-op (not a failure) when the id already exists", () => {
     const doc = baseDoc();
+    const before = snap(doc);
     const op: AddNodeOp = { op: "add_node", ...env("a", 1), node_id: 1, node: { id: 1, type: "KSampler" } as never };
     const r = applyOps(doc, [op], catalog);
     expect(r.failed).toBeNull();
+    expect(snap(doc)).toEqual(before);
+  });
+
+  it("aborts the remainder: a valid op after a rejected op does not apply (KA-4)", () => {
+    const doc = baseDoc();
+    const before = snap(doc);
+    const bad = { op: "add_node", ...env("a", 1) } as unknown as Op; // malformed, rejected first
+    const good: AddNodeOp = { op: "add_node", ...env("a", 1), node_id: 9, node: { id: 9, type: "Note" } as never };
+    expect(codeOf(applyOps(doc, [bad, good], catalog))).toBe("malformed_op");
+    // The trailing valid op must not have been applied.
+    expect(snap(doc)).toEqual(before);
+    expect(snap(doc).nodes.some((n) => n.id === 9)).toBe(false);
   });
 });
 
 describe("applier rejections — set_widget", () => {
-  it("malformed_op for an interior write without inner_widget", () => {
+  it("malformed_op for an interior write without inner_widget, leaving the doc untouched", () => {
     const doc = baseDoc();
+    const before = snap(doc);
     const op = { op: "set_widget", ...env("a", 1), node_id: 1, widget: "steps", value: 5, path: ["1", "2"] } as unknown as SetWidgetOp;
     expect(codeOf(applyOps(doc, [op], catalog))).toBe("malformed_op");
+    expect(snap(doc)).toEqual(before);
   });
 
-  it("malformed_op for a top-level write with no widget name", () => {
+  it("malformed_op for a top-level write with no widget name, leaving the doc untouched", () => {
     const doc = baseDoc();
+    const before = snap(doc);
     const op = { op: "set_widget", ...env("a", 1), node_id: 1, value: 5 } as unknown as SetWidgetOp;
     expect(codeOf(applyOps(doc, [op], catalog))).toBe("malformed_op");
+    expect(snap(doc)).toEqual(before);
   });
 
-  it("not_a_subgraph when an interior path descends through a plain node", () => {
+  it("not_a_subgraph when an interior path descends through a plain node, leaving the doc untouched", () => {
     const doc = baseDoc();
+    const before = snap(doc);
     const op: SetWidgetOp = {
       op: "set_widget",
       ...env("a", 1),
@@ -114,6 +140,7 @@ describe("applier rejections — set_widget", () => {
       inner_widget: "steps",
     };
     expect(codeOf(applyOps(doc, [op], catalog))).toBe("not_a_subgraph");
+    expect(snap(doc)).toEqual(before);
   });
 });
 
@@ -130,24 +157,41 @@ describe("applier rejections — connect", () => {
     ...over,
   });
 
-  it("output_slot_missing when from_slot is out of range", () => {
+  it("output_slot_missing when from_slot is out of range, leaving nodes and links unchanged", () => {
     const doc = baseDoc();
+    const before = snap(doc);
     expect(codeOf(applyOps(doc, [connect({ from_slot: 99 })], catalog))).toBe("output_slot_missing");
+    const after = snap(doc);
+    expect(after.nodes).toEqual(before.nodes);
+    expect(after.links).toEqual(before.links);
   });
 
-  it("input_slot_missing when to_slot is out of range", () => {
+  it("input_slot_missing when to_slot is out of range, leaving nodes and links unchanged", () => {
     const doc = baseDoc();
+    const before = snap(doc);
     expect(codeOf(applyOps(doc, [connect({ to_slot: 99 })], catalog))).toBe("input_slot_missing");
+    const after = snap(doc);
+    expect(after.nodes).toEqual(before.nodes);
+    expect(after.links).toEqual(before.links);
   });
 
-  it("malformed_op when to_slot is null and there is no grow", () => {
+  it("malformed_op when to_slot is null and there is no grow, leaving nodes and links unchanged", () => {
     const doc = baseDoc();
+    const before = snap(doc);
     expect(codeOf(applyOps(doc, [connect({ to_slot: null })], catalog))).toBe("malformed_op");
+    const after = snap(doc);
+    expect(after.nodes).toEqual(before.nodes);
+    expect(after.links).toEqual(before.links);
   });
 
-  it("delete-wins no-op (not a failure) when the destination node is gone", () => {
+  it("delete-wins no-op (not a failure) when the destination node is gone, leaving nodes and links unchanged", () => {
     const doc = baseDoc();
+    const before = snap(doc);
     const r = applyOps(doc, [connect({ to_node: 987654321 })], catalog);
     expect(r.failed).toBeNull();
+    // Projection excludes the recorded op_id, so nodes/links must be identical.
+    const after = snap(doc);
+    expect(after.nodes).toEqual(before.nodes);
+    expect(after.links).toEqual(before.links);
   });
 });
