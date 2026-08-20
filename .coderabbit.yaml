@@ -33,3 +33,12 @@ reviews:
         frozen vocabulary/catalog by SHA, never a moving branch (FC-10). Do not
         remove or make non-fatal the build, purity, corpus-verify, or test CI
         steps.
+    - path: "{fixtures/**,.agents/checks/catalog-pinning.md}"
+      instructions: >-
+        Apply .agents/checks/catalog-pinning.md (KA-12, FC-10). The widget
+        catalog (fixtures/catalog.json) is pinned by sha256 at mint; the golden
+        conformance corpus and lww-vectors are SHA-pinned and one-way. Flag any
+        change that edits a pinned fixture without a corresponding manifest/SHA
+        update, cites the catalog/vocabulary by a moving branch instead of a SHA,
+        or would let the corpus drift without being regenerated in CI
+        (verify:corpus).

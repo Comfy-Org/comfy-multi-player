@@ -7,14 +7,14 @@ Detect known CVEs in dependencies and leaked secrets. Applies to any change; esp
 1. Probe tools: `npm --version`, `gitleaks version`. If neither is available, skip and report the install hints (`npm i -g npm`, gitleaks: https://github.com/gitleaks/gitleaks#installing). If only one is available, run it and note the other was skipped.
 2. **Dependency audit** (npm):
    ```bash
-   npm audit --json 2>/dev/null || true
+   npm audit --json; echo "npm audit exit: $?"
    ```
-   Map severity `critical`→critical, `high`→major, `moderate`→minor, `low`→nitpick. Report package, version, advisory title, CVE, and patched version.
+   Do not suppress stderr or discard the exit status: `npm audit` exits non-zero when it finds advisories, but a non-zero exit with no parseable JSON means the tool itself failed — report that as an error, not a clean result. Map severity `critical`→critical, `high`→major, `moderate`→minor, `low`→nitpick. Report package, version, advisory title, CVE, and patched version.
 3. **Secrets** (gitleaks):
    ```bash
-   gitleaks detect --no-banner --report-format json --source . 2>/dev/null || true
+   gitleaks detect --no-banner --report-format json --report-path /tmp/gitleaks.json --source .; echo "gitleaks exit: $?"
    ```
-   All secret findings are critical. Report file/line, rule, a redacted match, and advise removal plus credential rotation.
+   `gitleaks` exits `1` when it finds secrets and `2` on execution error — never collapse these to a pass. If the run errors or the report cannot be parsed, report it as an indeterminate/failed scan, not "no issues found". All secret findings are critical. Report file/line, rule, a redacted match, and advise removal plus credential rotation.
 
 ## Repo-specific emphasis
 

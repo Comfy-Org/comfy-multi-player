@@ -5,46 +5,38 @@
  * This config is NOT the package's development lint config — it is only used by
  * the code-review checks' static-analysis pass.
  *
- * Run: npx --yes --package eslint --package eslint-plugin-sonarjs eslint \
- *        --no-config-lookup --config .agents/checks/eslint.strict.config.js {files}
+ * Setup + run (install transiently so the config's bare imports resolve, without
+ * touching package.json; the pure yjs-only production dep set is unaffected):
+ *   npm i --no-save eslint eslint-plugin-sonarjs @typescript-eslint/parser
+ *   npx eslint --no-config-lookup --config .agents/checks/eslint.strict.config.js \
+ *     --format json {files}
+ *
+ * Notes:
+ * - This package's src/** is TypeScript, so a TypeScript-aware parser is
+ *   required; the default JS parser fails on .ts syntax. Syntax-only parsing
+ *   (no type-check program) is enough for the SonarJS rules.
+ * - We build on `sonarjs.configs.recommended` (the plugin's currently-valid rule
+ *   set) instead of hand-listing individual rules, which drift across plugin
+ *   majors (e.g. several v0/v1 rule IDs were renamed/removed by v4). The only
+ *   override is a stricter cognitive-complexity threshold.
  */
 
 import sonarjs from "eslint-plugin-sonarjs";
+import tsParser from "@typescript-eslint/parser";
 
 export default [
+  // recommended already registers the `sonarjs` plugin and enables its rules;
+  // do not redefine the plugin key (ESLint flat config forbids it).
   sonarjs.configs.recommended,
   {
-    plugins: {
-      sonarjs,
-    },
-    rules: {
-      // Bug detection
-      "sonarjs/no-all-duplicated-branches": "error",
-      "sonarjs/no-element-overwrite": "error",
-      "sonarjs/no-identical-conditions": "error",
-      "sonarjs/no-identical-expressions": "error",
-      "sonarjs/no-one-iteration-loop": "error",
-      "sonarjs/no-use-of-empty-return-value": "error",
-      "sonarjs/no-collection-size-mischeck": "error",
-      "sonarjs/no-duplicated-branches": "error",
-      "sonarjs/no-identical-functions": "error",
-      "sonarjs/no-redundant-jump": "error",
-      "sonarjs/no-unused-collection": "error",
-      "sonarjs/no-gratuitous-expressions": "error",
-
-      // Code smell detection
-      "sonarjs/cognitive-complexity": ["error", 15],
-      "sonarjs/no-duplicate-string": ["error", { threshold: 3 }],
-      "sonarjs/no-redundant-boolean": "error",
-      "sonarjs/no-small-switch": "error",
-      "sonarjs/prefer-immediate-return": "error",
-      "sonarjs/prefer-single-boolean-return": "error",
-      "sonarjs/no-inverted-boolean-check": "error",
-      "sonarjs/no-nested-template-literals": "error",
-    },
+    files: ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.mjs", "**/*.cjs"],
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: "module",
+      parser: tsParser,
+    },
+    rules: {
+      "sonarjs/cognitive-complexity": ["error", 15],
     },
   },
   {

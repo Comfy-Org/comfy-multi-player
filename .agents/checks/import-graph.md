@@ -6,11 +6,13 @@ Validate import boundaries and detect circular dependencies. This reinforces pur
 
 1. Check availability: `npx --yes dependency-cruiser --version`. If unavailable, skip and report: "Skipped: dependency-cruiser not available (`npm i -D dependency-cruiser`)".
 2. Identify changed directories from the diff.
-3. Run over `src`:
+3. Run over `src`. `--no-config` *disables* configuration loading, so it must not be combined with a repo config. If `.dependency-cruiser.js` or `.dependency-cruiser.cjs` exists, run WITHOUT `--no-config` so the repo's layer rules apply (dependency-cruiser auto-detects the file); use `--no-config` only when neither file exists:
    ```bash
-   npx --yes dependency-cruiser --no-config --output-type json --do-not-follow "node_modules" --include-only "^src" src 2>/dev/null
+   # repo config present (preferred):
+   npx --yes dependency-cruiser --output-type json --do-not-follow "node_modules" --include-only "^src" src
+   # no repo config:
+   npx --yes dependency-cruiser --no-config --output-type json --do-not-follow "node_modules" --include-only "^src" src
    ```
-   If a `.dependency-cruiser.{js,cjs}` config exists, prefer it (it may encode layer rules).
 4. Parse the JSON. Flag any module with `.circular == true` (major, category architecture) and any rule violation (`error`→major, `warn`→minor, `info`→nitpick).
 
 ## Repo-specific rules
