@@ -18,7 +18,7 @@ This is the machine-addressable review log for the package. IDs are stable; do n
 ### KA-2 — The ordering/identity key rides inside the op
 **Rule:** `[base_version, actor, op_id]` is a total order any replica can evaluate offline; `op_id` is uuid4 hex minted by the creator before dispatch and never regenerated.  
 **Why:** `op_id` is both the dedupe identity and final LWW outcome tiebreak.  
-**Enforced by:** `test/lww.test.ts`, `test/stamp-target-identity.test.ts`, and [`op-identity`](../.agents/checks/op-identity.md).
+**Enforced by:** `test/ka2-stamp-inside-op.test.ts` — the only suite that gives `op.stamp` a value the envelope does not imply, and so the only one that can tell "reads the key out of the op" apart from "falls back to `[base_version, actor]`". `test/lww.test.ts` and `test/stamp-target-identity.test.ts` pin the *comparator* and the *write-target identity*, not the in-op provenance of the key: every op they build has `stamp === [base_version, actor]`, which makes the two readings indistinguishable (AUD-MUT-1 R14, `reports/audit/mutation-survivors.md` §4). Also [`op-identity`](../.agents/checks/op-identity.md) for the `op_id` half.
 
 ### KA-3 — The op layer stays pure & portable
 **Rule:** Applier, projection, and mint have zero DOM/framework/LiteGraph/server-only dependencies and run identically in browser and host; assert `yjs`-only directly, not merely by denylist.  
@@ -79,7 +79,7 @@ This is the machine-addressable review log for the package. IDs are stable; do n
 ### FC-2 — Never make the server the only thing that can assign order
 **Rule:** Server sequence must not be the sole conflict resolver beyond merely advancing `base_version`.  
 **Why:** Sole server ordering kills hostless P2P ordering.  
-**Enforced by:** `test/lww.test.ts` and [`op-identity`](../.agents/checks/op-identity.md).
+**Enforced by:** `test/ka2-stamp-inside-op.test.ts` — its vectors make the in-op stamp and the envelope's server-assigned `base_version` name *different* LWW winners, so a collapse back onto the server scalar flips an assertion instead of going unnoticed. `test/lww.test.ts` pins the comparator only. Also [`op-identity`](../.agents/checks/op-identity.md).
 
 ### FC-3 — Never couple the applier/op layer to server-only or DOM/framework-only dependencies
 **Why:** Such coupling prevents execution at a peer, edge, or browser and invites a second implementation.  
