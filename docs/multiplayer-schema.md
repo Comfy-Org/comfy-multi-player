@@ -559,6 +559,16 @@ the epoch; cross-epoch struct updates never merge.
   doc via the struct stream / a new epoch); a doc whose `schema_version` is
   **greater** than the code's `SCHEMA_VERSION` is rejected, fail-closed —
   never best-effort read.
+- `migrate()` is the fail-closed READ gate, so validation runs on every path,
+  including the current-version one: `fromVersion` is a caller *claim*, and it
+  must agree with the document's own `meta.schema_version`. A doc with no
+  readable `meta.schema_version` is rejected rather than assumed current.
+- "Exact no-op" is byte-level: `encodeStateAsUpdate(doc)` is unchanged **and**
+  no root type is materialized. `Y.Doc#getMap` lazily *creates* an absent root
+  and registers it in `doc.share`, so the version check reads `meta` only when
+  the root is already present — validating an incomplete doc must never repair
+  it (issue #20). The same holds for a rejection: fail-closed never
+  half-writes.
 - Bumping `SCHEMA_VERSION` requires: a migration step, updated fixtures or a
   fixture-format note, an amendment section in this document, and FE
   sign-off (the layout is a cross-repo contract with the FE follower).
