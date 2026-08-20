@@ -15,10 +15,21 @@ describe("purity", () => {
       maxBuffer: 64 * 1024 * 1024,
     });
     const tree = JSON.parse(run.stdout) as {
-      dependencies?: Record<string, { extraneous?: boolean }>;
+      dependencies?: Record<
+        string,
+        { version?: string; resolved?: string; missing?: boolean; invalid?: boolean; extraneous?: boolean }
+      >;
     };
+    // A production root must be installed and valid, not just non-extraneous:
+    // a missing/invalid yjs node must fail this assertion, not pass it.
     const resolvedRoots = Object.entries(tree.dependencies ?? {})
-      .filter(([, dependency]) => !dependency.extraneous)
+      .filter(
+        ([, dep]) =>
+          (dep.version !== undefined || dep.resolved !== undefined) &&
+          !dep.missing &&
+          !dep.invalid &&
+          !dep.extraneous,
+      )
       .map(([name]) => name)
       .sort();
     expect(resolvedRoots).toEqual(["yjs"]);

@@ -84,8 +84,18 @@ try {
 // node_modules directory; they are not part of this package's production
 // graph. yjs itself has implementation dependencies (currently lib0), but it
 // must be the graph's sole production root.
+// A production root must be actually installed and valid: present in the tree
+// with a version/resolved, and not missing/invalid/extraneous. A MISSING yjs
+// node must fail the gate, not silently pass it.
+const isInstalledProdRoot = (child) =>
+  child &&
+  typeof child === "object" &&
+  ("version" in child || "resolved" in child) &&
+  !child.missing &&
+  !child.invalid &&
+  !child.extraneous;
 const resolvedRuntimeRoots = Object.entries(tree.dependencies ?? {})
-  .filter(([, child]) => child && typeof child === "object" && !child.extraneous)
+  .filter(([, child]) => isInstalledProdRoot(child))
   .map(([name]) => name)
   .sort();
 if (resolvedRuntimeRoots.length !== 1 || resolvedRuntimeRoots[0] !== "yjs") {
