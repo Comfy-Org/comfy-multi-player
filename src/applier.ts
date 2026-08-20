@@ -16,6 +16,18 @@
  *    failing index are not applied and the applied prefix is retained;
  *  - one Y transaction per op (schema §2.4), preconditions validated before
  *    the first mutation so a rejected op leaves the doc untouched.
+ *
+ * VALIDATE BEFORE MUTATE (issue #10). Yjs does NOT roll a `transact` body back
+ * when it throws, so "the doc is untouched on reject" is a property of write
+ * ORDER inside each handler, not something the transaction gives us. Every
+ * precondition that can throw — source and destination slot resolution over
+ * the FULL numeric domain (a slot index must be a non-negative integer in
+ * range addressing a real slot record, not merely `< length`), the inputcount
+ * widget name and its cloneability, the grow payload shape, opaque
+ * destinations — runs before the first `mset`/`apush`. A handler that mutates
+ * and then throws also skips its `__applied` record, so it is silently
+ * non-idempotent on retry as well; that combination is a blocking KA-4
+ * defect, not a nit.
  */
 
 import * as Y from "yjs";
@@ -394,6 +406,22 @@ function isInteriorWrite(op: SetWidgetOp): op is InteriorSetWidgetOp {
   return Array.isArray(op.path) && op.path.length > 0;
 }
 
+/**
+ * `structuredClone` throws `DataCloneError` on values JSON never carries
+ * (functions, symbols, most class instances). Every widget write clones, and
+ * the clone is evaluated as an argument to `mset` — after `widgetsOf` may have
+ * created the widgets map, and after an autogrow may have appended its slot.
+ * Checking up front keeps a rejected op byte-identical (D4) for in-process
+ * callers as well as for ops that arrived as JSON.
+ */
+function assertCloneableValue(value: unknown, what: string): void {
+  try {
+    structuredClone(value);
+  } catch {
+    throw new OpRejectedError("malformed_op", `${what}: value is not structured-cloneable`);
+  }
+}
+
 function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): void {
   const interior: InteriorSetWidgetOp | null = isInteriorWrite(op) ? op : null;
   if (interior !== null && typeof interior.inner_widget !== "string") {
@@ -402,6 +430,7 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): v
   if (interior === null && typeof op.widget !== "string") {
     throw new OpRejectedError("malformed_op", "set_widget: missing widget name");
   }
+  assertCloneableValue(op.value, "set_widget");
 
   // LWW gate first (comfy-cli `_apply_set_widget`): a lower-or-equal stamp is
   // dropped — a protocol-level apply that still consumes its op_id.
@@ -513,13 +542,29 @@ function resolveInteriorNode(doc: Y.Doc, path: string[], catalog?: WidgetCatalog
 // connect
 // ---------------------------------------------------------------------------
 
-/** The source node's `outputs` array, with `from_slot` validated before any mutation. */
+/**
+ * The source node's `outputs` array, with `from_slot` validated before any
+ * mutation.
+ *
+ * The index must be a NON-NEGATIVE INTEGER in range, and the element it
+ * addresses must be a slot record. `from_slot >= outs.length` alone let `-1`,
+ * `0.5` and `NaN` through; each then reached `outs.get(from_slot)` returning
+ * `undefined` and threw a raw `TypeError` — reported as the generic
+ * `apply_failed` — only AFTER the link tuple and the input slot had been
+ * written, and with `__applied` unwritten so a retry re-mutated (issue #10).
+ */
 function requireOutputSlot(src: Y.Map<unknown>, op: ConnectOp): Y.Array<unknown> {
   const outs = src.get("outputs");
-  if (!(outs instanceof Y.Array) || typeof op.from_slot !== "number" || op.from_slot >= outs.length) {
+  if (
+    !(outs instanceof Y.Array) ||
+    !Number.isInteger(op.from_slot) ||
+    op.from_slot < 0 ||
+    op.from_slot >= outs.length ||
+    !(outs.get(op.from_slot) instanceof Y.Map)
+  ) {
     throw new OpRejectedError(
       "output_slot_missing",
-      `connect: output slot ${op.from_slot} not found on node ${String(op.from_node)}`,
+      `connect: output slot ${String(op.from_slot)} not found on node ${String(op.from_node)}`,
     );
   }
   return outs as Y.Array<unknown>;
@@ -536,8 +581,26 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): void 
   // impossible (opaque destination) the whole op is refused HERE, before the
   // slot append, so a rejected op still leaves the doc untouched.
   if (op.grow?.inputcount != null) {
+    if (typeof op.grow.inputcount.widget !== "string") {
+      throw new OpRejectedError("malformed_op", "connect: grow.inputcount needs a widget name");
+    }
     rejectIfOpaqueWidgets(dst, String(op.grow.inputcount.widget));
+    validateWidgetName(
+      catalog,
+      String(dst.get("type") ?? ""),
+      op.grow.inputcount.widget,
+    );
+    assertCloneableValue(op.grow.inputcount.value, "connect: grow.inputcount");
   }
+  if (op.grow != null && (typeof op.grow.name !== "string" || typeof op.grow.type !== "string")) {
+    throw new OpRejectedError("malformed_op", "connect: grow payload needs name and type");
+  }
+
+  // A present source must be fully valid before a concrete-input register is
+  // claimed or its incumbent link is retired. A missing source remains the
+  // intentional delete-wins no-op handled below.
+  const src = nodes.get(String(op.from_node));
+  const sourceOutputs = src ? requireOutputSlot(src, op) : null;
 
   let toIdx: number;
   // Issue #17: this is the discriminant of the `ConnectOp` union. The type now
@@ -548,9 +611,7 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): void 
     // Autogrow is NOT a shared register: every grow mints its own slot keyed by
     // `grow_id`, so two concurrent grows onto one base both survive and there
     // is nothing to gate (vocabulary §1.2 / amendment v1.2's carve-out).
-    const src = nodes.get(String(op.from_node));
     if (!src) return; // source concurrently deleted → no-op (delete wins)
-    requireOutputSlot(src, op);
     toIdx = growInputSlot(doc, dst, op, catalog);
   } else {
     if (typeof op.to_slot !== "number") {
@@ -558,10 +619,11 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): void 
     }
     toIdx = op.to_slot;
     const ins = dst.get("inputs");
-    if (!(ins instanceof Y.Array) || toIdx >= ins.length) {
+    // Same numeric domain as `from_slot`: non-negative integer, in range.
+    if (!(ins instanceof Y.Array) || !Number.isInteger(toIdx) || toIdx < 0 || toIdx >= ins.length) {
       throw new OpRejectedError(
         "input_slot_missing",
-        `connect: input slot ${toIdx} not found on node ${String(op.to_node)}`,
+        `connect: input slot ${String(toIdx)} not found on node ${String(op.to_node)}`,
       );
     }
     const slot = ins.get(toIdx);
@@ -595,11 +657,10 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): void 
     if (prev != null && prev !== op.link_id) removeLink(doc, prev);
   }
 
-  const src = nodes.get(String(op.from_node));
   // Source concurrently deleted → the winning connect leaves the input EMPTY
   // (delete wins over the link, not over the register claim).
-  if (!src) return;
-  const outs = requireOutputSlot(src, op);
+  if (!src || !sourceOutputs) return;
+  const outs = sourceOutputs;
 
   const links = linksMap(doc);
   const linkKey = String(op.link_id);
