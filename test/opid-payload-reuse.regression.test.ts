@@ -1,8 +1,9 @@
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
-import { appliedMap, applyOps, mint, project, type SetWidgetOp } from "../src/index.js";
+import { applyOps, mint, project, type SetWidgetOp } from "../src/index.js";
 import { canonicalOp } from "../src/applier.js";
 import { sha256Hex } from "../src/digest.js";
+import { appliedMap } from "../src/doc.js";
 import { loadCatalog, loadLwwVectors } from "./helpers.js";
 
 const NODE_ID = 3308598398221244;
@@ -69,7 +70,7 @@ describe("regression: op_id reuse with a changed payload (#12)", () => {
       '"stamp":[5,"human:a"],"value":25,"widget":"steps"}';
     expect(canonicalOp(firstOp())).toBe(canonical);
     expect(appliedMap(doc).get(firstOp().op_id)).toBe(sha256Hex(canonical));
-    // Bounded: 64 hex chars regardless of payload size (schema §4 amendment A4).
+    // Bounded: 64 hex chars regardless of payload size (schema §4 amendment A8).
     expect(String(appliedMap(doc).get(firstOp().op_id))).toHaveLength(64);
   });
 
@@ -103,8 +104,8 @@ describe("regression: op_id reuse with a changed payload (#12)", () => {
     expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
   });
 
-  it("treats a pre-A4 `1` record as a duplicate rather than a reuse", () => {
-    // Documents written before amendment A4 store `1`. They must keep
+  it("treats a pre-A8 `1` record as a duplicate rather than a reuse", () => {
+    // Documents written before amendment A8 store `1`. They must keep
     // deduping silently instead of failing every retry with op_id_reuse.
     const catalog = loadCatalog();
     const doc = mint(loadLwwVectors().base_workflow, catalog);
