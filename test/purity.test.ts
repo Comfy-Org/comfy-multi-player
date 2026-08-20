@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -8,6 +8,27 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const distEntry = join(root, "dist", "index.js");
 
 describe("purity", () => {
+  it("has exactly yjs as its declared and resolved production dependency root", () => {
+    const run = spawnSync("npm", ["ls", "--omit=dev", "--json", "--all"], {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    const tree = JSON.parse(run.stdout) as {
+      dependencies?: Record<string, { extraneous?: boolean }>;
+    };
+    const resolvedRoots = Object.entries(tree.dependencies ?? {})
+      .filter(([, dependency]) => !dependency.extraneous)
+      .map(([name]) => name)
+      .sort();
+    expect(resolvedRoots).toEqual(["yjs"]);
+
+    const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+      dependencies?: Record<string, string>;
+    };
+    expect(Object.keys(packageJson.dependencies ?? {}).sort()).toEqual(["yjs"]);
+  });
+
   it("test environment itself is bare node (no DOM globals)", () => {
     expect(typeof (globalThis as Record<string, unknown>)["window"]).toBe("undefined");
     expect(typeof (globalThis as Record<string, unknown>)["document"]).toBe("undefined");
