@@ -85,7 +85,9 @@ describe("W8 projection goldens (KA-3, KA-4, KA-12)", () => {
 
     const invalid = initDoc(new Y.Doc());
     const node = createNodeMap(
-      { id: 2, type: "Known", widgets_values: { invalid: "must fail" } } as never,
+      { id: 2, type: "Known", widgets_values: { invalid: "must fail" } } as unknown as Parameters<
+        typeof createNodeMap
+      >[0],
       catalog.types.Known!.widget_order,
     );
     nodesMap(invalid).set("2", node);

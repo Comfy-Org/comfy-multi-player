@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as Y from "yjs";
 import {
   applyOps,
   codePointCompare,
@@ -93,7 +94,6 @@ describe("W8 applier edge goldens (KA-4)", () => {
   });
 
   it("does not scrub a concurrently replaced link while deleting the old source", () => {
-    const doc = mint(base(), catalog);
     const oldLink = connect(30, 1);
     const replacement = connect(31, 2);
     const del: DeleteNodeOp = {
@@ -102,14 +102,39 @@ describe("W8 applier edge goldens (KA-4)", () => {
       node_id: 1,
       removed_links: [30],
     };
-    expect(applyOps(doc, [oldLink, replacement, del], catalog).failed).toBeNull();
+    const projections = [
+      [oldLink, replacement, del],
+      [oldLink, del, replacement],
+    ].map((ops) => {
+      const doc = mint(base(), catalog);
+      expect(applyOps(doc, ops, catalog).failed).toBeNull();
 
-    const out = project(doc, catalog);
+      const beforeRetry = Buffer.from(Y.encodeStateAsUpdate(doc));
+      expect(applyOps(doc, [replacement], catalog).skipped).toEqual([replacement.op_id]);
+      expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(beforeRetry)).toBe(true);
+      return project(doc, catalog);
+    });
+
+    expect(projections[1]).toEqual(projections[0]);
+    const out = projections[0]!;
     expect(out.links).toEqual([[31, 2, 0, 3, 0, "X"]]);
     expect((out.nodes.find((node) => node.id === 2)!.outputs as Array<{ links: unknown[] }>)[0]!.links)
       .toEqual([31]);
     expect((out.nodes.find((node) => node.id === 3)!.inputs as Array<{ link: unknown }>)[0]!.link)
       .toBe(31);
+  });
+
+  it("leaves projection unchanged and aborts the remainder after a rejection", () => {
+    const doc = mint(base(), catalog);
+    const before = project(doc, catalog);
+    const malformed = connect(50, 1, { to_slot: 99 });
+    const trailing = connect(51, 2);
+
+    const result = applyOps(doc, [malformed, trailing], catalog);
+    expect(result.failed).toMatchObject({ index: 0, code: "input_slot_missing" });
+    expect(result.applied).toEqual([]);
+    expect(project(doc, catalog)).toEqual(before);
+    expect(project(doc, catalog).links).not.toContainEqual([51, 2, 0, 3, 0, "X"]);
   });
 });
 
