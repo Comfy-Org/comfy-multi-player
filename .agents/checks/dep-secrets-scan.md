@@ -24,3 +24,4 @@ Detect known CVEs in dependencies and leaked secrets. Applies to any change; esp
 ## Error handling
 
 - If one tool fails, continue with the other. If JSON parsing fails, include raw output with a warning. If both are clean, report "No issues found."
+- Non-vacuousness: `npm audit --json` on a tree with no `node_modules` reports zero advisories because it audited nothing. Before believing a clean audit, check `.metadata.dependencies.total` (or `.metadata.vulnerabilities`) is present and non-zero, and run `npm ci` first if it is not. Quote the audited dependency count in the report, and quote gitleaks' scanned-commit count, so a future empty scan is visible in the review itself.

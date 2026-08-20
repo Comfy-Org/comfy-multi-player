@@ -34,3 +34,4 @@ The exact rule set is the plugin's `recommended` config (currently eslint-plugin
 ## Error handling
 
 - Skip un-parseable files and continue. If the plugin/parser fails to install or ESLint exits `2`, report an indeterminate/failed run — do not report "No issues found". Report "No issues found" only when ESLint ran successfully (exit `0`) and produced an empty findings array.
+- Non-vacuousness: an empty findings array also results from linting nothing. The JSON array holds one entry per file ESLint actually processed, so check its length equals the number of files you passed; if it is shorter (ignored, unmatched, or unparsed files), the missing files were not linted and the run is INCONCLUSIVE for them. Report "No issues found (<n> files linted)" with the count.

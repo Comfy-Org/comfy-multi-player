@@ -19,4 +19,5 @@ Run Semgrep static analysis on changed TypeScript/JavaScript files to catch dang
 
 ## Error handling
 
-- If the config download fails, skip and report. Skip un-parseable files and continue. If no findings, report "No issues found."
+- If the config download fails, skip and report. Skip un-parseable files and continue.
+- Non-vacuousness: `--config=auto` fetches its rules over the network, and a partial or failed fetch still exits `0` with an empty `.results[]`. Before reporting anything, check `.paths.scanned` is non-empty and that the run loaded rules (`.errors[]` empty, and the stderr rule count is greater than zero). Zero files scanned or zero rules loaded is INCONCLUSIVE, not clean. Report "No issues found (<n> files scanned)" — always with the count — and only after a run that actually scanned files.

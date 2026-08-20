@@ -349,6 +349,7 @@ npm install
 npm run build         # tsc → dist/
 npm test              # vitest: schema, purity, replay, lww, convergence, roundtrip, applier
 npm run check:purity  # dependency-tree + bare-Node import gate
+npm run check:imports # module-graph gate: no cycles, src imports yjs only, no Node builtins
 ```
 
 `fixtures/` holds the replay corpus: recorded op sessions with their starting

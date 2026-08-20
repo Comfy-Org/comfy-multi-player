@@ -16,10 +16,11 @@ Any change touching op semantics, public exports, the dependency set, or the wid
 npm ci
 npm run build
 npm run check:purity
+npm run check:imports
 npm test
 ```
 
-Run all four commands before review. The purity gate currently includes a dependency denylist and bare-Node import probe; its missing positive `yjs`-only assertion is tracked in issue #22.
+Run all five commands before review. The purity gate currently includes a dependency denylist and bare-Node import probe; its missing positive `yjs`-only assertion is tracked in issue #22. `check:imports` cruises the module graph with `.dependency-cruiser.cjs` and asserts the yjs-only and no-Node-builtin boundaries per source file; it exits `2` (INCONCLUSIVE) rather than green if it analyzed too few modules to mean anything.
 
 Reviewer-agent concern profiles live in `.agents/checks/`. Apply every relevant profile to semantic, export, dependency, catalog, and replication-boundary changes.
 
