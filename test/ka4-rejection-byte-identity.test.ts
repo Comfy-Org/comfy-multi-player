@@ -44,8 +44,6 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import {
-  OPAQUE_WIDGETS_KEY,
-  appliedMap,
   applyOps,
   mint,
   project,
@@ -53,6 +51,7 @@ import {
   type WidgetCatalog,
   type WorkflowJSON,
 } from "../src/index.js";
+import { OPAQUE_WIDGETS_KEY, appliedMap } from "../src/doc.js";
 
 const catalog: WidgetCatalog = {
   types: {

@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import {
   OPAQUE_WIDGETS_KEY,
-  SCHEMA_VERSION,
   createNodeMap,
   definitionsMap,
   initDoc,
   linksMap,
   metaMap,
   nodesMap,
-} from "../src/index.js";
+} from "../src/doc.js";
+import { SCHEMA_VERSION } from "../src/index.js";
 
 describe("schema", () => {
   it("pins SCHEMA_VERSION at 1", () => {

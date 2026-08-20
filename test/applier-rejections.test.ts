@@ -8,8 +8,8 @@
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
+import { OPAQUE_WIDGETS_KEY } from "../src/doc.js";
 import {
-  OPAQUE_WIDGETS_KEY,
   type AddNodeOp,
   type ConcreteConnectOp,
   type Op,

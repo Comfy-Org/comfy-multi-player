@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
+import { createNodeMap, definitionsMap, initDoc, nodesMap } from "../src/doc.js";
 import {
-  createNodeMap,
-  definitionsMap,
-  initDoc,
   mint,
-  nodesMap,
   project,
   type WidgetCatalog,
   type WorkflowJSON,

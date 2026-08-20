@@ -202,29 +202,35 @@ receives the migrated document over the struct stream and must not call this.
 `stampTargetKey(op)`, `codePointCompare(a, b)`. You need these only if you are
 building conflict UI or your own bookkeeping — `applyOps` uses them internally.
 
-### Layout helpers
+### Document internals are not exported
 
-`initDoc`, `nodesMap`, `linksMap`, `definitionsMap`, `metaMap`, `appliedMap`,
-`stampsMap`, `createNodeMap`, `resolveDefinition`, `countDefinitionInstances`,
+The entrypoint exports the op layer (`mint`, `applyOps`, `project`, `migrate`),
+the KA-11 read gate, the stamp machinery above, and the types. That is the
+whole public surface.
+
+The Y.Doc layout is deliberately **not** part of it. `initDoc`, `nodesMap`,
+`linksMap`, `definitionsMap`, `metaMap`, `appliedMap`, `stampsMap`,
+`createNodeMap`, `resolveDefinition`, `countDefinitionInstances`,
 `OPAQUE_WIDGETS_KEY`, `isOpaqueWidgets`, `WIDGET_STORAGE_STRATEGIES`,
-`WidgetStorage`, `widgetStorageFor`, `widgetStorageOf`. Reading the document
-directly is supported; writing to it outside `applyOps` is not.
+`WidgetStorage`, `widgetStorageFor`, and `widgetStorageOf` were re-exported
+through an earlier release and are now module-private. Reading the document
+directly is no longer supported either.
 
-A node's widget values are stored one of two ways — `named` (the name-keyed
-`widgets` map) or `opaque` (the whole `widgets_values` array verbatim, for a
-class the pinned catalog cannot describe). `widgetStorageFor(widgets_values,
-widget_order)` answers which one a payload needs before it is written;
-`widgetStorageOf(node)` answers which one a node already in the doc is using.
-Switch on the returned `WidgetStorage` rather than sniffing keys, so a third
-strategy is a change you can find rather than a key nobody checked. Note that a
-bare exhaustive `switch` does **not** become a compile error when the union
-widens — TypeScript only reports that if you end the `switch` in a `never`
-assertion, and this package does not export one (`src/exhaustive.ts` is
-internal). Supply your own one-liner if you want the guard:
+Read-only intent was never the problem; reachability was. The same import that
+hands you `nodesMap` for a read hands you a live `Y.Map` you can write, and a
+write that does not go through `applyOps` carries no stamp, so it is invisible
+to ordering, to the last-writer-wins tiebreak, and to duplicate-op rejection.
+One replica mutating outside the op layer diverges from every other replica
+with no diagnostic. See [issue #18][issue-18] and KA-1, KA-2, KA-4, FC-5 in
+[docs/INVARIANTS.md](docs/INVARIANTS.md).
 
-```ts
-const _exhaustive: never = storage; // fails to compile on a new strategy
-```
+To read a document, call `project(doc, catalog)` — it returns the canonical
+workflow JSON and is the supported read path. There is no `./doc` subpath
+export and none will be added; a shim would restore exactly the reachability
+this closes. A narrower read-only surface for consumers that need less than a
+full projection is tracked separately as `MP-READONLY-SURFACE-1`.
+
+[issue-18]: https://github.com/Comfy-Org/comfy-multi-player/issues/18
 
 ## Ops
 

@@ -26,7 +26,11 @@
  *    with its own structured error before it reads;
  *  - stamp machinery (`compareStampKeys`, `stampKey`, `writeTarget`) for
  *    hosts that need conflict identity or watermark bookkeeping;
- *  - layout helpers (`initDoc`, `nodesMap`, …) and the types.
+ *  - operation, workflow, catalog, and result types.
+ *
+ * The Y.Doc layout, root maps, and low-level mutation helpers are deliberately
+ * module-private. Consumers must change shared state through `applyOps` so
+ * stamp, idempotency, and convergence semantics cannot be bypassed.
  *
  * This module is PURE: no DOM, no framework, no litegraph. `yjs` is the only
  * runtime dependency. CI enforces this (scripts/check-purity.mjs).
@@ -34,7 +38,6 @@
 
 export * from "./types.js";
 export * from "./stamps.js";
-export * from "./doc.js";
 export { applyOps } from "./applier.js";
 export { project } from "./project.js";
 export { mint } from "./mint.js";

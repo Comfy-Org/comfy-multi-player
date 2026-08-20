@@ -26,7 +26,8 @@
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { applyOps, createNodeMap, initDoc, mint, nodesMap, project, type Op, type WorkflowJSON } from "../src/index.js";
+import { createNodeMap, initDoc, nodesMap } from "../src/doc.js";
+import { applyOps, mint, project, type Op, type WorkflowJSON } from "../src/index.js";
 import { loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
