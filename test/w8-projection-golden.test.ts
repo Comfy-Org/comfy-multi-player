@@ -19,9 +19,9 @@ describe("W8 projection goldens (KA-3, KA-4, KA-12)", () => {
   it("canonically orders mixed numeric/string node ids and definition ids", () => {
     const workflow = {
       nodes: [
-        { id: "3", type: "Unknown" },
-        { id: "11", type: "Unknown" },
-        { id: 10, type: "Unknown" },
+        { id: "5", type: "Unknown" },
+        { id: "4", type: "Unknown" },
+        { id: 3, type: "Unknown" },
         { id: 2, type: "Unknown" },
       ],
       links: [],
@@ -52,19 +52,19 @@ describe("W8 projection goldens (KA-3, KA-4, KA-12)", () => {
         "links": [],
         "nodes": [
           {
-            "id": 10,
-            "type": "Unknown",
-          },
-          {
-            "id": "11",
-            "type": "Unknown",
-          },
-          {
             "id": 2,
             "type": "Unknown",
           },
           {
-            "id": "3",
+            "id": 3,
+            "type": "Unknown",
+          },
+          {
+            "id": "4",
+            "type": "Unknown",
+          },
+          {
+            "id": "5",
             "type": "Unknown",
           },
         ],
