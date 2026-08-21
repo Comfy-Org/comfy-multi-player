@@ -35,7 +35,15 @@ recorded when it set the three-file threshold to 79 rather than to the 80.00% it
 a threshold equal to the measurement passes with zero margin and goes red the first time a sibling
 PR adds an uncovered line, reporting "mutation score regression" when it means "new code arrived".
 Raise the threshold whenever the score is raised; the headroom is for new code, not for measurement
-noise, which the pins have removed.
+noise, which the pins have removed. The timeouts-as-survivors floor — the score if every timeout
+were really a survivor — is 84.78%, which is also above the threshold, so the pass does not depend
+on how the 7 timeouts are classified.
+
+Run twice at this commit, at 1-minute load averages of **2.99** and **8.90** on a 28-core host,
+Node 25.9.0: identical to two decimals and identical in every per-file killed/timeout/survived/
+no-coverage column. At the previous base the same config was run twice more and the `Killed`,
+`Timeout`, `Survived` and `NoCoverage` **sets** were element-for-element identical, symmetric
+difference zero — so the stability is of the survivor list, not just of the percentage.
 
 Per-scope movement, kept because the *shape* of the change matters more than the headline. Both
 "before" columns are a real run of the SAME five-file glob against `origin/main` `32ab1f2` (passed
