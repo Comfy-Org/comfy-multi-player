@@ -34,6 +34,19 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
  * healthy run also cruises `node_modules/yjs`, so the real count is 9) — so
  * anything below that means the scan missed files rather than that the package
  * shrank. Raise it if the layer grows; never lower it to make a run pass.
+ *
+ * KNOWN LIMIT — this floor bounds VACUITY, not RULE ADEQUACY. It proves the
+ * scan saw a plausible amount of work; it does not prove every rule could have
+ * fired on what it saw. Worked counter-example: restore `includeOnly: "^src"`
+ * to `.dependency-cruiser.cjs` and plant `import "node:fs"` in `src/doc.ts` —
+ * the run cruises 8 modules / 18 dependencies, clears this floor, and exits 0
+ * green over a real violation, because the filter removed every external
+ * module the purity rules target. (A healthy run is 9 modules / 23
+ * dependencies; the missing external layer is visible only in the dependency
+ * count.) The floor cannot catch that class. Only mutating each rule
+ * separately and confirming the NAMED rule goes red can — one mutant per rule,
+ * not one per change. See `.agents/checks/import-graph.md` and the config's own
+ * "NO includeOnly" comment.
  */
 const MIN_MODULES = 8;
 
