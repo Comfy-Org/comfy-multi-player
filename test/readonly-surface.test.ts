@@ -42,7 +42,14 @@ import {
   type WorkflowJSON,
 } from "../src/index.js";
 import * as publicApi from "../src/index.js";
-import { metaMap, nodesMap, ROOT_DEFINITIONS, ROOT_LINKS, ROOT_NODES } from "../src/doc.js";
+import {
+  metaMap,
+  nodesMap,
+  ROOT_DEFINITIONS,
+  ROOT_LINKS,
+  ROOT_META,
+  ROOT_NODES,
+} from "../src/doc.js";
 import { loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
@@ -569,6 +576,34 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
     clashOnLinks.getArray<unknown>(ROOT_LINKS);
     expect(() => readGraph(clashOnLinks)).toThrow(/already been defined/);
     expect(docCatalogPin(clashOnLinks)).toBe("");
+  });
+
+  it("stays empty for a document holding only structs it cannot integrate", () => {
+    // Mid-arrival: a delta whose dependencies have not landed. Yjs buffers it
+    // in `store.pendingStructs`, registers the root, and integrates nothing —
+    // `encodeStateAsUpdate` is 20 bytes here, not 2, so "carries nothing" is
+    // not the same question as "has no bytes". No reader can see a pending
+    // struct, so the document really is carrying nothing YET, and a follower
+    // in this state needs an empty read rather than a throw.
+    const src = new Y.Doc();
+    src.transact(() => src.getMap<unknown>(ROOT_META).set("schema_version", 1));
+    const sv = Y.encodeStateVector(src);
+    src.transact(() => src.getMap<unknown>(ROOT_NODES).set("7", new Y.Map<unknown>()));
+
+    const partial = new Y.Doc();
+    Y.applyUpdate(partial, Y.encodeStateAsUpdate(src, sv));
+    expect(partial.store.pendingStructs, "fixture must actually be pending").not.toBeNull();
+    // `clients.size`, not `.values().every(...)` — the map is EMPTY here, and
+    // `every` over an empty list is vacuously true, so the weaker spelling
+    // would assert nothing at all.
+    expect(partial.store.clients.size, "nothing may have integrated").toBe(0);
+    expect([...partial.share.keys()], "but a root IS registered").toEqual([ROOT_NODES]);
+    expect(Y.encodeStateAsUpdate(partial).length).toBeGreaterThan(2);
+
+    expect(readGraph(partial)).toEqual({ nodes: {}, links: {} });
+    expect(readMeta(partial)).toEqual({});
+    expect(hasNode(partial, 7)).toBe(false);
+    expect(docCatalogPin(partial)).toBe("");
   });
 
   it("asks whether the document carries anything WITHOUT touching a root", () => {

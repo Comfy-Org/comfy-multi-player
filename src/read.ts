@@ -202,9 +202,21 @@ function snapshotRoot(doc: Y.Doc, name: string): Readonly<Record<string, unknown
  *     which concrete Y type an unrelated caller had registered.
  *
  * Structs buffered as `store.pendingStructs` — an update whose dependencies
- * have not arrived — are deliberately NOT counted. They are not part of the
- * document: `encodeStateAsUpdate` does not emit them and no reader can see
- * them. A replica holding only pending structs really is carrying nothing yet.
+ * have not arrived — are deliberately NOT counted. No reader can see a pending
+ * struct, so a replica holding only pending structs really is carrying nothing
+ * YET, and a follower mid-arrival needs an empty read there rather than a
+ * throw. Note this is not the same question as "has no bytes":
+ * `encodeStateAsUpdate` DOES re-emit the buffered update, so such a document
+ * is 20 bytes, not 2. Pinned by `stays empty for a document holding only
+ * structs it cannot integrate`.
+ *
+ * The `structs.length > 0` test rather than `clients.size > 0` is defensive
+ * and, as far as I could construct, EQUIVALENT: no document I could build —
+ * empty transaction, `getMap`-only, set-then-delete, GC'd subtree, pending-only
+ * — has a client key with an empty struct array. It is kept because it makes
+ * the predicate true by construction rather than by a Yjs implementation
+ * detail, and the mutant that swaps it survives the suite. Said here rather
+ * than left as an unexplained survivor.
  */
 function carriesContent(doc: Y.Doc): boolean {
   for (const structs of doc.store.clients.values()) {
