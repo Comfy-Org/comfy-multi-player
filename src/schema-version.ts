@@ -109,15 +109,17 @@ export function assertSchemaVersionAgainst(doc: Y.Doc, context: string, expected
  * WHY AN OLDER DOCUMENT IS REFUSED RATHER THAN MIGRATED IN PLACE. `project()`
  * is a pure read: it takes a `Y.Doc`, returns JSON, and every replica —
  * browser follower included — calls it. Migrating inside it would make a read
- * WRITE the shared document, which breaks two rules at once. Schema §10 makes
- * migration host-only (followers receive the migrated document via the struct
- * stream or a new epoch), so a follower that self-migrated would produce an
- * independently edited document and open the FC-1 struct-divergence path. And
- * an in-place upgrade hidden inside a read is unstamped (KA-2) and invisible
- * to the op log (KA-1). So the version transition stays where it can be
- * audited: the caller runs `migrate(doc, storedVersion)` on the host, and only
- * then reads. Projecting an older layout as-is is not an option either — that
- * IS the mis-projection KA-11 names.
+ * WRITE the shared document, which breaks two rules at once. The direct one is
+ * KA-6 / FC-5: followers never write the shared doc, and schema §10 puts
+ * migration on the host precisely so followers receive the migrated document
+ * via the struct stream or a new epoch. A follower that self-migrated would
+ * become an independently edited replica, which is then the FC-1 raw-struct
+ * divergence path (KA-1 says such replicas must exchange semantic ops, and an
+ * in-place upgrade is not one — it is neither stamped nor in the op log). So
+ * the version transition stays where it can be audited: the caller runs
+ * `migrate(doc, storedVersion)` on the host, and only then reads. Projecting
+ * an older layout as-is is not an option either — that IS the mis-projection
+ * KA-11 names.
  *
  * Consistent with `migrate()` by construction: same failure type
  * (`SchemaVersionError`), same notion of unreadable, same wording for a

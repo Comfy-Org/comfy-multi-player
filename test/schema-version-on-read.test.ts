@@ -103,6 +103,36 @@ describe("project() enforces schema-version on read (KA-11, #38)", () => {
     expect(() => project(doc, catalog)).toThrow(/no readable meta\.schema_version/);
   });
 
+  it("fails closed on a meta root that is REGISTERED in doc.share but carries nothing", () => {
+    // The case the gate's own reasoning turns on, and the one whose absence
+    // let a false comment through review: `doc.share.has("meta")` is TRUE
+    // here, because `Y.Doc#getMap` registers an empty root immediately. It is
+    // NOT the question "does this document carry content" — any earlier reader
+    // in the process can have put the key there. The key read is what makes
+    // the gate fail closed on this document, not the `share.has` check.
+    const doc = new Y.Doc();
+    doc.getMap<unknown>("meta");
+    expect(doc.share.has("meta")).toBe(true);
+
+    expect(readSchemaVersion(doc)).toBeUndefined();
+    expect(() => project(doc, catalog)).toThrow(/no readable meta\.schema_version/);
+    expect(() => migrate(doc, SCHEMA_VERSION)).toThrow(/no readable meta\.schema_version/);
+  });
+
+  it("surfaces Yjs's constructor clash, NOT a SchemaVersionError, when meta is the wrong Y type", () => {
+    // A3 records this carve-out for `migrate()`; it applies verbatim to
+    // `project()`, and a consumer matching on the error TYPE must expect it.
+    // Pinned rather than described, because the docs say "refuses with
+    // `SchemaVersionError`" and that is not universally true.
+    const doc = new Y.Doc();
+    doc.getArray<unknown>("meta").push([1]);
+
+    expect(() => project(doc, catalog)).toThrow(/already been defined with a different constructor/);
+    expect(() => project(doc, catalog)).not.toThrow(SchemaVersionError);
+    // Still fail-closed, and still a throw — which is the property that matters.
+    expect(() => project(doc, catalog)).toThrow();
+  });
+
   it("refuses byte-exactly: a rejected read leaves the document untouched", () => {
     const doc = readableDoc();
     metaMap(doc).set("schema_version", SCHEMA_VERSION + 1);

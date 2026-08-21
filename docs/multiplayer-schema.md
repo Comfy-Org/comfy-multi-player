@@ -352,7 +352,11 @@ tracking stays mandatory.
    actors idle past snapshot age are dropped at snapshot time.
 2. **Snapshot compaction.** When bookkeeping exceeds **25% of doc bytes or
    10,000 `__applied` entries** (whichever first), the host mints a fresh doc
-   from `project(doc)` — safe exactly because projection is total (§7) —
+   from `project(doc)` — safe because projection is total over the documents
+   a host holds: it refuses a whole document only when the schema version is
+   unreadable (§7 rule 0) or the catalogue pin is violated (§3 pin 4), neither
+   of which is a state a host can be compacting from, and it drops individual
+   entries only per §7 rule 6 —
    carrying forward: `__stamps` entries for still-live targets, the actor
    watermarks, `catalog_version`, and the id high-water marks. The fresh doc
    is a new **doc epoch**: its bootstrap snapshot replaces the old one (§9),
@@ -462,6 +466,14 @@ Pinned semantics:
 
 `project(doc, catalog)` is a pure read producing ComfyUI workflow JSON;
 `project(mint(w, catalog), catalog)` must deep-equal `canonical(w)`.
+
+**Rule 0, which runs before any of the rules below (Amendment A5, §10).** The
+first thing `project()` does is refuse a document whose `meta.schema_version`
+this package cannot read — absent, not a positive integer, or a version other
+than `SCHEMA_VERSION`. That refusal is a WHOLE-DOCUMENT `SchemaVersionError`,
+it precedes the per-entry dispositions in rule 6, and it precedes the
+catalogue check in §3 pin 4. A reader of this section alone would otherwise
+conclude `project()` never refuses a whole document.
 
 Canonicalization rules (all of them — the spike confirmed rules 1-5 exhaustive
 for its corpus; rule 6 was added by Amendment A4):
@@ -584,10 +596,14 @@ the epoch; cross-epoch struct updates never merge.
   project a new document (KA-11).
   A document OLDER than the reader is refused too, not migrated in place:
   migration is a host-only write, `project()` is a pure read available to every
-  replica, and a read that writes the shared doc is both unstamped (KA-2) and,
-  on a follower, an independently edited document (FC-1). The caller runs
-  `migrate(doc, storedVersion)` first, then reads. The refusal is byte-exact
-  and materializes no root type, the same as `migrate()`'s.
+  replica, and a follower that writes the shared doc breaks KA-6/FC-5 outright
+  and becomes an independently edited replica, which is the FC-1 raw-struct
+  divergence path. The caller runs `migrate(doc, storedVersion)` first, then
+  reads. The refusal is byte-exact and materializes no root type, the same as
+  `migrate()`'s — asserted on `[...doc.share.keys()]`, since an empty
+  materialized root encodes to zero bytes (A3).
+  Both entrypoints share ONE definition of the read, `readSchemaVersion` in
+  `src/schema-version.ts`; `migrate()` holds no private copy. See Amendment A5.
 
 ---
 

@@ -100,23 +100,55 @@ and unknown widget names are no longer caught.
 
 ### `project(doc, catalog): WorkflowJSON`
 
-Pure read, byte-stable for a given document state, so the browser and the
-server render identical JSON. Canonicalization: nodes and links sorted by id;
-the name-keyed widget map assembled into positional `widgets_values` (missing
-names project as `null`); `outputs[].links: null` preserved verbatim, never
-coerced to `[]`; every unrecognized workflow key passed through untouched.
+Read-only with respect to the document's CONTENT, byte-stable for a given
+document state, so the browser and the server render identical JSON.
+Canonicalization: nodes and links sorted by id; the name-keyed widget map
+assembled into positional `widgets_values` (missing names project as `null`);
+`outputs[].links: null` preserved verbatim, never coerced to `[]`; every
+unrecognized workflow key passed through untouched.
 
-Throws (`TypeError`) if a node has widget values whose class the catalog does
-not describe — see [`opaque_widgets`](#opaque-widgets) for the case that is
+**Fails closed on the schema version FIRST (KA-11).** Before it reads a single
+key it throws `SchemaVersionError` when `meta.schema_version` is absent, is not
+a positive integer, or is not this package's `SCHEMA_VERSION`. A document
+NEWER than this package is refused rather than best-effort projected; a
+document OLDER is refused too, and the message names the remedy — run
+`migrate(doc, storedVersion)` on the **host** first, then read. `project()`
+never migrates, because every replica including a browser follower calls it and
+a follower must not write the shared document (KA-6/FC-5). This refusal is
+byte-exact: `encodeStateAsUpdate(doc)` and the `doc.share` key set are both
+unchanged. Consequence for callers: `project(new Y.Doc(), catalog)` used to
+return `{nodes: [], links: []}` and now throws. Bootstrap with `mint()` (schema
+§9) or `initDoc()`; `migrate()` is not an escape, it refuses the same document.
+
+Then throws (`TypeError`) if a node has widget values whose class the catalog
+does not describe — see [`opaque_widgets`](#opaque-widgets) for the case that is
 handled instead of throwing.
+
+One caveat on "pure", stated because the word invites the wider reading: on the
+ACCEPT path `project()` still types the `nodes`/`links`/`definitions` roots
+unconditionally, and `Y.Doc#getMap` registers an absent root in `doc.share`. On
+a snapshot-forked replica (§9) that legitimately lacks `definitions`, a
+successful `project()` therefore grows the `doc.share` key set. Nothing is
+encoded — an empty root is zero bytes, so `encodeStateAsUpdate` is unchanged
+and nothing goes on the wire — and this is unchanged from before the schema
+gate existed. It is the `migrate()`-side defect (#20) one function over, and it
+is tracked separately; do not read "pure read" as "leaves `doc.share` alone" on
+the accept path.
 
 ### `migrate(doc, fromVersion): void`
 
-Document-layout versioning, and the **fail-closed read gate** a host calls
-before it reads a document it did not mint. `SCHEMA_VERSION` is `1`, so today
-there is nothing to step: the call validates and no-ops at v1, and throws
+Document-layout versioning, and the **migration path** a host runs before it
+reads a document it did not mint. `SCHEMA_VERSION` is `1`, so today there is
+nothing to step: the call validates and no-ops at v1, and throws
 `SchemaVersionError` for everything else. A host never best-effort reads a
 layout it does not know.
+
+`migrate()` is **no longer the only fail-closed read gate** — it was, and
+nothing forced a caller through it, which is the fail-open gap #38 closed by
+putting the same check inside `project()`. Both entrypoints share one
+definition of the read (`readSchemaVersion`), so they agree on exactly which
+documents are unreadable. `migrate()` remains **host-only**: followers receive
+a migrated document over the struct stream or as a new epoch (schema §10).
 
 `fromVersion` is your *claim* about the document, and it is checked against the
 document's own `meta.schema_version`. It throws when:
