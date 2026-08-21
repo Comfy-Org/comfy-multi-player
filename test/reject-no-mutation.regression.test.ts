@@ -558,6 +558,7 @@ describe("KA-4 / D4 as a property, not a list of instances", () => {
 
   it("every rejected op over a generated op space leaves the document byte-identical", () => {
     let n = 0;
+    let rejected = 0;
     fc.assert(
       fc.property(opArb, fc.integer({ min: 0, max: 3 }), (partial, baseVersion) => {
         n += 1;
@@ -574,15 +575,19 @@ describe("KA-4 / D4 as a property, not a list of instances", () => {
 
         const res = applyOps(doc, [op], countingCatalog);
         if (res.failed === null) return; // an accepted op is allowed to mutate
+        rejected += 1;
 
         expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
         expect(JSON.stringify(project(doc, countingCatalog))).toBe(projected);
         expect(appliedMap(doc).has(op.op_id)).toBe(false);
       }),
-      { seed: 0x4a_4d_04, numRuns: 3000 },
+      { seed: 0x4a_4d_04, numRuns: 25000 },
     );
     // Non-vacuity of the sweep itself: a run in which nothing was ever
-    // rejected would pass every assertion above without testing anything.
-    expect(n).toBeGreaterThan(2000);
-  });
+    // rejected would pass every assertion above without testing anything. At
+    // this seed and run count the sweep independently re-derives all four
+    // triggers the table above names.
+    expect(n).toBe(25_000);
+    expect(rejected).toBeGreaterThan(5_000);
+  }, 60_000);
 });
