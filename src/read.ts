@@ -46,6 +46,11 @@
  *      construction and its first `doc_update` frame has no roots at all, and a
  *      read must not give it any. Every accessor here gates on
  *      `doc.share.has(name)` first.
+ *   5. IT IS NOT A WAY AROUND THE KA-11 READ GATE. `project()` refuses a
+ *      document whose `meta.schema_version` this package cannot read (#38).
+ *      This surface reads the SAME layout by the SAME key names, so every
+ *      accessor refuses it too — see {@link assertSnapshotReadable} for the
+ *      two clauses and why the empty-document one is load-bearing.
  *
  * Nothing here is a substitute for the write path: shared state changes go
  * through `applyOps` and nothing else.
@@ -55,11 +60,14 @@ import * as Y from "yjs";
 import {
   OPAQUE_WIDGETS_KEY,
   ROOT_APPLIED,
+  ROOT_DEFINITIONS,
   ROOT_LINKS,
   ROOT_META,
   ROOT_NODES,
   ROOT_STAMPS,
 } from "./doc.js";
+import { assertReadableSchema, readSchemaVersion } from "./schema-version.js";
+import { SCHEMA_VERSION } from "./types.js";
 
 /**
  * The reserved per-node key holding a whole `widgets_values` array verbatim for
@@ -154,6 +162,93 @@ function snapshotRoot(doc: Y.Doc, name: string): Readonly<Record<string, unknown
 }
 
 // ---------------------------------------------------------------------------
+// The KA-11 read gate, on this surface
+// ---------------------------------------------------------------------------
+
+/**
+ * The schema §1 roots this package knows how to name.
+ *
+ * "Does the document carry content" is asked over ALL of them, not just the one
+ * a given accessor reads: a document whose `definitions` root is populated is
+ * carrying content even when `readGraph` would return an empty graph, and the
+ * question the gate asks is about the DOCUMENT, not about one accessor's
+ * return value.
+ */
+const SCHEMA_ROOTS: readonly string[] = [
+  ROOT_NODES,
+  ROOT_LINKS,
+  ROOT_DEFINITIONS,
+  ROOT_META,
+  ROOT_APPLIED,
+  ROOT_STAMPS,
+];
+
+/**
+ * Whether any schema root holds an entry.
+ *
+ * Deliberately content, not root PRESENCE. A root can be present-but-empty
+ * without the document carrying anything: `Y.Doc#getMap` registers an empty
+ * root immediately, so any earlier reader in the same process can have put one
+ * there (that is the #20 defect). Keying the gate on presence would let an
+ * unrelated `metaMap(doc)` call elsewhere in the process flip a legitimately
+ * empty document from "readable and empty" to "refused".
+ *
+ * `doc.getMap` on a root that is ALREADY in `doc.share` types structs that
+ * already exist — it adds no bytes to `encodeStateAsUpdate` and no share key
+ * (see {@link rootMap}). A root integrated as a different concrete Y type
+ * makes it throw, which is the fail-closed read posture (KA-11), same as
+ * `project()` — Amendment A3 records the same exception for `migrate()`.
+ */
+function carriesContent(doc: Y.Doc): boolean {
+  for (const name of SCHEMA_ROOTS) {
+    if (!doc.share.has(name)) continue;
+    if (doc.getMap<unknown>(name).size > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * The KA-11 read gate for this surface: **refuse a document that carries
+ * content under a schema this package cannot read; stay empty for a document
+ * that carries nothing.**
+ *
+ * WHY THIS EXISTS. `project()` refuses a document whose `meta.schema_version`
+ * is missing, older, newer, or not a version at all (#38/#60), because reading
+ * a v2 layout with v1 key names is the KA-11 mis-projection. This surface
+ * reads the SAME layout by the SAME key names, so without a gate here a
+ * consumer could route around `project()`'s refusal by calling `readGraph`
+ * instead and get exactly the mis-keyed read KA-11 forbids. A guard a consumer
+ * can walk around is decorative.
+ *
+ * WHY IT IS NOT JUST `assertReadableSchema`. A follower's document between
+ * construction and its first `doc_update` frame has no roots at all, and PR #30
+ * established that returning *empty* for it is correct rather than a failure —
+ * there is no content to mis-key, and refusing would break the follower's
+ * pre-first-frame render path. `assertReadableSchema` alone would throw there,
+ * because "no readable `schema_version`" is one of its refusal cases. So the
+ * two clauses are:
+ *
+ *   1. the document carries content, and its schema is not this package's →
+ *      throw the same `SchemaVersionError` `project()` throws;
+ *   2. the document carries nothing → return, and every accessor then yields
+ *      its empty value (`{}`, `[]`, `""`, `false`).
+ *
+ * There is no third clause, and in particular no "read it anyway" arm: a
+ * document that carries content and does not say which schema it is in is
+ * refused, exactly as `project()` refuses it.
+ *
+ * The version comparison itself is NOT redefined here. `readSchemaVersion` and
+ * `assertReadableSchema` are `schema-version.ts`'s, so this surface, the
+ * projection, and `migrate()` share one definition of "readable" and cannot
+ * drift into three.
+ */
+function assertSnapshotReadable(doc: Y.Doc, context: string): void {
+  if (readSchemaVersion(doc) === SCHEMA_VERSION) return;
+  if (!carriesContent(doc)) return;
+  assertReadableSchema(doc, context);
+}
+
+// ---------------------------------------------------------------------------
 // Graph snapshot
 // ---------------------------------------------------------------------------
 
@@ -205,6 +300,7 @@ export interface GraphSnapshot {
  * already does when walking the root map by hand.
  */
 export function readGraph(doc: Y.Doc): GraphSnapshot {
+  assertSnapshotReadable(doc, "readGraph");
   const nodes: Record<string, NodeSnapshot> = {};
   rootMap(doc, ROOT_NODES)?.forEach((node, id) => {
     if (!(node instanceof Y.Map)) return;
@@ -233,6 +329,7 @@ export function readGraph(doc: Y.Doc): GraphSnapshot {
  * keys. Empty (frozen) for a document that has no `meta` root yet.
  */
 export function readMeta(doc: Y.Doc): Readonly<Record<string, unknown>> {
+  assertSnapshotReadable(doc, "readMeta");
   return snapshotRoot(doc, ROOT_META);
 }
 
@@ -242,11 +339,12 @@ export function readMeta(doc: Y.Doc): Readonly<Record<string, unknown>> {
  *
  * `""` means "unknown, cannot compare" — the same normalization a host pin
  * guard has to do by hand, kept here so the KA-12 comparison is defined once.
- * O(1) and allocation-free: it reads one key rather than copying all of `meta`
- * (which carries `groups`/`extra` passthrough), so it is safe on a
- * per-request guard path.
+ * O(1) and allocation-free: it reads two `meta` keys (the schema claim the gate
+ * needs, then the pin) rather than copying all of `meta` — which carries the
+ * `groups`/`extra` passthrough — so it is safe on a per-request guard path.
  */
 export function docCatalogPin(doc: Y.Doc): string {
+  assertSnapshotReadable(doc, "docCatalogPin");
   const raw = rootMap(doc, ROOT_META)?.get("catalog_version");
   return typeof raw === "string" ? raw : "";
 }
@@ -263,6 +361,7 @@ export function docCatalogPin(doc: Y.Doc): string {
  * graph per op.
  */
 export function hasNode(doc: Y.Doc, nodeId: string | number): boolean {
+  assertSnapshotReadable(doc, "hasNode");
   return rootMap(doc, ROOT_NODES)?.has(String(nodeId)) ?? false;
 }
 
@@ -272,6 +371,7 @@ export function hasNode(doc: Y.Doc, nodeId: string | number): boolean {
  * without copying a ledger that grows with document history.
  */
 export function hasAppliedOp(doc: Y.Doc, opId: string): boolean {
+  assertSnapshotReadable(doc, "hasAppliedOp");
   return rootMap(doc, ROOT_APPLIED)?.has(opId) ?? false;
 }
 
@@ -280,6 +380,7 @@ export function hasAppliedOp(doc: Y.Doc, opId: string): boolean {
  * NOT a causal order — compare as a set).
  */
 export function appliedOpIds(doc: Y.Doc): readonly string[] {
+  assertSnapshotReadable(doc, "appliedOpIds");
   const root = rootMap(doc, ROOT_APPLIED);
   return Object.freeze(root === undefined ? [] : [...root.keys()]);
 }
@@ -291,5 +392,6 @@ export function appliedOpIds(doc: Y.Doc): readonly string[] {
  * conformance harness compares — no projection contains it.
  */
 export function readStamps(doc: Y.Doc): Readonly<Record<string, unknown>> {
+  assertSnapshotReadable(doc, "readStamps");
   return snapshotRoot(doc, ROOT_STAMPS);
 }

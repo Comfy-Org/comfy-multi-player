@@ -56,6 +56,19 @@ proved by attempting the violation in `test/readonly-surface.test.ts`:
    A follower's document between construction and its first frame has no roots
    at all, so every accessor gates on `doc.share.has(name)` and a full pass of
    the surface leaves both `doc.share` and `encodeStateAsUpdate` untouched.
+5. **It is not a way around the KA-11 read gate.** `project()` refuses a
+   document whose `meta.schema_version` this package cannot read (#38). This
+   surface reads the same layout by the same key names, so without a gate a
+   consumer could call `readGraph` instead of `project` and get exactly the
+   mis-keyed v1-names-over-a-v2-document read KA-11 forbids. Every accessor
+   therefore refuses — same `SchemaVersionError`, same message shape — **when
+   the document carries content under a schema this package cannot read**, and
+   returns its empty value **when the document carries nothing**. The second
+   clause is not a softening: ADR-004's follower reads a document that has no
+   roots at all before its first frame, and PR #30 settled that returning empty
+   there is correct. The comparison itself is not re-implemented; it delegates
+   to `schema-version.ts`, so this surface, `project()` and `migrate()` share
+   one definition of "readable".
 
 `test/public-api.regression.test.ts` keeps deriving the forbidden set from
 `src/doc.ts` at runtime, with ADR-004's exact three-entry follower allowlist
@@ -106,3 +119,11 @@ classify, so a future export cannot widen the surface unreviewed.
 - The snapshot walk has a depth ceiling (64) and throws `RangeError` past it,
   so a corrupt or hostile document is a loud bounded failure rather than a hung
   render loop.
+- The read gate narrows this surface relative to a version of it without one: a
+  document carrying content under an unreadable schema now throws from every
+  accessor instead of returning mis-keyed data. Nothing a conforming producer
+  emits is affected — `mint()` writes `schema_version` unconditionally and it is
+  the only document constructor in the system — but a host that wants a
+  structured error rather than a throw should pre-check with the exported
+  `readSchemaVersion(doc)`, exactly as the doc-host sidecar already pre-checks
+  `catalog_version`.
