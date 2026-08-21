@@ -44,10 +44,11 @@ Repo conventions:
 The block below **is** `.coderabbit.yaml`'s `path_instructions` entry for `test/**`, not a
 description of it: `npm run gen:coderabbit` emits the YAML from this block and
 `npm run check:coderabbit` fails CI when the two disagree, so the file is a build product and this
-is the only editable copy. That is the structural fix for the reason item 2's oracle survived two
-attempts to correct it — the bot copy lived in a different file, in a different format, and was not
-greppable from this one, so each attempt fixed the copy it could see and the copy that runs on every
-PR stayed wrong.
+is the only editable copy. That is the structural fix for the reason item 2's oracle outlived its
+first correction: #43 (`7c454eb`) created both copies in one commit, #53 (`547ae7b`) corrected this
+file and left `.coderabbit.yaml` saying the retired thing, and it took #74 (`2e42423`) to find both
+by hand. The bot copy lived in a different file, in a different format, and was not greppable from
+this one.
 
 Write it for the bot: **self-contained**, since `path_instructions` are injected as literal text and
 this profile is never loaded alongside them. Keep item 3's accepted-op carve-out in it — the first
@@ -114,6 +115,8 @@ The retired advice, banned in both copies — this file and the machine-consumed
 
 These three markers are **not** made redundant by the generator above, and the distinction is worth stating because "it is generated, so it cannot diverge" is only half true. `check:coderabbit` proves the YAML matches the *source block*; it says nothing about whether the source block still says the right thing. An author who re-typed the retired oracle into the block above and regenerated would pass that gate and fail these markers. Generation removes the transport copy; the markers hold the content.
 
+The limit of that, said plainly rather than left to be discovered: these are substring tripwires on two exact spellings. A **paraphrase** — "show the projection is identical before and after the rejected op" — regenerates cleanly and passes every gate in this repo. That was measured against this tree, not assumed. The ban set cannot simply be widened, because this block's own correct text contains `project()` and `projection`. The residue is #74's and is unchanged; someone still has to read the block.
+
 <!-- claim-absent: the projection must be unchanged :: .agents/checks/test-quality.md -->
 <!-- claim-absent: project(doc) :: .coderabbit.yaml -->
 <!-- claim: Y.encodeStateAsUpdate :: .coderabbit.yaml -->
@@ -127,6 +130,8 @@ The observable table and the conventions block:
 
 <!-- claim: [...metaMap(doc).keys()].sort() :: test/doc-mint-mutation-survivors.test.ts -->
 <!-- claim: [...doc.share.keys()] :: test/roundtrip.test.ts -->
+<!-- claim: "check:coderabbit": "node scripts/gen-coderabbit-config.mjs" :: package.json -->
+<!-- claim: "gen:coderabbit": "node scripts/gen-coderabbit-config.mjs --write" :: package.json -->
 <!-- claim: "test": "vitest run" :: package.json -->
 <!-- claim: "check:mutation-report": "node scripts/check-mutation-report.mjs" :: package.json -->
 <!-- claim: "verify:corpus": "node scripts/verify-corpus.mjs" :: package.json -->

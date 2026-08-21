@@ -4,13 +4,18 @@
  *
  * WHY THIS EXISTS. `path_instructions` is a machine-consumed restatement of the
  * prose profiles in `.agents/checks/`. It was hand-written, and it drifted: the
- * `test/**` block and `.agents/checks/test-quality.md` were born in one commit
- * (#43, `7c454eb`) carrying the same wrong rejection oracle, and each of the two
- * later PRs that set out to fix it fixed only the copy it could see — neither
- * copy was greppable from the other, and the YAML one is the copy that actually
- * runs on every PR. Substring tripwires (`npm run check:profile-claims`) can
- * detect that divergence after the fact; they cannot prevent it. This makes the
- * YAML a build product of the profiles, so there is one editable copy.
+ * `test/**` entry and `.agents/checks/test-quality.md` were born in one commit
+ * (#43, `7c454eb`) carrying the same wrong rejection oracle. #53 (`547ae7b`)
+ * then corrected the profile's item 2 and left the YAML saying the retired
+ * thing — one copy fixed, the copy that actually runs on every PR left wrong,
+ * because neither was greppable from the other. #56 (`0231199`) edited the same
+ * file nine lines below and walked past it. It took #74 (`2e42423`) to find both
+ * by hand and fix them together. Substring tripwires (`check:profile-claims`)
+ * catch a revival of a banned phrase; nothing made the two copies one thing.
+ * This makes the YAML a build product of the profiles, so there is one editable
+ * copy. Both gates detect rather than prevent — a PR that drifts the config is
+ * still reviewed by CodeRabbit against its own drifted head — but it cannot
+ * merge.
  *
  * SOURCE OF TRUTH. Each entry is authored inside the profile that owns it, in a
  * delimited block:
@@ -28,6 +33,11 @@
  * comment lines in `.coderabbit.yaml` and splices; every other key in that file
  * is hand-written and preserved byte-for-byte. A generated file that could not
  * carry hand-written config would be a worse trade than the drift it prevents.
+ * That affordance is also the gate's sharpest hazard — hand-written YAML outside
+ * the region can make the generated region inert (a second
+ * `path_instructions:` key wins, or a deleted `reviews:` line unparents it) with
+ * every byte inside the region still correct. The structural checks below exist
+ * for exactly that, and their limit is stated with them.
  *
  * USAGE
  *   node scripts/gen-coderabbit-config.mjs            check for drift (CI)
@@ -35,10 +45,12 @@
  *
  * Exit codes (`.agents/checks/README.md` gate convention):
  *   0  PASS   — the file on disk matches what the profiles generate
- *   1  FAIL   — drift; run `npm run gen:coderabbit`
- *   2  INCONCLUSIVE — it could not run over a meaningful unit of work: the
- *      sentinels are missing, or fewer than MIN_BLOCKS source blocks were found
- *      (which would let a deleted block look like a clean regeneration)
+ *   1  FAIL   — it ran and found something: drift, or a source block the
+ *      emitter cannot represent
+ *   2  INCONCLUSIVE — it could not run over a meaningful unit of work: no
+ *      profiles directory, no config file, no sentinels, or fewer than
+ *      MIN_BLOCKS source blocks (which would let a deleted block look like a
+ *      clean regeneration)
  */
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -53,7 +65,10 @@ const configPath = join(root, ".coderabbit.yaml");
 // Floor on the unit of work. Raise it when a block is added; never lower it to
 // make a run pass — the whole point is that a silently-dropped block must not
 // regenerate to a smaller, still-valid config. Mirrors MIN_MODULES in
-// scripts/check-import-graph.mjs.
+// scripts/check-import-graph.mjs. It has no headroom by construction and it
+// counts blocks rather than content, so it catches a deletion and not a
+// one-for-one swap; the per-block content anchors in the profiles
+// (`claim: … :: .coderabbit.yaml`) are what cover that.
 const MIN_BLOCKS = 5;
 
 const BEGIN = "  # BEGIN GENERATED path_instructions";
@@ -65,10 +80,10 @@ const INDENT = " ".repeat(8);
 
 // Anchored at column 0 (`^` with `m`), so an *indented* copy of the syntax is a
 // documentation example rather than a source block — which is how
-// .agents/checks/README.md can show the marker while also hosting three real
-// blocks. OPEN_RE then catches a real block whose body is malformed: a marker at
-// column 0 that produced no block is a dropped instruction, and silence there
-// would regenerate a smaller config that still parses.
+// .agents/checks/README.md can show the marker while also hosting a real block.
+// OPEN_RE then catches a real block whose body is malformed: a marker at column
+// 0 that produced no block is a dropped instruction, and silence there would
+// regenerate a smaller config that still parses.
 const BLOCK_RE =
   /^<!--\s*coderabbit-instructions:\s*(.+?)\s*-->\r?\n```text\r?\n([\s\S]*?)\r?\n```\r?\n<!--\s*\/coderabbit-instructions\s*-->/gm;
 const OPEN_RE = /^<!--\s*coderabbit-instructions:/gm;
@@ -81,7 +96,16 @@ const fail = (message, code) => {
 /** One paragraph, single-spaced. Authoring line breaks carry no meaning. */
 const normalize = (body) => body.trim().split(/\s+/).join(" ");
 
-/** Greedy wrap. Deterministic, so regeneration is a fixpoint. */
+/**
+ * Greedy wrap. Deterministic, so regeneration is a fixpoint.
+ *
+ * Losslessness of the emission is NOT asserted here. It would be a tautology:
+ * this splits the normalized body on single spaces and a folded scalar rejoins
+ * its lines with single spaces, so any in-process round-trip check is its own
+ * inverse rather than an independent oracle. `test/gen-coderabbit-config.test.ts`
+ * proves it the only way that means anything — by reading the emitted YAML back
+ * the way a parser does and comparing to the source body.
+ */
 function wrap(text) {
   const lines = [];
   let line = "";
@@ -97,19 +121,23 @@ function wrap(text) {
   return lines;
 }
 
-/**
- * Read a YAML folded scalar back. Used to prove the emission is lossless rather
- * than assuming it: a folded scalar joins its lines with single spaces, so
- * unfolding an emitted block must return the normalized body exactly.
- */
-const unfold = (lines) => lines.join(" ");
-
 function collectBlocks() {
   const blocks = [];
-  const names = readdirSync(checksDir)
-    .filter((name) => name.endsWith(".md"))
-    .sort();
-  for (const name of names) {
+  let names;
+  try {
+    names = readdirSync(checksDir).filter((name) => name.endsWith(".md"));
+  } catch {
+    fail(
+      `coderabbit-config check INCONCLUSIVE — cannot read the profiles directory ${checksDir}.`,
+      2,
+    );
+  }
+  // Deterministic order: profile filename, then position within the file. The
+  // emitted list order is therefore an artifact of the filenames, and a profile
+  // rename reorders it. That is safe only while no two globs can match the same
+  // file — verified over every tracked file — because CodeRabbit applies every
+  // matching entry. Check that again before adding an overlapping glob.
+  for (const name of names.sort()) {
     const text = readFileSync(join(checksDir, name), "utf8");
     const opened = [...text.matchAll(OPEN_RE)].length;
     const matched = [...text.matchAll(BLOCK_RE)].length;
@@ -150,8 +178,9 @@ function render(blocks) {
     "  # the glob and regenerate. `npm run check:coderabbit` fails CI on drift.",
     "  #",
     "  # This list is the copy of the profiles that actually runs on every PR. When",
-    "  # it was hand-written it diverged from them silently and stayed wrong through",
-    "  # two PRs that each fixed only the copy they could see.",
+    "  # it was hand-written it diverged from them: #43 created both copies with the",
+    "  # same wrong rejection oracle, #53 corrected the profile and left this file",
+    "  # saying the retired thing, and it took #74 to find both by hand.",
     "  #",
     "  # Generation makes the transport exact; it does not check the wording. Several",
     "  # phrases below are additionally pinned to the profile prose by",
@@ -163,18 +192,10 @@ function render(blocks) {
     "  path_instructions:",
   ];
   for (const block of blocks) {
-    const lines = wrap(block.body);
-    if (unfold(lines) !== block.body) {
-      fail(
-        `coderabbit-config: emission is not lossless for ${block.path} — refusing to write.\n` +
-          "A word longer than the line budget, or a folding artifact, changed the text.",
-        1,
-      );
-    }
     out.push(`    - path: "${block.path}"`);
     out.push(`      # source: ${block.source}`);
     out.push("      instructions: >-");
-    for (const line of lines) out.push(INDENT + line);
+    for (const line of wrap(block.body)) out.push(INDENT + line);
   }
   out.push(END);
   return out.join("\n");
@@ -195,7 +216,12 @@ if (duplicate) {
   fail(`coderabbit-config: two instruction blocks claim the same glob: ${duplicate}`, 1);
 }
 
-const current = readFileSync(configPath, "utf8");
+let current;
+try {
+  current = readFileSync(configPath, "utf8");
+} catch {
+  fail(`coderabbit-config check INCONCLUSIVE — cannot read ${configPath}.`, 2);
+}
 const lines = current.split("\n");
 const begin = lines.indexOf(BEGIN);
 const end = lines.indexOf(END);
@@ -204,6 +230,41 @@ if (begin === -1 || end === -1 || end < begin) {
     "coderabbit-config check INCONCLUSIVE — .coderabbit.yaml has no generated region.\n" +
       `Expected the sentinel lines:\n${BEGIN}\n${END}`,
     2,
+  );
+}
+
+// Structural checks on the HAND-WRITTEN part of the file. Byte-equality of the
+// generated region is not enough on its own: the region can be perfect and
+// inert. A second `path_instructions:` key elsewhere wins over this one, and
+// deleting the `reviews:` line leaves the region correctly formatted at the
+// wrong place in the document. Both were reproduced against this gate before
+// these checks existed, and both left it green.
+//
+// LIMIT, stated rather than implied: this gate does not parse YAML. A syntax
+// error in the hand-written part will not be caught here — CodeRabbit reports
+// its own config errors, and adding a YAML parser to check a five-entry list is
+// a dependency this package does not want.
+const outside = [...lines.slice(0, begin), ...lines.slice(end + 1)];
+const reviewsKeys = outside.filter((l) => l === "reviews:").length;
+// Counted outside the region and reported as "including the generated one", so
+// the number reads the way a person checking the file would count it. On a
+// freshly-stubbed file the region is empty and this is still correct.
+const instructionKeys = outside.filter((l) => /^\s*path_instructions:/.test(l)).length + 1;
+// The nearest preceding TOP-LEVEL key, so hand-written keys nested under
+// `reviews:` (a `profile:` line, say) may sit between it and the region.
+const parent = lines
+  .slice(0, begin)
+  .filter((l) => l.trim() !== "" && !l.trim().startsWith("#") && !/^\s/.test(l))
+  .pop();
+if (reviewsKeys !== 1 || instructionKeys !== 1 || parent !== "reviews:") {
+  fail(
+    "coderabbit-config check FAILED — the generated region is not the effective " +
+      "reviews.path_instructions.\n\n" +
+      `  top-level "reviews:" lines: ${reviewsKeys} (expected 1)\n` +
+      `  "path_instructions:" keys : ${instructionKeys} (expected 1)\n` +
+      `  key directly above the region: ${JSON.stringify(parent)} (expected "reviews:")\n\n` +
+      "A duplicate key or a missing parent leaves the region byte-perfect and inert.",
+    1,
   );
 }
 

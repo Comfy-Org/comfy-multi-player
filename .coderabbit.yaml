@@ -7,8 +7,9 @@ reviews:
   # the glob and regenerate. `npm run check:coderabbit` fails CI on drift.
   #
   # This list is the copy of the profiles that actually runs on every PR. When
-  # it was hand-written it diverged from them silently and stayed wrong through
-  # two PRs that each fixed only the copy they could see.
+  # it was hand-written it diverged from them: #43 created both copies with the
+  # same wrong rejection oracle, #53 corrected the profile and left this file
+  # saying the retired thing, and it took #74 to find both by hand.
   #
   # Generation makes the transport exact; it does not check the wording. Several
   # phrases below are additionally pinned to the profile prose by
@@ -29,22 +30,6 @@ reviews:
         skipped op_id record) is a blocking KA-4 issue (see issue #10); require
         validate-before-mutate. Any second op-to-document implementation is a
         blocking FC-3 issue.
-    - path: "scripts/**"
-      # source: .agents/checks/README.md
-      instructions: >-
-        These scripts are the machine-enforced guards for the invariants
-        (check-purity, verify-corpus). Changes that weaken a guard (turning a
-        positive assertion into a denylist, skipping the corpus SHA check, or
-        making a gate non-fatal) are correctness issues. Keep the purity gate a
-        positive yjs-only assertion, not merely a denylist (issue #22).
-    - path: "{package.json,package-lock.json,tsconfig.json,.github/**,stryker.conf.*}"
-      # source: .agents/checks/README.md
-      instructions: >-
-        Guard the build and CI contract. The production dependency set must
-        stay yjs-only (KA-3/FC-3) — flag any new runtime dependency. Cite the
-        frozen vocabulary/catalog by SHA, never a moving branch (FC-10). Do not
-        remove or make non-fatal the build, purity, corpus-verify, or test CI
-        steps.
     - path: "{fixtures/**,.agents/checks/catalog-pinning.md}"
       # source: .agents/checks/catalog-pinning.md
       instructions: >-
@@ -55,6 +40,22 @@ reviews:
         update, cites the catalog/vocabulary by a moving branch instead of a
         SHA, or would let the corpus drift without being regenerated in CI
         (verify:corpus).
+    - path: "scripts/**"
+      # source: .agents/checks/purity.md
+      instructions: >-
+        These scripts are the machine-enforced guards for the invariants
+        (check-purity, verify-corpus). Changes that weaken a guard (turning a
+        positive assertion into a denylist, skipping the corpus SHA check, or
+        making a gate non-fatal) are correctness issues. Keep the purity gate a
+        positive yjs-only assertion, not merely a denylist (issue #22).
+    - path: "{package.json,package-lock.json,tsconfig.json,.github/**,stryker.conf.*}"
+      # source: .agents/checks/purity.md
+      instructions: >-
+        Guard the build and CI contract. The production dependency set must
+        stay yjs-only (KA-3/FC-3) — flag any new runtime dependency. Cite the
+        frozen vocabulary/catalog by SHA, never a moving branch (FC-10). Do not
+        remove or make non-fatal the build, purity, corpus-verify, or test CI
+        steps.
     - path: "test/**"
       # source: .agents/checks/test-quality.md
       instructions: >-

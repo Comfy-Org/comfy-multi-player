@@ -128,7 +128,78 @@ describe("gen-coderabbit-config", () => {
     writeFileSync(join(checks, "a.md"), fillers(1, 6));
     run(root, "--write");
     writeFileSync(join(checks, "a.md"), fillers(1, 6).replace("number 1.", "number one."));
+    const drifted = run(root);
+    expect(drifted.status).toBe(1);
+    // Assert the rule that fired, not just the exit code: six rules exit 1, so
+    // a status-only assertion is satisfied by any of them.
+    expect(drifted.stderr).toContain(
+      "coderabbit-config check FAILED — .coderabbit.yaml does not match the profiles.",
+    );
+    expect(drifted.stderr).toContain('profiles generate: "        Filler instruction number one."');
+  });
+
+  it("catches a same-length hand edit, so the comparison is byte equality and not length", () => {
+    // The realistic drift is a word swapped for another of the same length —
+    // "NOT the projection" for "and the projection" inverts the rejection
+    // oracle without changing a single count.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    run(root, "--write");
+    const generated = readFileSync(join(root, ".coderabbit.yaml"), "utf8");
+    const edited = generated.replace("Filler instruction number 1.", "Filler instruction number 7.");
+    expect(edited.length).toBe(generated.length);
+    writeConfig(edited);
     expect(run(root).status).toBe(1);
+  });
+
+  it("fails (exit 1) when a second path_instructions key would win over the generated one", () => {
+    // The coexistence affordance is also the sharpest hazard: the region can be
+    // byte-perfect and inert. A duplicate key silently replaces it.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    run(root, "--write");
+    writeConfig(
+      readFileSync(join(root, ".coderabbit.yaml"), "utf8") +
+        '  path_instructions:\n    - path: "**"\n      instructions: LGTM.\n',
+    );
+    const inert = run(root);
+    expect(inert.status).toBe(1);
+    expect(inert.stderr).toContain("is not the effective reviews.path_instructions");
+    expect(inert.stderr).toContain('"path_instructions:" keys : 2 (expected 1)');
+  });
+
+  it("fails (exit 1) when the region is no longer nested under reviews:", () => {
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    run(root, "--write");
+    writeConfig(
+      readFileSync(join(root, ".coderabbit.yaml"), "utf8").replace("reviews:\n", "chat:\n"),
+    );
+    const orphaned = run(root);
+    expect(orphaned.status).toBe(1);
+    expect(orphaned.stderr).toContain('top-level "reviews:" lines: 0 (expected 1)');
+  });
+
+  it("fails (exit 1) on a glob the emitter cannot quote", () => {
+    // Neutering this rule emits `- path: "a"b/**"`, which is not parseable YAML
+    // — so the config silently stops applying rather than failing loudly.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6) + "\n" + block('a"b/**', "Body."));
+    const quoted = run(root);
+    expect(quoted.status).toBe(1);
+    expect(quoted.stderr).toContain("path glob contains a double quote");
+  });
+
+  it("is INCONCLUSIVE (exit 2), not a crash, when the config or the profiles are missing", () => {
+    // `1` means "ran and found drift"; a missing precondition is `2`. An
+    // uncaught ENOENT would report the wrong one of the two.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    rmSync(join(root, ".coderabbit.yaml"));
+    const noConfig = run(root);
+    expect(noConfig.status).toBe(2);
+    expect(noConfig.stderr).toContain("cannot read");
+
+    writeConfig(emptyConfig);
+    rmSync(checks, { recursive: true });
+    const noChecks = run(root);
+    expect(noChecks.status).toBe(2);
+    expect(noChecks.stderr).toContain("cannot read the profiles directory");
   });
 
   it("preserves hand-written configuration outside the sentinels", () => {
@@ -207,7 +278,7 @@ describe("gen-coderabbit-config", () => {
     expect(real.stderr).toBe("");
     expect(real.status).toBe(0);
     expect(real.stdout).toBe(
-      "coderabbit-config check PASSED (5 instruction block(s) from 3 profile(s) match .coderabbit.yaml)\n",
+      "coderabbit-config check PASSED (5 instruction block(s) from 4 profile(s) match .coderabbit.yaml)\n",
     );
   });
 });

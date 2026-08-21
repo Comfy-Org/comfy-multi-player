@@ -37,13 +37,13 @@ const claimsPass = (checked: number, absent = 0, defects = 0, roster: string[] =
   `still hold, ${defects} known-defect tombstone(s) standing)\n` +
   (roster.length === 0
     ? ""
-    : "known-defect tombstones still standing (each names an open issue):\n" +
+    : "known-defect tombstones still standing (this gate cannot tell whether an issue is open):\n" +
       roster.map((line) => `${line}\n`).join(""));
 
-const claimsInconclusive = (absent = 0) =>
-  `profile-claims check INCONCLUSIVE — no presence claims or known-defect ` +
-  `tombstones in .agents/checks/*.md ` +
-  `(${absent} absence claim(s) found, which anchor no restated fact).\n` +
+const claimsInconclusive = (absent = 0, defects = 0) =>
+  `profile-claims check INCONCLUSIVE — no presence claims in .agents/checks/*.md ` +
+  `(${absent} absence claim(s) and ${defects} known-defect tombstone(s) found, ` +
+  `which anchor no restated fact).\n` +
   "Annotate each restated code fact with `<!-- claim: <exact substring> :: <path> -->`\n" +
   "so it fails when the code drifts, and each retired-because-wrong phrase with\n" +
   "`<!-- claim-absent: <exact substring> :: <path> -->` so it fails when the phrase\n" +
@@ -232,15 +232,29 @@ describe("check-profile-claims staleness gate", () => {
     writeFileSync(join(root, "src", "types.ts"), "  /** total ops ever consumed. */\n");
     writeFileSync(
       join(checks, "a.md"),
-      "<!-- known-defect: #16 :: total ops ever consumed :: src/types.ts -->\n",
+      '<!-- claim: total ops :: src/types.ts -->\n' +
+        "<!-- known-defect: #16 :: total ops ever consumed :: src/types.ts -->\n",
     );
     const run = runAgainst(root);
     expect(run.status).toBe(0);
-    // A tombstone alone clears the floor: unlike a ban, it asserts text is
-    // present somewhere, which is a real unit of work.
     expect(run.stdout).toBe(
-      claimsPass(0, 0, 1, ["  - #16 at src/types.ts (tombstone in a.md)"]),
+      claimsPass(1, 0, 1, ["  - #16 at src/types.ts (tombstone in a.md)"]),
     );
+  });
+
+  it("is INCONCLUSIVE (exit 2) when a profile set carries only tombstones", () => {
+    // A tombstone anchors text the profile says is WRONG, so like a ban it
+    // anchors no restated fact. Widening #74's presence floor to admit them was
+    // considered and rejected: it would let a marker set of pure deferrals
+    // clear a floor built to catch unverified restated facts.
+    writeFileSync(join(root, "src", "types.ts"), "  /** total ops ever consumed. */\n");
+    writeFileSync(
+      join(checks, "a.md"),
+      "<!-- known-defect: #16 :: total ops ever consumed :: src/types.ts -->\n",
+    );
+    const run = runAgainst(root);
+    expect(run.status).toBe(2);
+    expect(run.stderr).toBe(claimsInconclusive(0, 1));
   });
 
   it("fails when the defect text is gone, and names the issue to close", () => {
@@ -297,10 +311,14 @@ describe("check-profile-claims staleness gate", () => {
   it("accepts a full GitHub issue URL as the owner", () => {
     const url = "https://github.com/Comfy-Org/comfy-multi-player/issues/73";
     writeFileSync(join(root, "src", "types.ts"), "wrong text\n");
-    writeFileSync(join(checks, "a.md"), `<!-- known-defect: ${url} :: wrong text :: src/types.ts -->\n`);
+    writeFileSync(
+      join(checks, "a.md"),
+      '<!-- claim: wrong :: src/types.ts -->\n' +
+        `<!-- known-defect: ${url} :: wrong text :: src/types.ts -->\n`,
+    );
     const run = runAgainst(root);
     expect(run.status).toBe(0);
-    expect(run.stdout).toBe(claimsPass(0, 0, 1, [`  - ${url} at src/types.ts (tombstone in a.md)`]));
+    expect(run.stdout).toBe(claimsPass(1, 0, 1, [`  - ${url} at src/types.ts (tombstone in a.md)`]));
   });
 
   it("does not let a self-targeted tombstone be satisfied by its own marker", () => {
@@ -309,17 +327,40 @@ describe("check-profile-claims staleness gate", () => {
     // defect text exists nowhere but in the marker is red, not a vacuous pass.
     writeFileSync(
       join(checks, "a.md"),
-      "<!-- known-defect: #73 :: (`applied`, `skipped`) :: .agents/checks/a.md -->\n",
+      anchor + "<!-- known-defect: #73 :: (`applied`, `skipped`) :: .agents/checks/a.md -->\n",
     );
+    writeFileSync(join(root, "src", "project.ts"), "const meta = doc.getMap('meta');\n");
     const bare = runAgainst(root);
     expect(bare.status).toBe(1);
     expect(bare.stderr).toContain("RESOLVED known-defect #73");
 
     writeFileSync(
       join(checks, "a.md"),
-      "Rule 4: the (`applied`, `skipped`) shape is consumed downstream.\n" +
+      anchor +
+        "Rule 4: the (`applied`, `skipped`) shape is consumed downstream.\n" +
         "<!-- known-defect: #73 :: (`applied`, `skipped`) :: .agents/checks/a.md -->\n",
     );
+    expect(runAgainst(root).status).toBe(0);
+  });
+
+  it("rejects a marker written in README.md, which the gate does not scan", () => {
+    // The exclusion is silent, and a silently inert marker is the exact failure
+    // this gate exists to stop — while the README itself tells authors to point
+    // a ban at "the profile itself".
+    writeFileSync(join(checks, "README.md"), "<!-- claim: anything :: src/index.ts -->\n");
+    writeFileSync(join(checks, "a.md"), '<!-- claim: x :: src/index.ts -->\n');
+    writeFileSync(join(root, "src", "index.ts"), "x anything\n");
+    const run = runAgainst(root);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toBe(
+      "profile-claims check FAILED — 1 claim marker(s) at column 0 in README.md, which this gate does not scan (it is the convention doc, and its\n" +
+        "examples would otherwise run as claims). A marker there is silently inert.\n" +
+        "Move it to the profile that owns the fact, or indent it to mark it as an example:\n" +
+        "  <!-- claim: anything :: src/index.ts -->\n",
+    );
+
+    // Indented, it is documentation and the gate is green again.
+    writeFileSync(join(checks, "README.md"), "  <!-- claim: anything :: src/index.ts -->\n");
     expect(runAgainst(root).status).toBe(0);
   });
 
