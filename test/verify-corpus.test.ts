@@ -47,6 +47,20 @@ describe("verify-corpus fail-closed guards", () => {
     expect(run.stderr).toContain("a.json is not listed");
   });
 
+  it("fails closed on a malformed (non-JSON) manifest", () => {
+    writeFileSync(join(dir, "MANIFEST.json"), "{ not valid json");
+    const run = runAgainst(dir);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("could not read fixtures/MANIFEST.json");
+  });
+
+  it("fails closed when files is not an object", () => {
+    writeFileSync(join(dir, "MANIFEST.json"), JSON.stringify({ files: [] }));
+    const run = runAgainst(dir);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("MANIFEST.json must contain a files object");
+  });
+
   it("passes on a non-empty manifest whose hashes match", () => {
     const body = '{"ok":true}';
     const sha = createHash("sha256").update(body).digest("hex");
