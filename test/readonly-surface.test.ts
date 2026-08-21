@@ -494,6 +494,33 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
     expect(appliedOpIds(doc)).toEqual([]);
   });
 
+  it("refuses a malformed root with the SAME error type project() gives it", () => {
+    // A root integrated as a different concrete Y type makes `doc.getMap`
+    // throw Yjs's constructor-clash `Error`. The content probe runs BEFORE the
+    // version check, so letting that escape would make this surface report a
+    // generic `Error` for a document `project()` refuses with a typed
+    // `SchemaVersionError` — and the typed error is the whole reason
+    // `assertReadableSchema` is exported for hosts to lift. The probe treats
+    // an untypable root as content instead, so the refusal type matches.
+    const doc = new Y.Doc();
+    doc.getArray<unknown>("nodes").push([1]);
+    metaMap(doc).set("schema_version", 2);
+    expect(() => project(doc, catalog)).toThrow(SchemaVersionError);
+    expect(() => readGraph(doc)).toThrow(SchemaVersionError);
+    expect(() => readStamps(doc)).toThrow(SchemaVersionError);
+
+    // Amendment A3's carve-out is unchanged where it always applied: when the
+    // clash is on `meta` ITSELF, both paths surface Yjs's own error, not a
+    // SchemaVersionError. Still fail-closed, still a throw, same on both.
+    const metaClash = new Y.Doc();
+    metaClash.getArray<unknown>("meta").push([1]);
+    nodesMap(metaClash).set("1", new Y.Map<unknown>() as Y.Map<unknown> as never);
+    for (const call of [() => project(metaClash, catalog), () => readGraph(metaClash)]) {
+      expect(call).toThrow(Error);
+      expect(call).not.toThrow(SchemaVersionError);
+    }
+  });
+
   it("refuses as soon as ANY root carries content, not just the one being read", () => {
     // `meta` alone, carrying a key that is not a schema claim: the graph is
     // empty, so readGraph would return `{}` and look harmless — but the

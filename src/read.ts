@@ -195,14 +195,32 @@ const SCHEMA_ROOTS: readonly string[] = [
  *
  * `doc.getMap` on a root that is ALREADY in `doc.share` types structs that
  * already exist — it adds no bytes to `encodeStateAsUpdate` and no share key
- * (see {@link rootMap}). A root integrated as a different concrete Y type
- * makes it throw, which is the fail-closed read posture (KA-11), same as
- * `project()` — Amendment A3 records the same exception for `migrate()`.
+ * (see {@link rootMap}).
+ *
+ * A root integrated as a DIFFERENT concrete Y type makes that `getMap` throw
+ * Yjs's own constructor-clash `Error`, and it is caught here rather than
+ * allowed to escape. Not to soften the failure — the document is malformed and
+ * still fails closed — but to keep the failure's TYPE right. `project()`
+ * reaches `assertReadableSchema` first, so a v2 document with a malformed
+ * `nodes` root refuses it with a `SchemaVersionError`; letting the clash
+ * escape from here would make this surface report Yjs's generic `Error` for
+ * the same document, and a host that lifts `SchemaVersionError` as a typed
+ * sentinel (the reason `assertReadableSchema` is exported at all) would lose
+ * the signal. A root this package cannot even type is treated as CONTENT, so
+ * the call falls through to the gate and gets the same refusal `project()`
+ * gives. Amendment A3's exception still applies where it always did: if the
+ * clash is on `meta` ITSELF, `readSchemaVersion` throws the clash `Error`
+ * from inside the gate, exactly as it does for `project()` and `migrate()`.
  */
 function carriesContent(doc: Y.Doc): boolean {
   for (const name of SCHEMA_ROOTS) {
     if (!doc.share.has(name)) continue;
-    if (doc.getMap<unknown>(name).size > 0) return true;
+    try {
+      if (doc.getMap<unknown>(name).size > 0) return true;
+    } catch {
+      // A root whose concrete type this package cannot name is not "nothing".
+      return true;
+    }
   }
   return false;
 }
@@ -221,12 +239,24 @@ function carriesContent(doc: Y.Doc): boolean {
  * can walk around is decorative.
  *
  * WHY IT IS NOT JUST `assertReadableSchema`. A follower's document between
- * construction and its first `doc_update` frame has no roots at all, and PR #30
- * established that returning *empty* for it is correct rather than a failure —
- * there is no content to mis-key, and refusing would break the follower's
- * pre-first-frame render path. `assertReadableSchema` alone would throw there,
- * because "no readable `schema_version`" is one of its refusal cases. So the
- * two clauses are:
+ * construction and its first `doc_update` frame has no roots at all —
+ * `assertReadableSchema` alone would throw on it, because "no readable
+ * `schema_version`" is one of its refusal cases. Three things make returning
+ * empty the right answer there instead:
+ *
+ *   - there is no content to mis-key. KA-11 is about a reader silently
+ *     MIS-PROJECTING an incompatible document; a document that carries nothing
+ *     cannot be mis-projected, so refusing it buys no safety;
+ *   - the surface already behaves that way on `main`, and two tests that
+ *     landed with it pin the behaviour (`docCatalogPin` returns `""` for a
+ *     `new Y.Doc()`; a full pass over a root-less document materializes no
+ *     root). Refusing would be a regression, not a tightening;
+ *   - `migrate()`, by contrast, DOES refuse that document (#30). That is a
+ *     role split rather than a precedent to follow: `migrate()` is a host-only
+ *     WRITE, and a caller asking to migrate a document that says nothing about
+ *     its own version is asking for something incoherent. A pure read is not.
+ *
+ * So the two clauses are:
  *
  *   1. the document carries content, and its schema is not this package's →
  *      throw the same `SchemaVersionError` `project()` throws;

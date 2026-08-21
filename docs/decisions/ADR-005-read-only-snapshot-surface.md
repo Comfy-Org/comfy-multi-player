@@ -65,8 +65,11 @@ proved by attempting the violation in `test/readonly-surface.test.ts`:
    the document carries content under a schema this package cannot read**, and
    returns its empty value **when the document carries nothing**. The second
    clause is not a softening: ADR-004's follower reads a document that has no
-   roots at all before its first frame, and PR #30 settled that returning empty
-   there is correct. The comparison itself is not re-implemented; it delegates
+   roots at all before its first frame, there is no content there to mis-key,
+   and the surface already reads it as empty on `main` with two tests pinning
+   that. (`migrate()` *does* refuse that document — #30 — but that is a role
+   split: migrating a document that says nothing about its own version is an
+   incoherent WRITE request, while reading nothing out of it is not.) The comparison itself is not re-implemented; it delegates
    to `schema-version.ts`, so this surface, `project()` and `migrate()` share
    one definition of "readable".
 
@@ -121,9 +124,29 @@ classify, so a future export cannot widen the surface unreviewed.
   render loop.
 - The read gate narrows this surface relative to a version of it without one: a
   document carrying content under an unreadable schema now throws from every
-  accessor instead of returning mis-keyed data. Nothing a conforming producer
-  emits is affected — `mint()` writes `schema_version` unconditionally and it is
-  the only document constructor in the system — but a host that wants a
-  structured error rather than a throw should pre-check with the exported
-  `readSchemaVersion(doc)`, exactly as the doc-host sidecar already pre-checks
-  `catalog_version`.
+  accessor instead of returning mis-keyed data. **No PRODUCER is affected.**
+  `mint()` writes `schema_version` as the first write of its single transaction
+  and is the only document constructor in the system: the Go agent service
+  never builds a document (it holds doc bytes opaquely and mints over HTTP),
+  the frontend follower never writes `meta` at all, and comfy-cli — the
+  normative op-vocabulary source — has no CRDT dependency and produces ops, not
+  documents. A host that wants a structured error rather than a throw should
+  pre-check with the exported `readSchemaVersion(doc)`, exactly as the doc-host
+  sidecar already pre-checks `catalog_version`.
+- **A producer survey is not the whole question, and one reachable state does
+  hit the refusing clause.** The doc-host sidecar is stateless — a fresh
+  `Y.Doc` and so a fresh clientID per request — and the deltas it returns are
+  authored by that per-request client. The relay deliberately joins the fanout
+  BEFORE it sends a new subscriber its catch-up, so a follower can integrate a
+  delta whose structs have no missing predecessors *before* it has any `meta`:
+  roots with content, no schema claim, and this gate refuses it. Refusing is
+  the intended answer — it is the KA-11 posture, and the frontend's own
+  `schemaGuard` already refuses that state today, more strictly than this gate
+  does (it has no empty-document escape at all). What the empty-document clause
+  covers is "no frame has arrived yet", not "a frame arrived out of order".
+- **Migration note for the consumer that adopts this surface.** The frontend
+  runs its schema guard at the bridge seam and that seam rethrows anything that
+  is not its own error type. A consumer swapping a hand-rolled read for
+  `readGraph` must keep an equivalent guard, or catch `SchemaVersionError` at
+  the same seam — otherwise a typed, handled schema event becomes an unhandled
+  throw on the render path.
