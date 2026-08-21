@@ -33,26 +33,26 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import {
+  OPAQUE_WIDGETS_KEY,
   applyOps,
+  linksMap,
   mint,
+  nodesMap,
   project,
   type SetWidgetOp,
   type WidgetCatalog,
   type WorkflowJSON,
 } from "../src/index.js";
 import {
-  OPAQUE_WIDGETS_KEY,
   _getMutationCount,
   _resetMutationCount,
   adel,
   apush,
   countDefinitionInstances,
   definitionsMap,
-  linksMap,
   mdel,
   metaMap,
   mset,
-  nodesMap,
   resolveDefinition,
 } from "../src/doc.js";
 

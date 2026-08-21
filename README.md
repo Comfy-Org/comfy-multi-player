@@ -128,8 +128,9 @@ set are both unchanged. It is also strictly *less* mutating than the old
 behaviour — before the gate, `project()` typed all four roots on every call, so
 projecting a root-less document materialized `meta`/`nodes`/`links`/
 `definitions`; now it refuses first and touches none of them. Consequence for callers: `project(new Y.Doc(), catalog)` used to
-return `{nodes: [], links: []}` and now throws. Bootstrap with `mint()` (schema
-§9) or `initDoc()`; `migrate()` is not an escape, it refuses the same document.
+return `{nodes: [], links: []}` and now throws. Bootstrap with the public
+`mint()` API (schema §9); `migrate()` is not an escape, it refuses the same
+document. The source-internal `initDoc()` helper is not a consumer bootstrap API.
 
 Then throws (`TypeError`) if a node has widget values whose class the catalog
 does not describe — see [`opaque_widgets`](#opaque-widgets) for the case that is
@@ -202,19 +203,21 @@ receives the migrated document over the struct stream and must not call this.
 `stampTargetKey(op)`, `codePointCompare(a, b)`. You need these only if you are
 building conflict UI or your own bookkeeping — `applyOps` uses them internally.
 
-### Document internals are not exported
+### Follower read surface and document internals
 
 The entrypoint exports the op layer (`mint`, `applyOps`, `project`, `migrate`),
-the KA-11 read gate, the stamp machinery above, and the types. That is the
-whole public surface.
+the KA-11 read gate, the stamp machinery above, the ADR-004 follower read
+surface (`nodesMap`, `linksMap`, `OPAQUE_WIDGETS_KEY`), and the types. That is
+the whole public surface.
 
-The Y.Doc layout is deliberately **not** part of it. `initDoc`, `nodesMap`,
-`linksMap`, `definitionsMap`, `metaMap`, `appliedMap`, `stampsMap`,
+The three layout exports are a deliberate exception for the frontend follower
+documented by ADR-004. They are read-only by contract: that follower consumes
+the host's layout and never writes the shared document or calls `applyOps`.
+`initDoc`, `definitionsMap`, `metaMap`, `appliedMap`, `stampsMap`,
 `createNodeMap`, `resolveDefinition`, `countDefinitionInstances`,
-`OPAQUE_WIDGETS_KEY`, `isOpaqueWidgets`, `WIDGET_STORAGE_STRATEGIES`,
-`WidgetStorage`, `widgetStorageFor`, and `widgetStorageOf` were re-exported
-through an earlier release and are now module-private. Reading the document
-directly is no longer supported either.
+`isOpaqueWidgets`, `WIDGET_STORAGE_STRATEGIES`, `WidgetStorage`,
+`widgetStorageFor`, and `widgetStorageOf` were re-exported through an earlier
+release and are now module-private.
 
 Read-only intent was never the problem; reachability was. The same import that
 hands you `nodesMap` for a read hands you a live `Y.Map` you can write, and a
@@ -224,11 +227,9 @@ One replica mutating outside the op layer diverges from every other replica
 with no diagnostic. See [issue #18][issue-18] and KA-1, KA-2, KA-4, FC-5 in
 [docs/INVARIANTS.md](docs/INVARIANTS.md).
 
-To read a document, call `project(doc, catalog)` — it returns the canonical
-workflow JSON and is the supported read path. There is no `./doc` subpath
-export and none will be added; a shim would restore exactly the reachability
-this closes. A narrower read-only surface for consumers that need less than a
-full projection is tracked separately as `MP-READONLY-SURFACE-1`.
+General consumers should call `project(doc, catalog)` for canonical workflow
+JSON. There is no `./doc` subpath export and none will be added; only the three
+ADR-004 follower reads above are reachable from the package entrypoint.
 
 [issue-18]: https://github.com/Comfy-Org/comfy-multi-player/issues/18
 

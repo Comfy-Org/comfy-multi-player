@@ -16,13 +16,14 @@ import { describe, expect, it } from "vitest";
 import {
   DEFERRED_OPS,
   FROZEN_OPS,
+  OPAQUE_WIDGETS_KEY,
   applyOps,
   mint,
   writeTarget,
   type Op,
   type WorkflowJSON,
 } from "../src/index.js";
-import { OPAQUE_WIDGETS_KEY, createNodeMap, widgetStorageFor, widgetStorageOf } from "../src/doc.js";
+import { createNodeMap, widgetStorageFor, widgetStorageOf } from "../src/doc.js";
 import { assertNever, checkExhaustive } from "../src/exhaustive.js";
 import { fixturesDir, loadCatalog } from "./helpers.js";
 
