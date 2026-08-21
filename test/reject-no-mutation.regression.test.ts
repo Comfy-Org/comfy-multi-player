@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import {
   applyOps,
   appliedMap,
+  isStorableArrayItem,
+  isStorableMapValue,
   mint,
   project,
   type ConnectOp,
@@ -424,6 +426,51 @@ describe("KA-4 / D4: a rejected op leaves the document byte-identical (the whole
         },
       } as unknown as Op, "invalid_node_payload");
     });
+  });
+});
+
+describe("the storable-value predicate mirrors Yjs itself", () => {
+  // Pinned against the library, not against a remembered table: if a Yjs
+  // upgrade widens or narrows what a Y.Map/Y.Array accepts, this fails rather
+  // than letting the applier's guard drift into rejecting the legal or
+  // admitting the fatal.
+  const SAMPLES: Array<[string, () => unknown]> = [
+    ["null", () => null],
+    ["undefined", () => undefined],
+    ["number", () => 1],
+    ["NaN", () => Number.NaN],
+    ["string", () => "s"],
+    ["boolean", () => true],
+    ["plain object", () => ({ a: 1 })],
+    ["array", () => [1, 2]],
+    ["Date", () => new Date(0)],
+    ["BigInt", () => 1n],
+    ["Uint8Array", () => new Uint8Array([1])],
+    ["ArrayBuffer", () => new ArrayBuffer(4)],
+    ...CLONEABLE_BUT_UNSTORABLE.filter(([l]) => l !== "ArrayBuffer"),
+  ];
+
+  it.each(SAMPLES)("%s: the predicates agree with a real Y.Doc write", (_label, make) => {
+    const asMap = (): void => {
+      const doc = new Y.Doc();
+      doc.getMap("m").set("k", make());
+      Y.encodeStateAsUpdate(doc);
+    };
+    const asItem = (): void => {
+      const doc = new Y.Doc();
+      doc.getArray("a").push([make()]);
+      Y.encodeStateAsUpdate(doc);
+    };
+    const survives = (fn: () => void): boolean => {
+      try {
+        fn();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    expect(isStorableMapValue(make())).toBe(survives(asMap));
+    expect(isStorableArrayItem(make())).toBe(survives(asItem));
   });
 });
 
