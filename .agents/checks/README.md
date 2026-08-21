@@ -85,4 +85,64 @@ These profiles are prose, so any code fact they restate (an exported symbol name
 
 **Prefer needles that no reflow can split.** The gate reads raw file text. In a YAML folded scalar (`>-`), which is how [`../../.coderabbit.yaml`](../../.coderabbit.yaml) carries its `path_instructions`, a purely cosmetic rewrap inserts a newline at a space — which turns a positive claim red for no reason and, worse, makes a `claim-absent` silently stop firing. A needle containing no spaces cannot be broken that way, so use one there.
 
-Targets are ordinary repo-relative paths, so they are not limited to `src/`. Where the same advice exists in a machine-consumed copy — `.coderabbit.yaml`'s `path_instructions` restate several profiles nearly verbatim, and that is the copy that actually runs on every PR — anchor the profile's wording to the copy in both directions (`claim` on the corrected phrasing, `claim-absent` on the retired one). Fixing one site and not the other is how the `test-quality.md` oracle survived.
+Targets are ordinary repo-relative paths, so they are not limited to `src/`. Where the same advice exists in a machine-consumed copy — `.coderabbit.yaml`'s `path_instructions`, the copy that actually runs on every PR — anchor the profile's wording to the copy in both directions (`claim` on the corrected phrasing, `claim-absent` on the retired one). Fixing one site and not the other is how the `test-quality.md` oracle survived. That file is now generated (next section), which makes the transport exact; the markers remain the check on the *content*, because a source block that was re-typed wrongly regenerates perfectly cleanly.
+
+## The machine-consumed copy (`.coderabbit.yaml`)
+
+`.coderabbit.yaml`'s `reviews.path_instructions` is the restatement of these profiles that CodeRabbit executes on every PR. It used to be hand-written, and it drifted: the `test/**` entry and `test-quality.md` §2 were born in one commit carrying the same wrong rejection oracle, and each of the two PRs that set out to fix it fixed only the copy it could see, because neither was greppable from the other. A substring tripwire can detect that after the fact; it cannot prevent it.
+
+**The list is now generated.** Each entry is authored inside the profile that owns its glob, in a delimited block:
+
+````
+  <!-- coderabbit-instructions: test/** -->
+  ```text
+  ...the instruction the bot receives, verbatim...
+  ```
+  <!-- /coderabbit-instructions -->
+````
+
+(indented here only so this example is not itself collected — the generator reads markers at column 0)
+
+`npm run gen:coderabbit` ([`../../scripts/gen-coderabbit-config.mjs`](../../scripts/gen-coderabbit-config.mjs)) splices those blocks into the sentinel-delimited region of `.coderabbit.yaml`; `npm run check:coderabbit` regenerates in memory and fails CI on any difference. The block body is whitespace-normalized to one paragraph and emitted as a YAML folded scalar, so authoring line breaks are free and the wrap is deterministic.
+
+Four rules for authoring a block:
+
+- **Write it for the bot, not for a human.** `path_instructions` are injected as literal text and no profile is loaded alongside them, so `"Apply .agents/checks/test-quality.md"` is a filename to CodeRabbit, not context. Every block must be self-contained.
+- **Carry the carve-outs.** A restatement drifts by *omission* as readily as by contradiction, and omission is invisible to a phrase-pinning gate. The first draft of the `test/**` block dropped item 3's accepted-op exception and would have had the bot flagging seven suites that compare projections correctly. An instruction that fires on legitimate code is worse than no instruction, because it teaches people to ignore the bot.
+- **Only edit the block.** Editing the generated region of `.coderabbit.yaml` directly is what `check:coderabbit` exists to catch; the fix is to move the edit into the profile and regenerate.
+- **Everything outside the sentinels is hand-written and preserved.** The generator owns one region, so ordinary CodeRabbit configuration can live in the same file untouched.
+
+Three globs have no single owning profile — the whole-`src/**` instruction, the `scripts/**` guard instruction, and the build/CI contract — so their blocks live here, in the index. They are hosted rather than owned: a block belongs in a profile whenever one profile genuinely covers its glob.
+
+<!-- coderabbit-instructions: src/** -->
+```text
+Review against docs/INVARIANTS.md and every applicable profile in
+.agents/checks/. Cite stable KA-* and FC-* IDs. Treat purity,
+convergence/idempotency, op identity, catalog pinning, and follower boundary
+violations as correctness issues. Any op-layer path that can mutate the Yjs
+doc and then throw (leaving a partial mutation and a skipped op_id record)
+is a blocking KA-4 issue (see issue #10); require validate-before-mutate.
+Any second op-to-document implementation is a blocking FC-3 issue.
+```
+<!-- /coderabbit-instructions -->
+
+<!-- coderabbit-instructions: scripts/** -->
+```text
+These scripts are the machine-enforced guards for the invariants
+(check-purity, verify-corpus). Changes that weaken a guard (turning a
+positive assertion into a denylist, skipping the corpus SHA check, or making
+a gate non-fatal) are correctness issues. Keep the purity gate a positive
+yjs-only assertion, not merely a denylist (issue #22).
+```
+<!-- /coderabbit-instructions -->
+
+<!-- coderabbit-instructions: {package.json,package-lock.json,tsconfig.json,.github/**,stryker.conf.*} -->
+```text
+Guard the build and CI contract. The production dependency set must stay
+yjs-only (KA-3/FC-3) — flag any new runtime dependency. Cite the frozen
+vocabulary/catalog by SHA, never a moving branch (FC-10). Do not remove or
+make non-fatal the build, purity, corpus-verify, or test CI steps.
+```
+<!-- /coderabbit-instructions -->
+
+**What generation does not fix.** It removes the second *editable* copy, not the second *statement*: the block and the profile prose around it can still say different things, and the gate cannot read either. What changed is that they are now adjacent in one file rather than in two files in two formats, so the edit that fixes one is made by someone looking at the other. The content check remains the claim markers.

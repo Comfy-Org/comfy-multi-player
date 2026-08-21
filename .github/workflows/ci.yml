@@ -41,6 +41,13 @@ jobs:
       - name: Profile-claim staleness gate
         run: npm run check:profile-claims
 
+      # .coderabbit.yaml's path_instructions are generated from the
+      # <!-- coderabbit-instructions --> blocks in .agents/checks/*.md. This
+      # fails when the committed file no longer matches them, so the copy that
+      # runs on every PR cannot drift from the profiles that own it.
+      - name: CodeRabbit config drift gate
+        run: npm run check:coderabbit
+
       # Module-graph gate. Exits 2 (INCONCLUSIVE) rather than green when it
       # cruises too few modules to mean anything — see .agents/checks/import-graph.md.
       - name: Import-graph gate
