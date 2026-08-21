@@ -216,7 +216,11 @@ function carriesContent(doc: Y.Doc): boolean {
   for (const name of SCHEMA_ROOTS) {
     if (!doc.share.has(name)) continue;
     try {
-      if (doc.getMap<unknown>(name).size > 0) return true;
+      // `keys()` rather than `size`: `Y.Map#size` walks the whole entry map
+      // filtering tombstones, which made this probe O(nodes) on the host's
+      // per-op guard path — measured at 3.1 µs/call against 0.035 µs before
+      // the gate existed. The first live key is all the question needs.
+      if (!doc.getMap<unknown>(name).keys().next().done) return true;
     } catch {
       // A root whose concrete type this package cannot name is not "nothing".
       return true;
@@ -273,6 +277,14 @@ function carriesContent(doc: Y.Doc): boolean {
  * drift into three.
  */
 function assertSnapshotReadable(doc: Y.Doc, context: string): void {
+  // Clause 0, and it is a COST decision, not a correctness one: for a document
+  // this package can read, `carriesContent` is guaranteed to be true (`meta`
+  // holds at least the version it just read), so asking it would be a second
+  // root walk for an answer already known. Deleting this line changes no
+  // result — no test in the suite reddens — but it costs ~7x on the host's
+  // O(1) per-op probes (`node scripts/bench-read.mjs` and the µs probe in the
+  // gauntlet report). It is held by the getMap-call-count assertion in
+  // `test/readonly-surface.test.ts`, not by any behavioural test.
   if (readSchemaVersion(doc) === SCHEMA_VERSION) return;
   if (!carriesContent(doc)) return;
   assertReadableSchema(doc, context);

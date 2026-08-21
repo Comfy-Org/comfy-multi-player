@@ -494,6 +494,33 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
     expect(appliedOpIds(doc)).toEqual([]);
   });
 
+  it("costs one extra root lookup on a readable document, not a second root walk", () => {
+    // The gate's first line short-circuits on a document this package can
+    // read. That line changes no RESULT — delete it and the whole suite stays
+    // green — so nothing behavioural can hold it, and the cost it avoids is
+    // ~7x on the host's per-op probes. Count the root lookups instead: a
+    // readable document must cost exactly the `meta` read the gate needs plus
+    // the one root the accessor is actually for. Without the short-circuit the
+    // content probe walks a root first and the count goes to three.
+    const doc = fixtureDoc();
+    const real = doc.getMap.bind(doc);
+    const names: string[] = [];
+    doc.getMap = ((name?: string) => {
+      names.push(String(name));
+      return real(name as string);
+    }) as typeof doc.getMap;
+
+    expect(hasNode(doc, KSAMPLER_ID)).toBe(true);
+    expect(names, "one meta read for the gate, one nodes read for the answer").toEqual([
+      "meta",
+      "nodes",
+    ]);
+
+    names.length = 0;
+    expect(docCatalogPin(doc)).toBe(CATALOG_SHA);
+    expect(names).toEqual(["meta", "meta"]);
+  });
+
   it("refuses a malformed root with the SAME error type project() gives it", () => {
     // A root integrated as a different concrete Y type makes `doc.getMap`
     // throw Yjs's constructor-clash `Error`. The content probe runs BEFORE the
