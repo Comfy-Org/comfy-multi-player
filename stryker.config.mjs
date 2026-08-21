@@ -30,9 +30,12 @@ export default {
   // (reports/audit/mut-glob-ka4.md); everything load-bearing is restated here.
   // `src/index.ts` (re-exports only), `src/types.ts` (declarations) and
   // `src/exhaustive.ts` (compile-time helper; its one runtime line throws)
-  // remain out. `src/migrate.ts` is out only because PR #30 owned it while this
-  // branch was written — #30 has merged and made it the fail-closed read gate,
-  // so it is the next file that should join this glob.
+  // remain out. Two semantic files should join next: `src/migrate.ts` (out only
+  // because PR #30 owned it while this branch was written) and
+  // `src/schema-version.ts`, which #60 added after this glob was set and which
+  // holds the ONE definition of the schema read that migrate() and project()
+  // share — exactly the kind of single point of truth a mutant should be
+  // aimed at.
   mutate: ["src/applier.ts", "src/stamps.ts", "src/project.ts", "src/doc.ts", "src/mint.ts"],
   reporters: ["clear-text", "html", "json"],
   coverageAnalysis: "all",
@@ -43,10 +46,11 @@ export default {
   // Fixed worker count so the measurement does not vary with core count.
   concurrency: 4,
   // Measured 2026-08-21 on the pinned settings above, over the five-file glob:
-  // 85.31% overall (1327 mutants; 1125 killed / 7 timeout / 167 survived / 28
-  // no-coverage). The SAME glob run against the parent commit 32ab1f2 scores
-  // 79.98% over 1289 mutants — a real baseline run, not a stored figure — so
-  // the delta is this branch and nothing else. See docs/mutation-testing.md.
+  // 85.24% overall (1328 mutants; 1126 killed / 6 timeout / 168 survived / 28
+  // no-coverage), on an idle host (load average 0.85). The SAME glob run
+  // against the parent commit 9e3e38e scores 79.92% over 1290 mutants — a real
+  // baseline run, not a stored figure — so the delta is this branch and nothing
+  // else. See docs/mutation-testing.md.
   //
   // Threshold sits strictly UNDER the measured score, not at it — the rule #56
   // wrote in when it set the three-file threshold to 79 rather than to the

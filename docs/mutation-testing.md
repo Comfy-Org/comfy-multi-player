@@ -1,6 +1,6 @@
 # Mutation testing
 
-Stryker measures whether the test suite detects behavioral regressions in the load-bearing CRDT code. The scope is `src/applier.ts`, `src/stamps.ts`, `src/project.ts`, `src/doc.ts` and `src/mint.ts`; tests, `src/index.ts` (re-exports only), `src/types.ts` (declarations), `src/exhaustive.ts` (a compile-time helper whose one runtime line is a `throw`) and `src/migrate.ts` are not mutated. `src/migrate.ts` is the last remaining unmeasured semantic file and should join the glob next: the rationale that kept it out was that PR #30 owned it, and #30 has merged.
+Stryker measures whether the test suite detects behavioral regressions in the load-bearing CRDT code. The scope is `src/applier.ts`, `src/stamps.ts`, `src/project.ts`, `src/doc.ts` and `src/mint.ts`; tests, `src/index.ts` (re-exports only), `src/types.ts` (declarations), `src/exhaustive.ts` (a compile-time helper whose one runtime line is a `throw`) and `src/migrate.ts` are not mutated. Two semantic files remain unmeasured and should join the glob next: `src/migrate.ts` (kept out only because PR #30 owned it while this branch was written — #30 has merged and made it the fail-closed read gate) and `src/schema-version.ts`, which #60 added after this glob was set and which now holds the ONE definition of the schema read that `migrate()` and `project()` share.
 
 `src/doc.ts` and `src/mint.ts` were added in MUT-GLOB-KA4-1 and had never been mutated before that. Do not narrow the glob back: the two files carry the schema §1 doc layout, the §1.2 opaque-widgets routing, the §5.3 shared-definition instance count and the §9 bootstrap-snapshot path, and every one of those was unmeasured while the score read 80.00%.
 
@@ -27,34 +27,44 @@ The unpinned rows show what the pins are for. Unpinned and idle the number happe
 
 ## Current baseline
 
-Measured 2026-08-21 on the pinned settings over the five-file glob, at `main` = `32ab1f2`:
-**85.31% overall** across 1327 mutants (`applier.ts` 80.55%, `doc.ts` 94.09%, `mint.ts` 88.68%,
-`project.ts` 87.89%, `stamps.ts` 89.00%), with 1125 killed / 7 timeout / 167 survived / 28
-no-coverage. The break threshold is **84**, 1.31 points under the measured score for the reason #56
+Measured 2026-08-21 on the pinned settings over the five-file glob, at `main` = `9e3e38e`:
+**85.24% overall** across 1328 mutants (`applier.ts` 80.55%, `doc.ts` 94.09%, `mint.ts` 88.68%,
+`project.ts` 87.43%, `stamps.ts` 89.00%), with 1126 killed / 6 timeout / 168 survived / 28
+no-coverage. The break threshold is **84**, 1.24 points under the measured score for the reason #56
 recorded when it set the three-file threshold to 79 rather than to the 80.00% it had just measured:
 a threshold equal to the measurement passes with zero margin and goes red the first time a sibling
 PR adds an uncovered line, reporting "mutation score regression" when it means "new code arrived".
 Raise the threshold whenever the score is raised; the headroom is for new code, not for measurement
 noise, which the pins have removed. The timeouts-as-survivors floor — the score if every timeout
-were really a survivor — is 84.78%, which is also above the threshold, so the pass does not depend
-on how the 7 timeouts are classified.
+were really a survivor — is 84.79%, which is also above the threshold, so the pass does not depend
+on how the 6 timeouts are classified.
 
-Run twice at this commit, at 1-minute load averages of **2.99** and **8.90** on a 28-core host,
-Node 25.9.0: identical to two decimals and identical in every per-file killed/timeout/survived/
-no-coverage column. At the previous base the same config was run twice more and the `Killed`,
-`Timeout`, `Survived` and `NoCoverage` **sets** were element-for-element identical, symmetric
-difference zero — so the stability is of the survivor list, not just of the percentage.
+**Host conditions, stated because this number is load-sensitive by construction.** Both runs below
+were taken on a 28-core host at 1-minute load averages of **2.16** (baseline) and **0.85** (branch),
+Node 25.9.0, pins untouched. An earlier attempt at this measurement was made while the host carried
+five concurrent agents at load 15-19; one of its runs was killed by the OOM killer, and none of that
+attempt's figures are reported here. Refusing to publish a number measured under those conditions is
+the correct outcome, not a gap.
 
 Per-scope movement, kept because the *shape* of the change matters more than the headline. Both
-"before" columns are a real run of the SAME five-file glob against `origin/main` `32ab1f2` (passed
+"before" columns are a real run of the SAME five-file glob against `origin/main` `9e3e38e` (passed
 on the command line with `--mutate`, pins untouched), so the only difference between the columns is
 this branch:
 
-| Scope | Before (`32ab1f2`) | After | What moved |
+| Scope | Before (`9e3e38e`) | After | What moved |
 | --- | --- | --- | --- |
-| five-file overall | 79.98% (1031/1289) | **85.31%** (1132/1327) | both files below |
-| `applier.ts` + `stamps.ts` + `project.ts` | 81.61% (803/984) | 82.83% (815/984) | the KA-4 rejection sweep (`test/ka4-rejection-byte-identity.test.ts`) |
+| five-file overall | 79.92% (1031/1290) | **85.24%** (1132/1328) | both rows below |
+| `applier.ts` + `stamps.ts` + `project.ts` | 81.52% (803/985) | 82.74% (815/985) | the KA-4 rejection sweep (`test/ka4-rejection-byte-identity.test.ts`) |
 | `doc.ts` + `mint.ts` | 74.75% (228/305, first ever run) | 92.42% (317/343) | `test/doc-mint-mutation-survivors.test.ts` |
+
+Reproducibility of the five-file glob, measured rather than asserted. At the previous base this
+branch was run twice, at load averages 2.99 and 8.90: identical to two decimals and in every
+per-file killed/timeout/survived/no-coverage column. At the base before that it was run twice more
+and the `Killed`, `Timeout`, `Survived` and `NoCoverage` **sets** were element-for-element
+identical, symmetric difference zero. What is stable is the survivor *list*, not merely the
+percentage. The overall score does move between bases — 85.31% at `32ab1f2`, 85.24% here — but only
+because `main` itself moved: #60 added one `project.ts` survivor. That is exactly why a "before" is
+re-measured at the same commit rather than quoted from a previous run.
 
 The `doc.ts` + `mint.ts` mutant total rises from 305 to 343 because the fix itself adds code, so the
 "after" column is measured over more surface, not less.
