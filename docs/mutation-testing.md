@@ -1,6 +1,6 @@
 # Mutation testing
 
-Stryker measures whether the test suite detects behavioral regressions in the load-bearing CRDT code. The scope is `src/applier.ts`, `src/stamps.ts`, `src/project.ts`, `src/doc.ts` and `src/mint.ts`; tests, `src/index.ts` (re-exports only), `src/types.ts` (declarations) and `src/migrate.ts` are not mutated.
+Stryker measures whether the test suite detects behavioral regressions in the load-bearing CRDT code. The scope is `src/applier.ts`, `src/stamps.ts`, `src/project.ts`, `src/doc.ts` and `src/mint.ts`; tests, `src/index.ts` (re-exports only), `src/types.ts` (declarations), `src/exhaustive.ts` (a compile-time helper whose one runtime line is a `throw`) and `src/migrate.ts` are not mutated. `src/migrate.ts` is the last remaining unmeasured semantic file and should join the glob next: the rationale that kept it out was that PR #30 owned it, and #30 has merged.
 
 `src/doc.ts` and `src/mint.ts` were added in MUT-GLOB-KA4-1 and had never been mutated before that. Do not narrow the glob back: the two files carry the schema §1 doc layout, the §1.2 opaque-widgets routing, the §5.3 shared-definition instance count and the §9 bootstrap-snapshot path, and every one of those was unmeasured while the score read 80.00%.
 
@@ -27,7 +27,7 @@ The unpinned rows show what the pins are for. Unpinned and idle the number happe
 
 ## Current baseline
 
-Measured RE-DERIVE-OVERALL on the pinned settings over the five-file glob: **RE-DERIVE% overall** across RE-DERIVE mutants. The break threshold is **RE-DERIVE**, at least a point under the measured score for the reason #56 recorded when it lowered the three-file threshold from 80 to 79: a threshold equal to the measurement passes with zero margin and goes red the first time a sibling PR adds an uncovered line, reporting "mutation score regression" when it means "new code arrived". Raise the threshold whenever the score is raised; the headroom is for new code, not for measurement noise, which the pins have removed.
+Measured 2026-08-21 on the pinned settings over the five-file glob: **84.01% overall** across 1238 mutants (`applier.ts` 78.25%, `doc.ts` 93.93%, `mint.ts` 91.92%, `project.ts` 86.05%, `stamps.ts` 89.00%), with 1031 killed / 9 timeout / 164 survived / 34 no-coverage. The break threshold is **83**, a point under the measured score for the reason #56 recorded when it set the three-file threshold to 79 rather than to the 80.00% it had just measured: a threshold equal to the measurement passes with zero margin and goes red the first time a sibling PR adds an uncovered line, reporting "mutation score regression" when it means "new code arrived". Raise the threshold whenever the score is raised; the headroom is for new code, not for measurement noise, which the pins have removed.
 
 The three-file baseline this widening replaces was **80.00%** over 925 mutants (`applier.ts` 77.79%, `stamps.ts` 89.00%, `project.ts` 83.14%), reproduced idle and under contention as in the two-by-two table above.
 
@@ -35,8 +35,10 @@ Per-scope movement, kept because the *shape* of the change matters more than the
 
 | Scope | Before | After | What moved |
 | --- | --- | --- | --- |
-| `applier.ts` + `stamps.ts` + `project.ts` | 80.00% | RE-DERIVE% | the KA-4 rejection sweep (`test/ka4-rejection-byte-identity.test.ts`) |
-| `doc.ts` + `mint.ts` | RE-DERIVE% (first ever run) | RE-DERIVE% | `test/doc-mint-mutation-survivors.test.ts` |
+| `applier.ts` + `stamps.ts` + `project.ts` | 80.00% (740/925) | 80.86% (748/925) | the KA-4 rejection sweep (`test/ka4-rejection-byte-identity.test.ts`) |
+| `doc.ts` + `mint.ts` | 73.04% (214/293, first ever run) | 93.29% (292/313) | `test/doc-mint-mutation-survivors.test.ts` |
+
+Both "before" columns are a real run, not an inherited figure: the same five-file glob was measured against `origin/main` (`39ccae8`) by passing `--mutate` on the command line, so the only difference between the two columns is this branch's tests and its `src/doc.ts` fix. The `doc.ts` + `mint.ts` mutant total rises from 293 to 313 because the fix itself adds code: `doc.ts` alone goes from 194 to 214 mutants, so the "after" column is measured over more surface, not less.
 
 Adding files to the glob moves the headline for two reasons at once — new mutants, and new tests — so compare per-file columns, never the single overall number, when judging whether a change helped.
 

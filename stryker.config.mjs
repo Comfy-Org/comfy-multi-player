@@ -25,9 +25,14 @@ export default {
   // `src/doc.ts` and `src/mint.ts` joined the glob in MUT-GLOB-KA4-1. They had
   // never been mutation-tested, and they carry the schema §1 doc layout, the
   // §1.2 opaque-widgets routing, the §5.3 shared-definition instance count and
-  // the §9 bootstrap-snapshot path — see reports/audit/mut-glob-ka4.md.
+  // the §9 bootstrap-snapshot path. Working notes for the widening live
+  // outside this repository, in the in-app-agent workspace
+  // (reports/audit/mut-glob-ka4.md); everything load-bearing is restated here.
   // `src/index.ts` (re-exports only), `src/types.ts` (declarations) and
-  // `src/migrate.ts` (owned by PR #30) remain out.
+  // `src/exhaustive.ts` (compile-time helper; its one runtime line throws)
+  // remain out. `src/migrate.ts` is out only because PR #30 owned it while this
+  // branch was written — #30 has merged and made it the fail-closed read gate,
+  // so it is the next file that should join this glob.
   mutate: ["src/applier.ts", "src/stamps.ts", "src/project.ts", "src/doc.ts", "src/mint.ts"],
   reporters: ["clear-text", "html", "json"],
   coverageAnalysis: "all",
@@ -37,22 +42,23 @@ export default {
   timeoutFactor: 1.5,
   // Fixed worker count so the measurement does not vary with core count.
   concurrency: 4,
-  // Measured RE-DERIVE-DATE on the pinned settings above, over the five-file
-  // glob: RE-DERIVE% overall (RE-DERIVE mutants). The three-file glob this
-  // replaces scored 80.00% over 925 mutants (reproduced idle and under 20 CPU
-  // spinners, element-for-element identical Survived/NoCoverage sets — that
-  // stability is the whole point of the pins).
+  // Measured 2026-08-21 on the pinned settings above, over the five-file glob:
+  // 84.01% overall (1238 mutants; 1031 killed / 9 timeout / 164 survived / 34
+  // no-coverage). The same glob measured against the parent commit scores
+  // 78.33%, and the three files this widening inherits still score 80.00%
+  // (740/925) there against 80.86% (748/925) here — see docs/mutation-testing.md.
   //
   // Threshold sits strictly UNDER the measured score, not at it — the rule #56
-  // wrote in when it lowered the three-file threshold from 80 to 79. A
+  // wrote in when it set the three-file threshold to 79 rather than to the
+  // 80.00% it had just measured (it raised it from 60; it never shipped 80). A
   // threshold equal to the measurement passes with zero margin and turns red on
   // the first uncovered line any sibling PR adds, a failure that would say
   // "mutation score regression" while meaning "new code arrived". Raise it
   // whenever the score is raised; the margin is for new code, NOT for
   // measurement noise, which is now zero.
   thresholds: {
-    break: 84,
-    low: 84,
+    break: 83,
+    low: 83,
     high: 95,
   },
 };
