@@ -15,19 +15,58 @@
  *  - abort-remainder batches (vocabulary §4): on failure, ops after the
  *    failing index are not applied and the applied prefix is retained;
  *  - one Y transaction per op (schema §2.4), preconditions validated before
- *    the first mutation so a rejected op leaves the doc untouched.
+ *    the first mutation so a rejected op leaves the doc untouched — with the
+ *    three exceptions enumerated under VALIDATE BEFORE MUTATE below, which is
+ *    the qualified statement of this bullet, not a footnote to it.
  *
  * VALIDATE BEFORE MUTATE (issue #10). Yjs does NOT roll a `transact` body back
  * when it throws, so "the doc is untouched on reject" is a property of write
- * ORDER inside each handler, not something the transaction gives us. Every
- * precondition that can throw — source and destination slot resolution over
- * the FULL numeric domain (a slot index must be a non-negative integer in
- * range addressing a real slot record, not merely `< length`), the inputcount
- * widget name and its cloneability, the grow payload shape, opaque
- * destinations — runs before the first `mset`/`apush`. A handler that mutates
- * and then throws also skips its `__applied` record, so it is silently
- * non-idempotent on retry as well; that combination is a blocking KA-4
- * defect, not a nit.
+ * ORDER inside each handler, not something the transaction gives us. A handler
+ * that mutates and then throws also skips its `__applied` record, so it is
+ * silently non-idempotent on retry as well; that combination is a blocking
+ * KA-4 defect, not a nit.
+ *
+ * The preconditions moved ahead of the first `mset`/`apush` here are: source
+ * and destination slot resolution over the full numeric domain (a slot index
+ * must be a non-negative integer in range addressing a real slot record, not
+ * merely `< length`), the inputcount widget name and its cloneability, the
+ * grow payload shape, and opaque destinations.
+ *
+ * NOT "every precondition that can throw" — that claim was false when this
+ * file first made it, and stating it accurately is the point. TWO holes are
+ * known and open:
+ *  - a value `structuredClone` ACCEPTS but Yjs cannot store (`Map`, `Set`,
+ *    `RegExp`, `ArrayBuffer`, `Error`) still mutates and then throws
+ *    `Unexpected content type` mid-handler (#59, #61);
+ *  - and a REFERENCE CYCLE passes `structuredClone` (which preserves cycles by
+ *    design) and `Y.Map.set` alike, then makes `encodeStateAsUpdate` throw
+ *    permanently — the document is unrecoverable (#68). Entry points MEASURED
+ *    so far: `set_widget.value`, `grow.inputcount.value`, `add_node`'s
+ *    `widgets_values`, `connect.link_type`, `connect.link_id`, and
+ *    `connect.grow.widget` (the one `grow` field nothing type-checks). Treat
+ *    this as a lower bound, not a closed set: every op field copied into the
+ *    doc without a storability check is a candidate, and #68's gate must be
+ *    written against the WRITE sites rather than against this list.
+ *
+ * Separately, "validated before the first write" is about WRITE ORDER, not
+ * about arrival order. A precondition that must READ the document resolves
+ * differently on a replica that has already applied a concurrent
+ * `delete_node`; only the OP-ONLY preconditions are hoisted above the
+ * delete-wins returns for that reason. Schema §2.5 items 4 and 5 carve out
+ * what remains.
+ *
+ * `assertCloneableValue` is a `structuredClone` predicate, not a Yjs-storable
+ * one; closing the class needs the latter.
+ *
+ * A third hole USED to be listed here: `stampKey`'s `Number(stamp[0])` was
+ * evaluated after the autogrow slot append, so a `Symbol` or throwing-`valueOf`
+ * `base_version` mutated and then threw. Hoisting `stampKey` into
+ * `requireOpOnlyValid` — done for a convergence reason, not this one — closed it
+ * on every `connect` path as a side effect. Measured byte-identical on the grow
+ * path afterwards and pinned by
+ * `test/reject-no-mutation.regression.test.ts`. Recorded because an
+ * enumeration that keeps listing a closed hole is the same defect as one that
+ * omits an open one.
  */
 
 import * as Y from "yjs";
@@ -543,22 +582,54 @@ function resolveInteriorNode(doc: Y.Doc, path: string[], catalog?: WidgetCatalog
 // ---------------------------------------------------------------------------
 
 /**
- * The source node's `outputs` array, with `from_slot` validated before any
- * mutation.
+ * `from_slot` validation splits in two, and the split is LOAD-BEARING for
+ * convergence (KA-4, schema Amendment A6). Read both halves together.
  *
- * The index must be a NON-NEGATIVE INTEGER in range, and the element it
- * addresses must be a slot record. `from_slot >= outs.length` alone let `-1`,
- * `0.5` and `NaN` through; each then reached `outs.get(from_slot)` returning
- * `undefined` and threw a raw `TypeError` — reported as the generic
- * `apply_failed` — only AFTER the link tuple and the input slot had been
- * written, and with `__applied` unwritten so a retry re-mutated (issue #10).
+ * THIS half is OP-ONLY: it reads nothing but the op, so every replica reaches
+ * the same verdict no matter what else it has already applied. It therefore
+ * runs UNCONDITIONALLY, before the register claim and before the source is
+ * looked up — including when the source node is already gone.
+ *
+ * Folding it into {@link requireOutputSlot} (which is reachable only when the
+ * source still exists) made rejection depend on document state: a replica that
+ * had already applied `delete_node(from_node)` could not see the malformation,
+ * accepted the op and retired the incumbent link, while a replica that had not
+ * rejected it and kept the link. Same op-set, two arrival orders, two
+ * documents. Measured on `-1`, `0.5` and `NaN`; the valid-slot control
+ * converged, which is what made it a real divergence rather than a probe
+ * artifact.
+ */
+function requireOutputSlotDomain(op: ConnectOp): void {
+  if (!Number.isInteger(op.from_slot) || op.from_slot < 0) {
+    throw new OpRejectedError(
+      "output_slot_missing",
+      `connect: output slot ${String(op.from_slot)} not found on node ${String(op.from_node)}`,
+    );
+  }
+}
+
+/**
+ * The source node's `outputs` array, with the STATE-DEPENDENT half of
+ * `from_slot` validated before any mutation: in range, and addressing a real
+ * slot record. Both facts are properties of the source node, so this is
+ * reachable only while the source exists.
+ *
+ * `from_slot >= outs.length` alone let `-1`, `0.5` and `NaN` through; each then
+ * reached `outs.get(from_slot)` returning `undefined` and threw a raw
+ * `TypeError` — reported as the generic `apply_failed` — only AFTER the link
+ * tuple and the input slot had been written, and with `__applied` unwritten so
+ * a retry re-mutated (issue #10). That domain is now {@link
+ * requireOutputSlotDomain}'s, and it runs whether or not the source survives.
+ *
+ * What remains here CANNOT be made order-independent: "is 5 in range" is
+ * unanswerable once the source is deleted. Schema Amendment A6 records that
+ * residual and narrows §2.5's convergence claim to match it, rather than
+ * leaving the doc asserting a property the applier does not have.
  */
 function requireOutputSlot(src: Y.Map<unknown>, op: ConnectOp): Y.Array<unknown> {
   const outs = src.get("outputs");
   if (
     !(outs instanceof Y.Array) ||
-    !Number.isInteger(op.from_slot) ||
-    op.from_slot < 0 ||
     op.from_slot >= outs.length ||
     !(outs.get(op.from_slot) instanceof Y.Map)
   ) {
@@ -570,7 +641,92 @@ function requireOutputSlot(src: Y.Map<unknown>, op: ConnectOp): Y.Array<unknown>
   return outs as Y.Array<unknown>;
 }
 
+/**
+ * Every `connect` precondition THIS APPLIER ENFORCES that depends on the OP
+ * ALONE.
+ *
+ * Read BOTH qualifiers literally: "this applier enforces", and "`connect`".
+ *
+ * SCOPE. This is `applyConnect`'s op-only set. It is not a general property of
+ * the applier, and the surrounding prose is scoped to `connect`'s delete-wins
+ * returns for that reason. `applyAddNode` has the same shape behind a DIFFERENT
+ * early return — `if (nodes.has(key)) return`, structural idempotency, which
+ * also consumes the `op_id` — so an `add_node` whose payload fails the
+ * catalogue check is `invalid_node_payload` on a replica that has not yet seen
+ * a rival same-id `add_node` and an applied no-op on one that has. Measured,
+ * and identical on `main`. Left alone deliberately: hoisting the check above
+ * that return would make a duplicate `add_node` with a bad payload REJECT where
+ * it currently no-ops, which is a new rejection needing its own vocabulary
+ * analysis, and the case sits next to schema §2.5 carve-out 3 (same-`node_id`
+ * `add_node` is reachable only from hand-authored or replayed streams).
+ *
+ * It is a statement about WHERE the existing checks run, not a claim that every
+ * op-only PROPERTY is checked. `link_id` and
+ * `link_type` are copied into the document with no validation at all — an
+ * `undefined` `link_id` still reaches `outPort.get("links")` and throws a raw
+ * `TypeError` mid-write, and a `null` or object `link_id` is accepted outright.
+ * That is pre-existing and identical on `main`, it is NOT part of issue #10's
+ * ordering class, and adding a check would be a new rejection needing its own
+ * G8 vocabulary analysis — so it is disclosed here rather than fixed in
+ * passing. It belongs with #61/#68/#71.
+ *
+ * Runs before the applier reads the document at all, so two replicas in
+ * different states cannot disagree about whether the op is well formed. That
+ * matters as much for the DESTINATION as for the source: `if (!dst) return` is
+ * a delete-wins no-op that CONSUMES the `op_id`, so a malformed op evaluated
+ * below it would be "applied" on a replica that had seen the delete and
+ * "rejected" on one that had not — and under §4 abort-remainder that is a
+ * projection divergence, not merely an `__applied` difference, because the
+ * rejection also discards the rest of the batch on only one side.
+ *
+ * Checks that need `dst` or `src` (opaque-widget storage, the catalogue
+ * lookup, slot ranges) are NOT op-only and deliberately stay below; schema
+ * §2.5 items 4 and 5 carve out what that costs.
+ */
+function requireOpOnlyValid(op: ConnectOp): void {
+  requireOutputSlotDomain(op);
+
+  if (op.grow?.inputcount != null) {
+    if (typeof op.grow.inputcount.widget !== "string") {
+      throw new OpRejectedError("malformed_op", "connect: grow.inputcount needs a widget name");
+    }
+    assertCloneableValue(op.grow.inputcount.value, "connect: grow.inputcount");
+  }
+  if (op.grow != null && (typeof op.grow.name !== "string" || typeof op.grow.type !== "string")) {
+    throw new OpRejectedError("malformed_op", "connect: grow payload needs name and type");
+  }
+  // `stampKey` is op-only — `Number(stamp[0])`, `String(stamp[1])`, no document
+  // read — but the concrete branch used to evaluate it BELOW `if (!dst) return`,
+  // so a `base_version` that throws on conversion (a `Symbol`, or an object with
+  // a throwing `valueOf`) was rejected on a replica that still held the
+  // destination and delete-wins-APPLIED on one that did not. Measured with the
+  // same abort-remainder signature as §2.5 item 5. `applySetWidget` already
+  // computed its stamp above its node lookup, so the two handlers disagreed.
+  // Evaluated here for its throw; the value is recomputed at the gate.
+  stampKey(op);
+
+  if (op.grow == null) {
+    if (typeof op.to_slot !== "number") {
+      throw new OpRejectedError("malformed_op", "connect: to_slot must be a number unless grow is present");
+    }
+    // The SAME op-only domain as `from_slot`, and for the same reason. Hoisting
+    // only the `typeof` half left `-1`, `0.5` and `NaN` to be judged below the
+    // delete-wins return, which reproduced the very divergence this function
+    // exists to prevent — one node over, on the axis §2.5 item 5 describes.
+    if (!Number.isInteger(op.to_slot) || op.to_slot < 0) {
+      throw new OpRejectedError(
+        "input_slot_missing",
+        `connect: input slot ${String(op.to_slot)} not found on node ${String(op.to_node)}`,
+      );
+    }
+  }
+}
+
 function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): void {
+  // OP-ONLY validation first, before ANY document read decides the outcome
+  // (KA-4, Amendment A6).
+  requireOpOnlyValid(op);
+
   const nodes = nodesMap(doc);
   const dst = nodes.get(String(op.to_node));
   // The destination is gone → the target slot does not exist and never will
@@ -578,22 +734,17 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): void 
   if (!dst) return;
 
   // The §8.4 inputcount grow carries a widget write; if that write is
-  // impossible (opaque destination) the whole op is refused HERE, before the
-  // slot append, so a rejected op still leaves the doc untouched.
+  // impossible (opaque destination, or a widget the catalogue cannot describe)
+  // the whole op is refused HERE, before the slot append, so a rejected op
+  // still leaves the doc untouched. Both checks read `dst`, so unlike the
+  // op-only set above they cannot move any earlier.
   if (op.grow?.inputcount != null) {
-    if (typeof op.grow.inputcount.widget !== "string") {
-      throw new OpRejectedError("malformed_op", "connect: grow.inputcount needs a widget name");
-    }
     rejectIfOpaqueWidgets(dst, String(op.grow.inputcount.widget));
     validateWidgetName(
       catalog,
       String(dst.get("type") ?? ""),
-      op.grow.inputcount.widget,
+      String(op.grow.inputcount.widget),
     );
-    assertCloneableValue(op.grow.inputcount.value, "connect: grow.inputcount");
-  }
-  if (op.grow != null && (typeof op.grow.name !== "string" || typeof op.grow.type !== "string")) {
-    throw new OpRejectedError("malformed_op", "connect: grow payload needs name and type");
   }
 
   // A present source must be fully valid before a concrete-input register is
@@ -614,13 +765,12 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): void 
     if (!src) return; // source concurrently deleted → no-op (delete wins)
     toIdx = growInputSlot(doc, dst, op, catalog);
   } else {
-    if (typeof op.to_slot !== "number") {
-      throw new OpRejectedError("malformed_op", "connect: to_slot must be a number unless grow is present");
-    }
-    toIdx = op.to_slot;
+    // `to_slot`'s type was settled by `requireOpOnlyValid`.
+    toIdx = op.to_slot as number;
     const ins = dst.get("inputs");
-    // Same numeric domain as `from_slot`: non-negative integer, in range.
-    if (!(ins instanceof Y.Array) || !Number.isInteger(toIdx) || toIdx < 0 || toIdx >= ins.length) {
+    // STATE-DEPENDENT half only: the op-only domain (integer, non-negative) was
+    // settled by `requireOpOnlyValid` above, before any document read.
+    if (!(ins instanceof Y.Array) || toIdx >= ins.length) {
       throw new OpRejectedError(
         "input_slot_missing",
         `connect: input slot ${String(toIdx)} not found on node ${String(op.to_node)}`,
@@ -652,6 +802,14 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): void 
     // installable would reintroduce order dependence: whether the incumbent
     // survives would depend on whether the concurrent delete of THIS op's
     // source had arrived yet.
+    //
+    // QUALIFIED by Amendment A6: that order-independence now holds for the
+    // OP-ONLY domain only. `requireOutputSlot` above IS deferred in the sense
+    // that it runs only when the source still exists, so an in-domain but
+    // out-of-range `from_slot` racing its source's deletion does still resolve
+    // differently by arrival order — schema §2.5 item 4, deliberately carved
+    // out because closing it means either re-opening issue #10 or changing this
+    // register's semantics. Do not "fix" the asymmetry here without reading A6.
     mset(stamps, targetKey, key);
     const prev = slot.get("link");
     if (prev != null && prev !== op.link_id) removeLink(doc, prev);

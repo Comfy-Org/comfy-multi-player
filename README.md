@@ -347,7 +347,7 @@ interface ApplyResult {
 }
 ```
 
-Five outcomes, and the distinction between them is the part integrators get
+Six outcomes, and the distinction between them is the part integrators get
 wrong:
 
 | Outcome | Reported in | Document changed | `op_id` consumed |
@@ -355,8 +355,29 @@ wrong:
 | Applied | `applied` | yes | yes |
 | **Dropped by last-writer-wins** — a higher stamp already owns that target | `applied` | no | yes |
 | **Delete-wins no-op** — the target node is gone | `applied` | no | yes |
+| **Malformed on its face, whatever the document state** — `connect` with a `from_slot` or `to_slot` outside the non-negative integers, a non-numeric `to_slot` without `grow`, a non-string `grow.name`/`grow.type`/`grow.inputcount.widget`, a non-cloneable widget value, or a `base_version` that throws on conversion | `failed` | no (byte-identical for this op; a valid prefix earlier in the batch is still applied — §4) | **no** |
 | Duplicate — already applied to this document | `skipped` | no | already was |
-| Rejected | `failed` | no (byte-identical) — **except four `connect` paths, see below** | **no** |
+| Rejected | `failed` | no (byte-identical) — **with two known exceptions, below** | **no** |
+
+**The two exceptions, stated because the row above would otherwise overclaim
+(`docs/INVARIANTS.md` KA-4 and contract D4 record the same two).** Issue #10's
+class is not fully closed. A rejection still mutates before it throws when the
+op carries a value `structuredClone` accepts but Yjs cannot store (`Map`, `Set`,
+`RegExp`, `ArrayBuffer`, `Error`). And a REFERENCE CYCLE is not rejected at all
+— it is accepted, after which `encodeStateAsUpdate` throws permanently and the
+document cannot be encoded or projected again. Tracked by #59, #61 and #68;
+until those land, "byte-identical on rejection" holds for every rejection code
+the applier raises deliberately, and not for these two.
+
+The four `connect` paths this row used to except — the two `output_slot_missing`
+cases and the two `connect`+`inputcount` grow rejections, swept by
+`test/ka4-rejection-byte-identity.test.ts` — **now hold**, and are additionally
+order-independent (schema Amendment A6).
+
+Separately, `connect.link_id` and `connect.link_type` are copied into the
+document unvalidated, so an `undefined` `link_id` throws mid-write and a `null`
+or object one is accepted. That is long-standing behaviour, not a rejection
+path, and is tracked with the same issues.
 
 `applied` means "this document is done with that op_id", not "your value won".
 A client that renders optimistically must clear a pending op when its effect
@@ -435,7 +456,15 @@ Concretely, pinned by the test suite (`npm test`):
   last-writer-wins register; the winner retires the displaced link whole; the
   loser writes nothing.
 - **Delete wins** over concurrent updates, silently. An op naming a node that
-  is gone is a no-op, not an error.
+  is gone is a no-op, not an error — **provided the op itself is well formed.**
+  Validation that depends only on the OP (issue #10 / schema Amendment A6) runs
+  before the delete-wins return, so an op that is malformed on its face is
+  rejected rather than recorded as an applied no-op. Otherwise whether an op
+  was rejected would depend on which replica had already seen the delete, and
+  under §4 abort-remainder the two would then disagree about the rest of the
+  batch as well. Checks that must READ the deleted node — slot ranges, opaque
+  widget storage, the catalogue lookup — necessarily still resolve differently;
+  schema §2.5 items 4 and 5 carve that out explicitly.
 - **Rejection is loud.** An op that is unsatisfiable against a live target is
   rejected, never silently dropped.
 
@@ -457,6 +486,7 @@ is closed.
 4. Two writes to the same target **inside one batch** share a `base_version`,
    so they resolve by `op_id`, not by position in the batch. "Last spec wins"
    is not true.
+
 5. An interior write into a subgraph definition that more than one node
    instantiates is **rejected** (`shared_definition_unforked`), where comfy-cli
    forks the definition instead. Schema §5.3 keeps forking OPEN and requires the
@@ -466,6 +496,18 @@ is closed.
    display name the pinned catalog describes as a node class is *not* a
    spelling of the definition: naming a subgraph after the node it wraps is
    common, and those nodes are classes, not instances.
+6. A `connect` refused by a check that must READ a node — `from_slot`/`to_slot`
+   out of range or not addressing a slot record, an opaque widget destination,
+   or a `grow.inputcount.widget` the catalogue cannot describe — racing that
+   node's deletion is rejected by a replica that still holds the node and
+   accepted as a delete-wins no-op by one that does not. Checks that depend on
+   the OP ALONE are hoisted above the delete-wins return and do not carve out.
+   Schema §2.5 items 4 and 5, Amendment A6.
+
+This list and the schema's are the same list seen from two sides: schema §2.5
+enumerates five; items 1-3 map one-to-one, schema items 4 and 5 are folded into
+item 6 here, item 4 above is the intra-batch `base_version` case (which the
+schema states in §3 instead), and item 5 is the §5.3 shared-definition rejection.
 
 ### Opaque widgets
 
