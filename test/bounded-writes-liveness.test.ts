@@ -27,7 +27,10 @@
  *     would fall, the ceiling would still pass, and the gate would be measuring
  *     nothing. `set_widget` has an exact, schema-stated cost (§1.2: one widget
  *     `set` plus one `__stamps` set; §4: one `__applied` set) and is pinned to
- *     it here, so a bypassed or an extra write both show up as a number.
+ *     it here, so a bypassed or an extra write both show up as a number. A
+ *     `connect` and a stranding `delete_node` are pinned alongside it because
+ *     they are the only paths that reach `apush` and `adel`, which the
+ *     degree-scaling fixture never touches.
  *
  * These are deliberately expressed as EXACT counts and as growth, not as
  * `toBeGreaterThan(0)`: an op-count assertion that only checks non-zero passes
@@ -38,6 +41,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyOps,
   mint,
+  type ConnectOp,
   type DeleteNodeOp,
   type SetWidgetOp,
   type WidgetCatalog,
@@ -75,6 +79,26 @@ function hubWorkflow(degree: number): WorkflowJSON {
     links.push([i, 1, 0, i + 1, 0, "X"]);
   }
   return { nodes, links } as unknown as WorkflowJSON;
+}
+
+/** 1 → 2 → 3, every port wired, so a delete of node 2 strands references on BOTH sides. */
+function chainWorkflow(): WorkflowJSON {
+  return {
+    nodes: [
+      { id: 1, type: "Peer", inputs: [], outputs: [{ name: "o", type: "X", links: [1] }] },
+      {
+        id: 2,
+        type: "Peer",
+        inputs: [{ name: "i", type: "X", link: 1 }],
+        outputs: [{ name: "o", type: "X", links: [2] }],
+      },
+      { id: 3, type: "Peer", inputs: [{ name: "i", type: "X", link: 2 }], outputs: [{ name: "o", type: "X", links: [] }] },
+    ],
+    links: [
+      [1, 1, 0, 2, 0, "X"],
+      [2, 2, 0, 3, 0, "X"],
+    ],
+  } as unknown as WorkflowJSON;
 }
 
 /** Y-writes performed by deleting the hub of a `degree`-wide fan-out. */
@@ -147,6 +171,38 @@ describe("schema §11: the counter measures the applier's real writes", () => {
       running.push(_getMutationCount());
     }
     expect(running).toEqual([3, 6, 9, 12]);
+  });
+
+  it("charges a connect exactly five (link + input slot + output-array push + stamp + applied)", () => {
+    // Reaches `apush`, which `deleteHubCost` never does: the applier's only
+    // array APPEND is wiring a link id into the source output port's list.
+    const doc = mint(chainWorkflow(), catalog);
+    const op = {
+      op: "connect",
+      ...env(),
+      link_id: 9,
+      from_node: 3,
+      from_slot: 0,
+      to_node: 1,
+      to_slot: null,
+      link_type: "X",
+      grow: { name: "gin", type: "X" },
+    } as unknown as ConnectOp;
+    _resetMutationCount();
+    expect(applyOps(doc, [op], catalog).failed).toBeNull();
+    expect(_getMutationCount()).toBe(5);
+  });
+
+  it("charges the array delete when a delete strands an output link", () => {
+    // Reaches `adel`, the applier's only array REMOVE: deleting the middle of
+    // 1 → 2 → 3 leaves node 1's output `links` array holding a dead link id,
+    // which the dangling scrub removes in place. One node delete, two link
+    // deletes, one array delete, one input-slot scrub, one applied set.
+    const doc = mint(chainWorkflow(), catalog);
+    const op: DeleteNodeOp = { op: "delete_node", ...env(), node_id: 2, removed_links: [1, 2] };
+    _resetMutationCount();
+    expect(applyOps(doc, [op], catalog).failed).toBeNull();
+    expect(_getMutationCount()).toBe(6);
   });
 
   it("charges a de-duplicated replay nothing, so the ceiling is not padded by idempotent retries (KA-4)", () => {
