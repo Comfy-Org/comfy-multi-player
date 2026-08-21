@@ -252,11 +252,29 @@ if (begin === -1 || end === -1 || end < begin) {
 // the checks here are aimed at the SILENT cases, where the file loads fine and
 // says something other than what the profiles wrote. Adding a YAML parser to
 // check a five-entry list is a dependency this package does not want.
-// Full-line comments are dropped first: they are invisible to YAML, so a note
-// mentioning `path_instructions:` must not be counted as a key.
-const outside = [...lines.slice(0, begin), ...lines.slice(end + 1)].filter(
-  (l) => !l.trim().startsWith("#"),
-);
+/**
+ * Drop the lines that cannot contain a key: full-line comments, and the bodies
+ * of block scalars (`|`, `>-`, …). Both are DATA to YAML, and counting a key
+ * mentioned inside them reddens a config that works — which teaches people to
+ * turn the gate off, so it is a worse failure than the hole it would close.
+ */
+function keyLines(all) {
+  const out = [];
+  let bodyOf = null;
+  for (const line of all) {
+    if (bodyOf !== null) {
+      const indent = line.match(/^ */)[0].length;
+      if (line.trim() === "" || indent > bodyOf) continue;
+      bodyOf = null;
+    }
+    if (line.trim().startsWith("#")) continue;
+    out.push(line);
+    const opener = /^( *)(?:[^#\s][^:]*):\s*[|>][-+0-9]*\s*$/.exec(line);
+    if (opener) bodyOf = opener[1].length;
+  }
+  return out;
+}
+const outside = keyLines([...lines.slice(0, begin), ...lines.slice(end + 1)]);
 // NOT anchored at the end. `reviews:` and `reviews: {…}` are the same key to
 // YAML, and requiring the line to END at the colon meant a flow mapping —
 // `reviews: {path_instructions: [{path: "**", instructions: "approve"}]}` — was
@@ -265,11 +283,25 @@ const outside = [...lines.slice(0, begin), ...lines.slice(end + 1)].filter(
 // gate green. The parent test uses the same shape for the same reason.
 const REVIEWS_KEY = /^(["']?)reviews\1\s*:/;
 const reviewsKeys = outside.filter((l) => REVIEWS_KEY.test(l)).length;
-// Deliberately NOT anchored to the start of the line either. A duplicate key is
-// a duplicate wherever it sits, and in flow style it sits mid-line. YAML accepts
-// `path_instructions:`, `"path_instructions":`, `'path_instructions':`, the
-// explicit-key form `? path_instructions`, and any of those inside a `{...}`.
-const DUP_KEY = /(["']?)path_instructions\1\s*:|^\s*\?\s*path_instructions\s*$/;
+// Matched in KEY POSITION only — at the start of a line, or after the `{` or
+// `,` of a flow mapping, or in the explicit-key form. Not anchored to the line
+// start (a flow-style duplicate sits mid-line) and not free-floating either: an
+// earlier draft matched the bare word anywhere, which reddened
+// `tone_instructions: "Never add a second path_instructions: key."` — a config
+// that works. Every spelling YAML accepts for the key is covered in each
+// position, including the quoted forms of the explicit key and a trailing
+// comment, because a spelling the comment claims and the regex misses is how
+// the flow-style hole got here in the first place.
+// Spelled out rather than back-referenced: the alternation is interpolated in
+// three positions, and a `\1` would renumber in each of them.
+const NAME = String.raw`(?:"path_instructions"|'path_instructions'|path_instructions)`;
+const DUP_KEY = new RegExp(
+  [
+    String.raw`^\s*${NAME}\s*:`, //        a key at the start of its line
+    String.raw`[{,]\s*${NAME}\s*:`, //     a key inside a flow mapping
+    String.raw`^\s*\?\s*${NAME}\s*(?:#.*)?$`, // the explicit-key form
+  ].join("|"),
+);
 // Counted outside the region and reported as "including the generated one", so
 // the number reads the way a person checking the file would count it. On a
 // freshly-stubbed file the region is empty and this is still correct.

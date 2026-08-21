@@ -374,6 +374,16 @@ describe("check-profile-claims staleness gate", () => {
     expect(multiline.status).toBe(1);
     expect(multiline.stderr).toContain("<!-- claim: anything :: src/index.ts -->");
 
+    // A marker whose BODY spans a newline is the shape the repo's own #16
+    // tombstone has, and it must be caught at column 0 too. Pinned separately
+    // because a scan that stopped at the end of the line still passed the
+    // opening-newline case above.
+    writeFileSync(
+      join(checks, "README.md"),
+      '<!-- known-defect: #1 :: */\n  version: number; :: src/index.ts -->\n',
+    );
+    expect(runAgainst(root).status).toBe(1);
+
     // The same text indented with spaces is an example, and stays one.
     writeFileSync(join(checks, "README.md"), "  <!--\n  claim: anything :: src/index.ts -->\n");
     expect(runAgainst(root).status).toBe(0);

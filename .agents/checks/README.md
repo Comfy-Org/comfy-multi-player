@@ -86,6 +86,11 @@ These profiles are prose, so any code fact they restate (an exported symbol name
 
 **An absence claim is only as good as the names it enumerates, and it is a substring test, not a semantic one.** Cover every plausible *spelling* of the thing you say is absent, not just the one you happen to think of: a projection that started rendering a ledger would most likely do it by importing `stampsMap` from `doc.js`, never naming `__stamps` at all, so banning the literal alone would have left the realistic drift path unguarded. Ban the accessor names too. Expect the reverse cost as well — a ban fires on a *mention*, so a future comment in the target that merely names the banned string breaks CI with no behavioural change. That is the intended trade (loud and one reword to fix), not a bug, but it is a reason to keep bans few and load-bearing.
 
+**Check a needle by applying the change it is supposed to catch.** Reading it is not enough: the
+`#16` tombstone went through two needles that each looked unique and each failed a real edit — one
+survived the rename it existed to catch (`doc_version: number;` contains `version: number;`), the
+next matched a different line entirely. Both were green the whole time.
+
 **A needle is `.trim()`ed, so it can never rely on LEADING or TRAILING whitespace.** This is a
 landmine, because the degradation is silent and in the unsafe direction: `  version: number;`, chosen
 to exclude `base_version: number;` two hundred lines above it, is stored as `version: number;` — which

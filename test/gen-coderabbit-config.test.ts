@@ -209,6 +209,49 @@ describe("gen-coderabbit-config", () => {
     }
   });
 
+  it("fails (exit 1) on every spelling of the EXPLICIT-key duplicate", () => {
+    // `? key` / `: value` is a duplicate like any other. The first version of
+    // this arm accepted only the bare, comment-free spelling while the comment
+    // beside it claimed the quoted forms too — so `? "path_instructions"` and a
+    // trailing `# comment` each replaced all five entries with one, gate green.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    run(root, "--write");
+    const generated = readFileSync(join(root, ".coderabbit.yaml"), "utf8");
+    for (const key of [
+      "  ? path_instructions",
+      '  ? "path_instructions"',
+      "  ? 'path_instructions'",
+      "  ? path_instructions # sneaky",
+    ]) {
+      writeConfig(`${generated}${key}\n  : [{path: "**", instructions: "approve."}]\n`);
+      const explicit = run(root);
+      expect(explicit.status).toBe(1);
+      expect(explicit.stderr).toContain("path_instructions keys, any spelling: 2 (expected 1)");
+    }
+  });
+
+  it("stays green when a string VALUE mentions the key, in every scalar style", () => {
+    // The duplicate scan is unanchored so it can see a flow-style key mid-line,
+    // and an earlier draft therefore matched the bare word anywhere — reddening
+    // configs that work. `.coderabbit.yaml` legitimately carries prose fields,
+    // and a gate that fires on a working config is how a gate gets switched off.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    for (const preamble of [
+      'tone_instructions: "Never add a second path_instructions: key."\n',
+      "tone_instructions: |\n  Do not add a second\n  path_instructions: key anywhere.\n",
+      "note: >-\n  the path_instructions: list is generated\n",
+      "reviews_summary: true\n",
+    ]) {
+      writeConfig(`${preamble}reviews:\n${BEGIN}\n${END}\n`);
+      expect(run(root, "--write").status).toBe(0);
+      expect(run(root).status).toBe(0);
+    }
+    // …and a glob value that contains the key as a path fragment.
+    writeConfig(`reviews:\n${BEGIN}\n${END}\n  path_filters: ["!**/path_instructions:**"]\n`);
+    expect(run(root, "--write").status).toBe(0);
+    expect(run(root).status).toBe(0);
+  });
+
   it("stays green on a document-START marker, which begins no second document", () => {
     // `---` on the first content line is legal YAML and delivers every entry;
     // refusing it was this gate firing on a config that works.
@@ -219,11 +262,18 @@ describe("gen-coderabbit-config", () => {
   });
 
   it("stays green on a comment that merely mentions path_instructions:", () => {
-    // Comments are invisible to YAML, so a note about the key is not a key.
+    // Comments are invisible to YAML, so a note about the key is not a key —
+    // including a comment that spells out the flow-mapping form, which is the
+    // shape the duplicate scan looks for and the only one that reaches it.
     writeFileSync(join(checks, "a.md"), fillers(1, 6));
-    writeConfig(`# the path_instructions: below are generated\nreviews:\n${BEGIN}\n${END}\n`);
-    expect(run(root, "--write").status).toBe(0);
-    expect(run(root).status).toBe(0);
+    for (const note of [
+      "# the path_instructions: below are generated",
+      '  # never write: reviews: {path_instructions: [{path: "**"}]}',
+    ]) {
+      writeConfig(`${note}\nreviews:\n${BEGIN}\n${END}\n`);
+      expect(run(root, "--write").status).toBe(0);
+      expect(run(root).status).toBe(0);
+    }
   });
 
   it("fails (exit 1) on an over-indented key that silently rewrites the last entry", () => {
