@@ -33,4 +33,4 @@ CI so the prose above cannot silently describe a contract that no longer exists.
 <!-- claim: export * from "./types.js" :: src/index.ts -->
 <!-- claim: export * from "./stamps.js" :: src/index.ts -->
 
-> Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P2 to any tool you ran, and P7 to any run you quote.
+> Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P10 to what that guard's test asserts on, P2 to any tool you ran, and P7 to any run you quote.

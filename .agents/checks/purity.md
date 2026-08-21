@@ -15,4 +15,4 @@ Apply this profile to changes to `src/**`, exports, package metadata, build conf
 <!-- claim: "check:imports": "node scripts/check-import-graph.mjs" :: package.json -->
 <!-- claim: "check:purity": "node scripts/check-purity.mjs" :: package.json -->
 
-> Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P2 to any tool you ran, and P7 to any run you quote.
+> Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P10 to what that guard's test asserts on, P2 to any tool you ran, and P7 to any run you quote.

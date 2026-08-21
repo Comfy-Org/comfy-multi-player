@@ -6,13 +6,13 @@ Concern profiles a reviewer agent (or a human) applies to a change. Apply every 
 
 | Profile | Focus |
 | --- | --- |
-| [`vacuity.md`](vacuity.md) | can this check fail, did it run, does the result say what is claimed from it |
+| [`vacuity.md`](vacuity.md) | can this check fail — and fail *for this property* — did it run, does the result say what is claimed from it, and does the number mean the same thing twice |
 
-[`vacuity.md`](vacuity.md) is not a concern like the others — it is the check on the checks, and every other profile in this directory ends with a one-line pointer to it (`grep -rn "apply \[vacuity.md\]" .agents/checks/`). It applies to tests, gates, analyzer invocations, the prose in this directory, and any result cited as evidence in a PR body, ADR, or plan. [`vacuity.worked-example.md`](vacuity.worked-example.md) is its self-application: the probes run against a check that was genuinely vacuous, with the real output.
+[`vacuity.md`](vacuity.md) is not a concern like the others — it is the check on the checks, and every other profile in this directory ends with a one-line pointer to it (`grep -rn "apply \[vacuity.md\]" .agents/checks/`). It applies to tests, gates, analyzer invocations, the prose in this directory, and any result cited as evidence in a PR body, ADR, or plan. [`vacuity.worked-example.md`](vacuity.worked-example.md) is its self-application: the probes run against a check that was genuinely vacuous, with the real output, plus a case where the probe goes honestly red and the guard is still unproven because the observable a reviewer records — an exit code — cannot say which of a gate's rules fired.
 
 ## Gate exit-code convention
 
-**Every checked-in gate in this repo reports three outcomes, not two.**
+**Every checked-in gate in this repo reports three outcomes, not two.** Stated as a rule, because it is not yet a fact: see the recorded exception below.
 
 | Exit | Meaning | How to report it |
 | --- | --- | --- |
@@ -23,6 +23,8 @@ Concern profiles a reviewer agent (or a human) applies to a change. Apply every 
 A gate must therefore report its unit of work (modules cruised, files linted, packages audited, tests executed) and exit `2` when that unit falls below a floor, because an empty result is otherwise ambiguous between "clean" and "did not run" and every tool resolves that ambiguity in favour of green.
 
 Reference implementation: [`../../scripts/check-import-graph.mjs`](../../scripts/check-import-graph.mjs), which exits `2` when it cruises fewer modules than the op layer has (`MIN_MODULES`; raise it if the layer grows, never lower it to make a run pass). `npm run check:purity` follows the same convention: `2` means no `dist/` or no `node_modules`. New gates should copy the shape.
+
+**Recorded exception, with a sunset.** `scripts/verify-corpus.mjs` exits only `0` or `1` (verified at `76d0180`, 2026-08-21: `grep -n 'process.exit' scripts/verify-corpus.mjs` shows no `exit(2)`). It would therefore print a pass over an empty manifest, and it cannot detect a fixture that is present but unlisted. Until it grows a manifest-size floor and an exit `2`, **do not cite `verify:corpus` as evidence without pasting the file count it reported.** Writing the convention down while one gate silently violates it is exactly the assertive-documentation failure [`vacuity.md`](vacuity.md) P5 is about, so it is named here rather than glossed.
 
 This convention is the load-bearing part of everything below it. The profiles are prose and can rot; an exit code cannot. Documentation asks a reviewer to remember, so anything that can be moved out of a profile and into a gate's exit status should be.
 

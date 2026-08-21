@@ -8,4 +8,4 @@ Apply this profile to changes in op validation, dispatch, rejection, and the app
 - Preserve abort-remainder: when one op in a batch is rejected, the remainder must not apply. Do not add a path that continues applying trailing ops after a rejection.
 - Do not demand error handling on genuinely infallible pure code, and do not flag existing handling in untouched code. Focus on NEW or CHANGED error paths. Critical for swallowed or partial-mutation errors in the apply path; major for a new fail-open branch; minor for a missing rejection `code` specificity.
 
-> Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P2 to any tool you ran, and P7 to any run you quote.
+> Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P10 to what that guard's test asserts on, P2 to any tool you ran, and P7 to any run you quote.

@@ -12,4 +12,4 @@ Apply this profile to mint, retry, dedupe, stamps, ordering, and LWW conflict ha
 - Verify duplicate `op_id` handling is a true byte-identical no-op. Reuse with different canonical payload/stamp must fail without mutation.
 - A server may advance scalar `base_version` for V1, but code and contracts must leave room for a logical clock rather than making the scalar the permanent sole authority.
 
-> Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P2 to any tool you ran, and P7 to any run you quote.
+> Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P10 to what that guard's test asserts on, P2 to any tool you ran, and P7 to any run you quote.

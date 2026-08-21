@@ -9,4 +9,4 @@ Apply this profile to transport adapters, integration APIs, document writes, awa
 - Optimistic pending ops remain a presentation-only shadow, clear on effect rather than ack, and are never encoded or merged into the shared doc.
 - Treat APIs that expose unrestricted document mutation across this boundary as blocking violations even if current callers behave correctly.
 
-> Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P2 to any tool you ran, and P7 to any run you quote.
+> Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P10 to what that guard's test asserts on, P2 to any tool you ran, and P7 to any run you quote.
