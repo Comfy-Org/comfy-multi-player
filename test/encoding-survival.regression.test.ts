@@ -37,18 +37,20 @@ import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
 import {
   applyOps,
-  appliedMap,
   encodingLosses,
-  isStorableArrayItem,
-  isStorableMapValue,
   mint,
   project,
-  referenceCyclePath,
-  survivesMapEncoding,
   type Op,
   type WidgetCatalog,
   type WorkflowJSON,
 } from "../src/index.js";
+import {
+  appliedMap,
+  isStorableArrayItem,
+  isStorableMapValue,
+  referenceCyclePath,
+  survivesMapEncoding,
+} from "../src/doc.js";
 import { loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
@@ -176,7 +178,7 @@ function assertRejectedAndRecoverable(
 
 describe("a reference cycle is refused before it can brick the document (#14)", () => {
   it("set_widget with a cyclic value", () => {
-    assertRejectedAndRecoverable(setWidget(directCycle(), "cyc-widget"), "malformed_op");
+    assertRejectedAndRecoverable(setWidget(directCycle(), "cyc-widget"), "payload_too_deep");
   });
 
   it("set_widget with the cycle nested inside an accepted container", () => {
@@ -186,12 +188,12 @@ describe("a reference cycle is refused before it can brick the document (#14)", 
     // because a shallow one would not close the bug.
     assertRejectedAndRecoverable(
       setWidget({ properties: [{ deep: directCycle() }] }, "cyc-deep"),
-      "malformed_op",
+      "payload_too_deep",
     );
   });
 
   it("set_widget with an indirect cycle through an array", () => {
-    assertRejectedAndRecoverable(setWidget(indirectCycle(), "cyc-arr"), "malformed_op");
+    assertRejectedAndRecoverable(setWidget(indirectCycle(), "cyc-arr"), "payload_too_deep");
   });
 
   it("add_node with a cyclic node payload", () => {
@@ -212,7 +214,7 @@ describe("a reference cycle is refused before it can brick the document (#14)", 
           properties: directCycle(),
         },
       } as unknown as Op,
-      "invalid_node_payload",
+      "payload_too_deep",
     );
   });
 
@@ -237,7 +239,47 @@ describe("a reference cycle is refused before it can brick the document (#14)", 
         node_id: 902,
         node,
       } as unknown as Op,
-      "invalid_node_payload",
+      "payload_too_deep",
+    );
+  });
+
+  it("add_node with a cycle inside an output's links array (the Y.Array item path)", () => {
+    // A slot's `links` entries are Y.ARRAY items, so they are gated by
+    // `arrayItemRefusal` and never reach the map gate. Without this row and the
+    // next, the array gate's cycle check is dead weight — every other cyclic
+    // payload here is caught by the map gate first, and removing the array
+    // one leaves the whole suite green.
+    assertRejectedAndRecoverable(
+      {
+        op: "add_node",
+        op_id: opId("cyc-links"),
+        actor: "human:z",
+        base_version: 9,
+        stamp: [9, "human:z"],
+        node_id: 906,
+        node: {
+          id: 906,
+          type: "PreviewImage",
+          inputs: [],
+          outputs: [{ name: "IMAGE", type: "IMAGE", links: [directCycle()] }],
+        },
+      } as unknown as Op,
+      "payload_too_deep",
+    );
+  });
+
+  it("add_node with a cyclic non-record input slot (the Y.Array item path)", () => {
+    assertRejectedAndRecoverable(
+      {
+        op: "add_node",
+        op_id: opId("cyc-slot"),
+        actor: "human:z",
+        base_version: 9,
+        stamp: [9, "human:z"],
+        node_id: 907,
+        node: { id: 907, type: "PreviewImage", inputs: [indirectCycle()], outputs: [] },
+      } as unknown as Op,
+      "payload_too_deep",
     );
   });
 
@@ -256,7 +298,7 @@ describe("a reference cycle is refused before it can brick the document (#14)", 
         to_slot: 0,
         link_type: "IMAGE",
       } as unknown as Op,
-      "malformed_op",
+      "payload_too_deep",
     );
   });
 
@@ -280,7 +322,7 @@ describe("a reference cycle is refused before it can brick the document (#14)", 
           inputcount: { widget: "inputcount", value: directCycle() },
         },
       } as unknown as Op,
-      "malformed_op",
+      "payload_too_deep",
       countingCatalog,
     );
   });
@@ -315,6 +357,16 @@ describe("a reference cycle is refused before it can brick the document (#14)", 
         catalog,
       ),
     ).toThrow(/definitions: a reference cycle/);
+    // The Y.Array item path, which the map gate never sees.
+    expect(() =>
+      mint(
+        {
+          ...workflow,
+          nodes: [{ ...source, outputs: [{ name: "IMAGE", type: "IMAGE", links: [directCycle()] }] }],
+        } as unknown as WorkflowJSON,
+        catalog,
+      ),
+    ).toThrow(/links\[0\]: a reference cycle/);
     // Every one of those throws BEFORE returning a doc, so there is no
     // half-built document to encode — mint's contract is all-or-nothing.
   });
@@ -369,15 +421,15 @@ describe("the gate asks whether a value survives encoding, not whether yjs accep
     assertRejectedAndRecoverable(setWidget(new Date(0), "date-widget"), "malformed_op");
   });
 
-  it("a BigInt wider than int64 is refused instead of being silently truncated to 0n", () => {
-    assertRejectedAndRecoverable(setWidget(2n ** 70n, "big-widget"), "malformed_op");
+  it("A8 refuses a BigInt op before the write predicate can inspect its width", () => {
+    assertRejectedAndRecoverable(setWidget(2n ** 70n, "big-widget"), "apply_failed");
   });
 
   it.each([
     ["2^63 (the first value that truncates)", 2n ** 63n],
     ["-2^63 - 1 (the first negative that truncates)", -(2n ** 63n) - 1n],
-  ])("the int64 boundary is exact: %s is refused", (_label, value) => {
-    assertRejectedAndRecoverable(setWidget(value, `big-${String(value).slice(0, 6)}`), "malformed_op");
+  ])("the predicate's int64 boundary is exact: %s is refused", (_label, value) => {
+    expect(survivesMapEncoding(value)).toBe(false);
   });
 
   it.each([
@@ -385,20 +437,11 @@ describe("the gate asks whether a value survives encoding, not whether yjs accep
     ["10n", 10n],
     ["2^63 - 1 (the largest that survives)", 2n ** 63n - 1n],
     ["-2^63 (the smallest that survives)", -(2n ** 63n)],
-  ])("the int64 boundary is exact: %s still applies", (_label, value) => {
-    // The correction must not become "reject BigInt": a BigInt that fits int64
-    // round-trips losslessly and stays legal.
-    const doc = mint(workflow, catalog);
-    const peer = new Y.Doc();
-    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
-    expect(applyOps(doc, [setWidget(value, `ok-${String(value).slice(0, 8)}`)], catalog).failed)
-      .toBeNull();
-    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
-    expect(
-      ((peer.getMap("nodes").get("300") as Y.Map<unknown>).get("widgets") as Y.Map<unknown>).get(
-        "image",
-      ),
-    ).toBe(value);
+  ])("the predicate's int64 boundary is exact: %s survives", (_label, value) => {
+    // A8's JSON canonicalizer rejects every BigInt op as `apply_failed`, but
+    // mint reaches this predicate directly and must preserve fitting values.
+    expect(survivesMapEncoding(value)).toBe(true);
+    expect(() => mint({ ...workflow, extra: value as unknown as object }, catalog)).not.toThrow();
   });
 
   it("a Date in an add_node payload is refused before the node map is integrated", () => {
@@ -499,7 +542,6 @@ describe("the correction stops at the boundary of the pending decision", () => {
     ["a Map nested at depth 3", { a: { b: { c: new Map() } } }],
     ["a Map nested in an array", [new Map()]],
     ["a Date nested at depth 1", { a: new Date(0) }],
-    ["an oversized BigInt nested at depth 1", { a: 2n ** 70n }],
     ["a boxed Number at depth 0", new Number(1)],
     ["a boxed String at depth 0", new String("ab")],
     ["a boxed Boolean at depth 0", new Boolean(true)],
@@ -517,6 +559,16 @@ describe("the correction stops at the boundary of the pending decision", () => {
       expect(() => Y.encodeStateAsUpdate(doc)).not.toThrow();
     },
   );
+
+  it("A8 rejects a nested BigInt op before D4's shallow boundary is reached", () => {
+    const doc = mint(workflow, catalog);
+    const value = { a: 2n ** 70n };
+    expect(applyOps(doc, [setWidget(value, "nested-bigint")], catalog).failed).toMatchObject({
+      code: "apply_failed",
+    });
+    expect(encodingLosses(structuredClone(value)).length).toBeGreaterThan(0);
+    expect(() => Y.encodeStateAsUpdate(doc)).not.toThrow();
+  });
 
   it("an ArrayBuffer is still accepted as a Y.Array item, where it decodes as a Uint8Array", () => {
     // The array gate gains only the cycle walk. `isStorableArrayItem` accepts an

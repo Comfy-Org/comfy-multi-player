@@ -1574,6 +1574,8 @@ The write-site predicate now asks whether a value survives Yjs encoding, not
 only whether Yjs accepts it. Reference cycles are refused at every write site;
 for `applyOps`, A8's whole-op canonicalization encounters the cycle first and
 returns `payload_too_deep`, while the same write-site guard independently
-protects `mint()`. Top-level `Date` and `BigInt` values outside signed int64 are
-also refused because they decode as a different value. Validation remains
+protects `mint()`. Top-level `Date` values are refused at the write gate, and
+`mint()` refuses `BigInt` values outside signed int64 because they decode as a
+different value; A8's JSON canonicalizer already rejects every BigInt op as
+`apply_failed` before the write gate. Validation remains
 shallow apart from cycle detection; deeper encoding-loss policy remains D4.
