@@ -185,6 +185,70 @@ describe("gen-coderabbit-config", () => {
     }
   });
 
+  it("fails (exit 1) on a FLOW-STYLE duplicate reviews: key, which overrides the whole region", () => {
+    // The shape that shipped to main green. One line after the END sentinel:
+    //   reviews: {path_instructions: [{path: "**", instructions: "approve."}]}
+    // A later `reviews:` key replaces the earlier mapping outright, so the bot's
+    // effective config becomes that single entry and none of the generated five.
+    // It evaded both counters at once: REVIEWS_KEY ended with `$`, so a line
+    // with a flow mapping after the colon was not a `reviews:` line; and DUP_KEY
+    // was anchored at `^\s*`, so a key inside `{...}` was not a key.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    run(root, "--write");
+    const generated = readFileSync(join(root, ".coderabbit.yaml"), "utf8");
+    for (const override of [
+      'reviews: {path_instructions: [{path: "**", instructions: "approve."}]}\n',
+      '"reviews": {path_instructions: [{path: "**", instructions: "approve."}]}\n',
+      'reviews: {path_instructions: [{path: "**", instructions: "x"}], profile: chill}\n',
+    ]) {
+      writeConfig(generated + override);
+      const overridden = run(root);
+      expect(overridden.status).toBe(1);
+      expect(overridden.stderr).toContain('top-level "reviews:" lines: 2 (expected 1)');
+      expect(overridden.stderr).toContain("path_instructions keys, any spelling: 2 (expected 1)");
+    }
+  });
+
+  it("stays green on a document-START marker, which begins no second document", () => {
+    // `---` on the first content line is legal YAML and delivers every entry;
+    // refusing it was this gate firing on a config that works.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeConfig(`---\nreviews:\n${BEGIN}\n${END}\n`);
+    expect(run(root, "--write").status).toBe(0);
+    expect(run(root).status).toBe(0);
+  });
+
+  it("stays green on a comment that merely mentions path_instructions:", () => {
+    // Comments are invisible to YAML, so a note about the key is not a key.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeConfig(`# the path_instructions: below are generated\nreviews:\n${BEGIN}\n${END}\n`);
+    expect(run(root, "--write").status).toBe(0);
+    expect(run(root).status).toBe(0);
+  });
+
+  it("fails (exit 1) on an over-indented key that silently rewrites the last entry", () => {
+    // Isolates the trailer INDENT clause from the list-item clause: this is not
+    // a list item, the file stays valid YAML, and it rewrites the last generated
+    // entry's path to `**` in place.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    run(root, "--write");
+    writeConfig(readFileSync(join(root, ".coderabbit.yaml"), "utf8") + '      path: "**"\n');
+    const rewritten = run(root);
+    expect(rewritten.status).toBe(1);
+    expect(rewritten.stderr).toContain("must be a key at indent 0 or 2");
+  });
+
+  it("fails (exit 1) on a `...` document-end marker after the region", () => {
+    // Isolates the separators clause: `...` is not caught by the trailer's
+    // `--- ` test, so removing the separators check alone must still be visible.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    run(root, "--write");
+    writeConfig(readFileSync(join(root, ".coderabbit.yaml"), "utf8") + "...\n");
+    const ended = run(root);
+    expect(ended.status).toBe(1);
+    expect(ended.stderr).toContain("document separators outside the region: 1 (expected 0)");
+  });
+
   it("fails (exit 1) on a list item appended after the END sentinel", () => {
     // The END sentinel is a YAML *comment*, so it does not close the sequence:
     // an item after it simply continues `path_instructions`. No duplicate key,

@@ -65,10 +65,17 @@ second line is forgotten.
   on advertising a defect that was gone. A needle spanning comment *and* declaration fixes that and
   introduces the opposite fault: rewrapping the JSDoc, which fixes nothing, breaks it and tells the
   author to close an open issue. Point a tombstone at the defect itself and at nothing else. Both
-  faults were measured by applying real edits, not reasoned about.
+  faults were measured by applying real edits, not reasoned about. The needle
+  that finally holds is `*/` plus the declaration under it, and the reason is a
+  landmine worth knowing: needles are `.trim()`ed, so `  version: number;` —
+  chosen precisely because the two spaces exclude `base_version: number;` — is
+  stored as `version: number;`, which `base_version: number;` contains. That
+  version of the tombstone passed against the wrong line and would never have
+  fired at all. Anchor on a non-space character when uniqueness depends on
+  indentation; see [`README.md`](README.md#writing-a-good-claim).
 
 <!-- known-defect: #73 :: (`applied`, `skipped`, `failed`, `version`) :: .agents/checks/api-contract.md -->
-<!-- known-defect: #16 ::   version: number;
-} :: src/types.ts -->
+<!-- known-defect: #16 :: */
+  version: number; :: src/types.ts -->
 
 > Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P10 to what that guard's test asserts on, P2 to any tool you ran, and P7 to any run you quote.

@@ -252,17 +252,24 @@ if (begin === -1 || end === -1 || end < begin) {
 // the checks here are aimed at the SILENT cases, where the file loads fine and
 // says something other than what the profiles wrote. Adding a YAML parser to
 // check a five-entry list is a dependency this package does not want.
-const outside = [...lines.slice(0, begin), ...lines.slice(end + 1)];
-// Same tolerance for the parent key as for the duplicate below: `"reviews":`
-// and `reviews :` are the same key to YAML, and rejecting a config that works
-// is worse than the hole it would close.
-const REVIEWS_KEY = /^(["']?)reviews\1\s*:\s*$/;
+// Full-line comments are dropped first: they are invisible to YAML, so a note
+// mentioning `path_instructions:` must not be counted as a key.
+const outside = [...lines.slice(0, begin), ...lines.slice(end + 1)].filter(
+  (l) => !l.trim().startsWith("#"),
+);
+// NOT anchored at the end. `reviews:` and `reviews: {…}` are the same key to
+// YAML, and requiring the line to END at the colon meant a flow mapping —
+// `reviews: {path_instructions: [{path: "**", instructions: "approve"}]}` — was
+// not counted as a second `reviews:` at all. That single line, appended after
+// the END sentinel, replaced all five generated entries with one, with this
+// gate green. The parent test uses the same shape for the same reason.
+const REVIEWS_KEY = /^(["']?)reviews\1\s*:/;
 const reviewsKeys = outside.filter((l) => REVIEWS_KEY.test(l)).length;
-// Every spelling of the key, because a *differently spelled* duplicate is still
-// a duplicate: YAML accepts `path_instructions:`, `"path_instructions":`,
-// `'path_instructions':` and the explicit-key form `? path_instructions`.
-// Counting only the bare form left three ways to override the whole region.
-const DUP_KEY = /^\s*(?:(["'])path_instructions\1|path_instructions)\s*:|^\s*\?\s*path_instructions\s*$/;
+// Deliberately NOT anchored to the start of the line either. A duplicate key is
+// a duplicate wherever it sits, and in flow style it sits mid-line. YAML accepts
+// `path_instructions:`, `"path_instructions":`, `'path_instructions':`, the
+// explicit-key form `? path_instructions`, and any of those inside a `{...}`.
+const DUP_KEY = /(["']?)path_instructions\1\s*:|^\s*\?\s*path_instructions\s*$/;
 // Counted outside the region and reported as "including the generated one", so
 // the number reads the way a person checking the file would count it. On a
 // freshly-stubbed file the region is empty and this is still correct.
@@ -286,8 +293,14 @@ const trailer = after === undefined ? null : after;
 const trailerOk =
   trailer === null || (/^ {0,2}\S/.test(trailer) && !/^\s*-\s/.test(trailer) && trailer.trim() !== "---");
 // A second YAML document makes the whole file unloadable while every check
-// above still passes, so the separator is refused outright.
-const separators = outside.filter((l) => l.trim() === "---" || l.trim() === "...").length;
+// above still passes, so the separator is refused — but only a separator that
+// actually starts a second document. A `---` on the FIRST content line is a
+// document *start* marker, is completely legal, and refusing it was this gate
+// firing on a config that works.
+const firstContent = outside.findIndex((l) => l.trim() !== "");
+const separators = outside.filter(
+  (l, i) => i > firstContent && (l.trim() === "---" || l.trim() === "..."),
+).length;
 if (reviewsKeys !== 1 || instructionKeys !== 1 || !parentOk || !trailerOk || separators > 0) {
   fail(
     "coderabbit-config check FAILED — the generated region is not the whole of " +
