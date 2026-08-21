@@ -773,7 +773,7 @@ function requireOpOnlyValid(op: ConnectOp): void {
     if (typeof op.grow.inputcount.widget !== "string") {
       throw new OpRejectedError("malformed_op", "connect: grow.inputcount needs a widget name");
     }
-    assertCloneableValue(op.grow.inputcount.value, "connect: grow.inputcount");
+    assertWritableValue(op.grow.inputcount.value, "connect: grow.inputcount");
   }
   if (op.grow != null && (typeof op.grow.name !== "string" || typeof op.grow.type !== "string")) {
     throw new OpRejectedError("malformed_op", "connect: grow payload needs name and type");

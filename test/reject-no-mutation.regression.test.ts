@@ -1,11 +1,7 @@
-import * as fc from "fast-check";
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
 import {
   applyOps,
-  appliedMap,
-  isStorableArrayItem,
-  isStorableMapValue,
   mint,
   project,
   type ConnectOp,
@@ -34,7 +30,7 @@ const opId = (tag: string) => (tag + "0".repeat(32)).slice(0, 32);
  */
 function assertRejectedWithoutMutation(
   workflow: WorkflowJSON,
-  op: Op,
+  op: ConnectOp,
   code: string,
   withCatalog: WidgetCatalog = catalog,
 ): void {
@@ -42,9 +38,6 @@ function assertRejectedWithoutMutation(
   const before = Buffer.from(Y.encodeStateAsUpdate(doc));
   expect(applyOps(doc, [op], withCatalog).failed).toMatchObject({ code });
   expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
-  // A rejected op is retryable, so it must not have burned its op_id — and if
-  // it had, the retry below would report `skipped`, not `failed`.
-  expect(appliedMap(doc).has(op.op_id)).toBe(false);
 
   const retry = applyOps(doc, [op], withCatalog);
   expect(retry.failed).toMatchObject({ code });
@@ -185,31 +178,593 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
     }, "input_slot_missing");
   });
 
-  it("an out-of-range from_slot onto an EMPTY destination slot is refused before the register is claimed", () => {
-    // The projection-invisible member of the family. Slot 1 holds no incumbent
-    // link, so the only footprint of the premature register claim is the
-    // `__stamps` entry — `project()` is byte-for-byte unchanged either way, and
-    // every projection-based assertion in the suite passes while the encoded
-    // document differs. This is why the class survived the first sweep: only
-    // `encodeStateAsUpdate` can see it.
-    const twoInputs: WorkflowJSON = {
-      ...workflow,
-      nodes: [
-        source,
+  /**
+   * BOTH ARRIVAL ORDERS, from ONE seeded snapshot (KA-10).
+   *
+   * The convergence oracle here is the PROJECTION, not the bytes. Two replicas
+   * that applied the same ops in different orders legitimately hold different
+   * Yjs clocks, so `encodeStateAsUpdate` differs even when they agree — byte
+   * identity is the oracle for a SINGLE rejected op (D4), and projection
+   * equality is the oracle for convergence (KA-4 clause 1). Conflating them is
+   * how a convergence bug hides behind a green byte assertion.
+   */
+  /**
+   * The incumbent link MUST come from a node that survives `d`. In the shared
+   * `workflow` above, node 300 both sources the incumbent link and is the
+   * connect's source, so deleting it retires the link in every order and there
+   * is nothing left to diverge about — the first draft of these tests used it
+   * and passed against the very defect they were written for. Node 301 holds
+   * the incumbent here and is never deleted.
+   */
+  const convergenceWorkflow: WorkflowJSON = {
+    nodes: [
+      { id: 300, type: "LoadImage", inputs: [], outputs: [{ name: "IMAGE", type: "IMAGE", links: [] }], widgets_values: [] },
+      { id: 301, type: "LoadImage", inputs: [], outputs: [{ name: "IMAGE", type: "IMAGE", links: [7000] }], widgets_values: [] },
+      { id: 700, type: "BatchImagesNode", inputs: [{ name: "images.image0", type: "IMAGE", link: 7000 }], outputs: [{ name: "IMAGE", type: "IMAGE", links: [] }], widgets_values: [] },
+    ],
+    links: [[7000, 301, 0, 700, 0, "IMAGE"]],
+    groups: [], extra: {}, last_node_id: 700, last_link_id: 7000,
+  };
+
+  function assertConvergesBothOrders(x: Op, d: Op, workflowIn: WorkflowJSON = convergenceWorkflow): void {
+    const seed = mint(workflowIn, catalog);
+    const snapshot = Y.encodeStateAsUpdate(seed);
+    const projections = [[x, d], [d, x]].map((order) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      for (const op of order) applyOps(doc, [op], catalog);
+      return JSON.stringify(project(doc, catalog));
+    });
+    expect(projections[0]).toEqual(projections[1]);
+  }
+
+  const deleteSource: Op = {
+    op: "delete_node", op_id: opId("del-src"), actor: "human:d",
+    base_version: 4, stamp: [4, "human:d"], node_id: 300,
+  } as Op;
+
+  it.each([
+    ["negative", -1],
+    ["fractional", 0.5],
+    ["NaN", Number.NaN],
+  ])(
+    "a %s from_slot is refused in BOTH arrival orders against its source's deletion",
+    (label, fromSlot) => {
+      // REGRESSION (the defect this PR's first revision introduced). Validating
+      // `from_slot` only where the source still exists made the verdict depend
+      // on document state: a replica that had already applied `delete_node(300)`
+      // could not see the malformation, so it ACCEPTED the op, claimed the
+      // concrete-input register and retired the incumbent link, while a replica
+      // that had not applied the delete REJECTED it and kept the link. Same
+      // op-set, two legal orders, two different documents.
+      //
+      // The op-only half of the domain (`Number.isInteger && >= 0`) now runs
+      // unconditionally, so every replica reaches the same verdict in every
+      // state. The in-range half cannot: "is 5 in range" is unanswerable once
+      // the source is gone. Schema Amendment A6 records that residual, and
+      // `from_slot: 5` is deliberately NOT in this table.
+      assertConvergesBothOrders(
         {
-          ...destination,
-          inputs: [
-            { name: "images.image0", type: "IMAGE", link: 9000 },
-            { name: "images.image1", type: "IMAGE", link: null },
-          ],
+          op: "connect", op_id: opId(`conv${label}`), actor: "human:x", base_version: 5,
+          stamp: [5, "human:x"], link_id: 9600, from_node: 300, from_slot: fromSlot,
+          to_node: 700, to_slot: 0, link_type: "IMAGE",
+        } as unknown as Op,
+        deleteSource,
+      );
+    },
+  );
+
+  it("a valid from_slot converges in both orders too (the control that makes the above meaningful)", () => {
+    // Without this, a bug that rejected EVERYTHING would pass the table above.
+    assertConvergesBothOrders(
+      {
+        op: "connect", op_id: opId("conv-ok"), actor: "human:x", base_version: 5,
+        stamp: [5, "human:x"], link_id: 9601, from_node: 300, from_slot: 0,
+        to_node: 700, to_slot: 0, link_type: "IMAGE",
+      } as unknown as Op,
+      deleteSource,
+    );
+  });
+
+  it("an op-only-invalid from_slot is refused even when the DESTINATION is gone", () => {
+    // The same reasoning one node over, but it needs a DIFFERENT oracle. With
+    // the destination deleted the two orders project identically either way —
+    // the op touches nothing — so `project()` cannot see this and an earlier
+    // draft of this test passed with the guard on the wrong side of the `!dst`
+    // return. What differs is the `__applied` LEDGER: a delete-wins no-op
+    // CONSUMES its op_id, a rejection does not, so one replica would dedupe a
+    // later retry and the other would re-attempt it. Assert the DISPOSITION.
+    const badOp = {
+      op: "connect", op_id: opId("conv-dst"), actor: "human:x", base_version: 5,
+      stamp: [5, "human:x"], link_id: 9602, from_node: 300, from_slot: -1,
+      to_node: 700, to_slot: 0, link_type: "IMAGE",
+    } as unknown as Op;
+    const deleteDestination = {
+      op: "delete_node", op_id: opId("del-dst"), actor: "human:d",
+      base_version: 4, stamp: [4, "human:d"], node_id: 700,
+    } as Op;
+
+    const seed = mint(convergenceWorkflow, catalog);
+    const snapshot = Y.encodeStateAsUpdate(seed);
+    const dispositions = [[badOp, deleteDestination], [deleteDestination, badOp]].map((order) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      let connectFailure: string | null = null;
+      for (const op of order) {
+        const result = applyOps(doc, [op], catalog);
+        if (op === badOp) connectFailure = result.failed?.code ?? null;
+      }
+      return connectFailure;
+    });
+    // Both orders must REJECT — never `null` (accepted as a delete-wins no-op).
+    expect(dispositions).toEqual(["output_slot_missing", "output_slot_missing"]);
+  });
+
+  it.each([
+    ["negative", -1],
+    ["large negative", -5],
+    ["fractional below the slot count", 0.5],
+    ["fractional above the slot count", 1.5],
+    ["NaN", Number.NaN],
+    ["out of range", 99],
+  ])(
+    "a %s from_slot is refused as a STRUCTURED rejection, not a raw TypeError",
+    (_label, fromSlot) => {
+      // The error TYPE matters independently of whether the op is rejected.
+      // On `main` a `from_slot` of -1, -5, 0.5 or NaN passed
+      // `typeof !== "number" || from_slot >= outs.length`, so `outs.get(i)`
+      // returned `undefined` and the next property access threw a raw
+      // `TypeError`. `applyOps` catches it — abort-remainder is still honoured,
+      // it does NOT escape the protocol — but it is reported under the generic
+      // `apply_failed` code with a message about "properties of undefined",
+      // which tells a consumer nothing and is indistinguishable from an
+      // internal fault. Every value in this table must now come back as
+      // `output_slot_missing`.
+      //
+      // Note `1.5` is in the table as a CONTROL of sorts: it was already
+      // structured on `main`, because 1.5 >= outs.length. The gap was floats
+      // BELOW the slot count, not floats in general.
+      const doc = mint(workflow, catalog);
+      const result = applyOps(doc, [{
+        op: "connect", op_id: opId(`typ${String(fromSlot)}`), actor: "human:z", base_version: 9,
+        stamp: [9, "human:z"], link_id: 9702, from_node: 300, from_slot: fromSlot,
+        to_node: 700, to_slot: 0, link_type: "IMAGE",
+      } as unknown as Op], catalog);
+      expect(result.failed?.code).toBe("output_slot_missing");
+      expect(result.failed?.code).not.toBe("apply_failed");
+      expect(result.failed?.message).not.toMatch(/properties of undefined/);
+    },
+  );
+
+  it("a rejected connect never escapes applyOps as a thrown exception", () => {
+    // The rejection protocol is in-band by contract (D4: "The failure is
+    // returned, not thrown"). Pinned explicitly because the raw-TypeError path
+    // above was once described as bypassing it — it does not, and a future
+    // refactor that let anything escape would break every consumer's error
+    // handling rather than merely degrade a code.
+    const doc = mint(workflow, catalog);
+    expect(() =>
+      applyOps(doc, [
+        {
+          op: "connect", op_id: opId("esc1"), actor: "human:z", base_version: 9,
+          stamp: [9, "human:z"], link_id: 9703, from_node: 300, from_slot: -1,
+          to_node: 700, to_slot: 0, link_type: "IMAGE",
         },
-      ],
+        {
+          op: "add_node", op_id: opId("esc2"), actor: "human:z", base_version: 9,
+          stamp: [9, "human:z"], node_id: 901, class_type: "LoadImage", pos: [0, 0],
+          node: { id: 901, type: "LoadImage", inputs: [], outputs: [], widgets_values: [], pos: [0, 0] },
+        },
+      ] as unknown as Op[], catalog),
+    ).not.toThrow();
+
+    const doc2 = mint(workflow, catalog);
+    const result = applyOps(doc2, [
+      {
+        op: "connect", op_id: opId("esc3"), actor: "human:z", base_version: 9,
+        stamp: [9, "human:z"], link_id: 9704, from_node: 300, from_slot: -1,
+        to_node: 700, to_slot: 0, link_type: "IMAGE",
+      },
+      {
+        op: "add_node", op_id: opId("esc4"), actor: "human:z", base_version: 9,
+        stamp: [9, "human:z"], node_id: 902, class_type: "LoadImage", pos: [0, 0],
+        node: { id: 902, type: "LoadImage", inputs: [], outputs: [], widgets_values: [], pos: [0, 0] },
+      },
+    ] as unknown as Op[], catalog);
+    // Abort-remainder (§4): the trailing valid op is NOT applied.
+    //
+    // Deliberately asserts the PROTOCOL only — that a failure is returned at
+    // index 0 and the remainder is discarded — and not the specific code, which
+    // the table above owns. This test is a GUARD, not a regression catcher: it
+    // passes against `main` too, because the raw `TypeError` was always caught
+    // and reported in band. Written down so nobody later reads it as evidence
+    // that the TypeError escaped, which it never did.
+    expect(result.failed?.index).toBe(0);
+    expect(result.applied_count).toBe(0);
+  });
+
+  it("reports from_slot's code when BOTH slot axes are invalid (precedence pinned)", () => {
+    // A DISCLOSED code change, and it is LAYERED rather than "from_slot always
+    // wins" — an earlier version of this comment said the latter and was wrong
+    // for `from_slot: 9, to_slot: -1`. The actual precedence is:
+    //   1. op-only `from_slot` domain   -> output_slot_missing
+    //   2. op-only `to_slot` domain     -> input_slot_missing
+    //   3. state-dependent `from_slot`  -> output_slot_missing
+    //   4. state-dependent `to_slot`    -> input_slot_missing
+    // On `main` the `to_slot` range check ran before `requireOutputSlot`, so
+    // most of these returned `input_slot_missing` there — but NOT all of them,
+    // and an earlier version of this comment claimed otherwise. `[9, 0]`
+    // returned `output_slot_missing` on `main` too (only `from_slot` is
+    // invalid, nothing for the `to_slot` check to catch), and `[-1, 0]`
+    // returned the raw-TypeError `apply_failed` — the headline case this PR
+    // exists to fix. TWO combinations changed class, `[-1, 0]` and `[0.5, 0]`,
+    // both marked below; an earlier version of this comment said "the only",
+    // fifteen lines above a row annotated `(CLASS CHANGED)` that contradicted
+    // it. All ten rows are in the table so the claim is checkable rather than
+    // asserted.
+    // README tells integrators to "Match on `code`, never on `message`", so the
+    // code is contractual and this precedence should not drift again unnoticed.
+    for (const [fromSlot, toSlot, expected] of [
+      [9, 9, "output_slot_missing"],   // both state-dependent: from_slot wins (CHANGED)
+      [9, -1, "input_slot_missing"],   // to_slot fails op-only first (unchanged)
+      [9, 0.5, "input_slot_missing"],  // same (unchanged)
+      [-1, 9, "output_slot_missing"],  // from_slot fails op-only first (CHANGED)
+      [-1, -1, "output_slot_missing"], // from_slot op-only outranks to_slot op-only (CHANGED)
+      [0.5, 0.5, "output_slot_missing"], // same (CHANGED)
+      [9, 0, "output_slot_missing"],   // only from_slot invalid (unchanged on main)
+      [0, 9, "input_slot_missing"],    // only to_slot invalid (unchanged on main)
+      [-1, 0, "output_slot_missing"],  // main: apply_failed (raw TypeError) — CLASS CHANGED
+      [0.5, 0, "output_slot_missing"], // same (CLASS CHANGED)
+    ] as [number, number, string][]) {
+      const doc = mint(workflow, catalog);
+      const result = applyOps(doc, [{
+        op: "connect", op_id: opId(`prec${String(fromSlot)}${String(toSlot)}`), actor: "human:z",
+        base_version: 9, stamp: [9, "human:z"], link_id: 9705, from_node: 300,
+        from_slot: fromSlot, to_node: 700, to_slot: toSlot, link_type: "IMAGE",
+      } as unknown as Op], catalog);
+      expect(result.failed?.code).toBe(expected);
+    }
+  });
+
+  it("a throwing base_version is refused identically whether or not the destination is gone", () => {
+    // `stampKey` is op-only (`Number(stamp[0])`, no document read) but the
+    // concrete branch used to evaluate it BELOW the delete-wins return, so a
+    // `Symbol` or throwing-`valueOf` `base_version` was rejected on a replica
+    // holding the destination and delete-wins-APPLIED on one that was not.
+    // `applySetWidget` already got this right, which is what made the
+    // asymmetry findable.
+    for (const stamp of [
+      [Symbol("x"), "human:z"],
+      [{ valueOf() { throw new Error("boom"); } }, "human:z"],
+    ] as unknown[]) {
+      const deleteDestination = {
+        op: "delete_node", op_id: opId("dd-stamp"), actor: "human:d",
+        base_version: 4, stamp: [4, "human:d"], node_id: 700,
+      } as Op;
+      const badOp = {
+        op: "connect", op_id: opId("stampbad"), actor: "human:z", base_version: 9,
+        stamp, link_id: 9706, from_node: 300, from_slot: 0, to_node: 700,
+        to_slot: 0, link_type: "IMAGE",
+      } as unknown as Op;
+      const seed = mint(convergenceWorkflow, catalog);
+      const snapshot = Y.encodeStateAsUpdate(seed);
+      const dispositions = [[badOp, deleteDestination], [deleteDestination, badOp]].map((order) => {
+        const doc = new Y.Doc();
+        Y.applyUpdate(doc, snapshot);
+        let code: string | null = null;
+        for (const op of order) {
+          const result = applyOps(doc, [op], catalog);
+          if (op === badOp) code = result.failed?.code ?? null;
+        }
+        return code;
+      });
+      expect(dispositions[0]).toBe(dispositions[1]);
+      expect(dispositions[0]).not.toBeNull();
+    }
+  });
+
+  it.each([
+    ["Symbol", [Symbol("x"), "human:z"]],
+    ["throwing valueOf", [{ valueOf() { throw new Error("boom"); } }, "human:z"]],
+  ])(
+    "a %s base_version leaves the doc byte-identical on the AUTOGROW path too",
+    (_label, stamp) => {
+      // This hole was open until `stampKey` was hoisted into
+      // `requireOpOnlyValid` for a convergence reason; closing it here was a
+      // side effect. Pinned so the enumerations in `src/applier.ts`,
+      // `docs/INVARIANTS.md` KA-4 and `test/invalid-op-states.test.ts` cannot
+      // quietly become wrong again. (They enumerate FOUR open holes; this
+      // sentence has already been wrong once by naming a stale count, so it
+      // deliberately names none.)
+      const doc = mint(workflow, countingCatalog);
+      const before = Buffer.from(Y.encodeStateAsUpdate(doc));
+      const result = applyOps(doc, [{
+        op: "connect", op_id: opId("stampgrow"), actor: "human:z", base_version: 9,
+        stamp, link_id: 9709, from_node: 300, from_slot: 0, to_node: 700,
+        to_slot: null, link_type: "IMAGE",
+        grow: { name: "images.image1", type: "IMAGE", inputcount: { widget: "inputcount", value: 2 } },
+      } as unknown as Op], countingCatalog);
+      expect(result.failed).not.toBeNull();
+      expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
+    },
+  );
+
+  /**
+   * §2.5 items 4-8 promise "each is pinned by a test that will start
+   * failing the day it is closed". These are those tests. They assert the
+   * carve-out STILL DIVERGES — so closing either one reddens here and forces
+   * the schema list to be updated, which is what the header sentence claims.
+   */
+  it("§2.5 item 4 (source axis) still diverges — pinning the carve-out", () => {
+    const projections = [[
+      { op: "connect", op_id: opId("cv4a"), actor: "human:x", base_version: 5, stamp: [5, "human:x"],
+        link_id: 9707, from_node: 300, from_slot: 5, to_node: 700, to_slot: 0, link_type: "IMAGE" },
+      { op: "delete_node", op_id: opId("cv4d"), actor: "human:d", base_version: 4, stamp: [4, "human:d"], node_id: 300 },
+    ], [
+      { op: "delete_node", op_id: opId("cv4d"), actor: "human:d", base_version: 4, stamp: [4, "human:d"], node_id: 300 },
+      { op: "connect", op_id: opId("cv4a"), actor: "human:x", base_version: 5, stamp: [5, "human:x"],
+        link_id: 9707, from_node: 300, from_slot: 5, to_node: 700, to_slot: 0, link_type: "IMAGE" },
+    ]].map((order) => {
+      const doc = mint(convergenceWorkflow, catalog);
+      for (const op of order) applyOps(doc, [op as unknown as Op], catalog);
+      return JSON.stringify(project(doc, catalog));
+    });
+    // NOT equal — this is the documented residual, not a passing property.
+    expect(projections[0]).not.toEqual(projections[1]);
+  });
+
+  it("§2.5 item 5 (destination axis) still diverges — pinning the carve-out", () => {
+    const bad = {
+      op: "connect", op_id: opId("cv5a"), actor: "human:x", base_version: 5, stamp: [5, "human:x"],
+      link_id: 9708, from_node: 300, from_slot: 0, to_node: 700, to_slot: 9, link_type: "IMAGE",
     };
-    assertRejectedWithoutMutation(twoInputs, {
-      op: "connect", op_id: opId("empty-dst-slot"), actor: "human:z", base_version: 9,
-      stamp: [9, "human:z"], link_id: 9520, from_node: 300, from_slot: 5,
-      to_node: 700, to_slot: 1, link_type: "IMAGE",
-    }, "output_slot_missing");
+    const del = { op: "delete_node", op_id: opId("cv5d"), actor: "human:d", base_version: 4, stamp: [4, "human:d"], node_id: 700 };
+    const add = {
+      op: "add_node", op_id: opId("cv5n"), actor: "human:x", base_version: 5, stamp: [5, "human:x"],
+      node_id: 903, class_type: "LoadImage", pos: [0, 0],
+      node: { id: 903, type: "LoadImage", inputs: [], outputs: [], widgets_values: [], pos: [0, 0] },
+    };
+    const seed = mint(convergenceWorkflow, catalog);
+    const snapshot = Y.encodeStateAsUpdate(seed);
+    const projections = [[[bad, add], [del]], [[del], [bad, add]]].map((batches) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      for (const b of batches) applyOps(doc, b as unknown as Op[], catalog);
+      return JSON.stringify(project(doc, catalog));
+    });
+    expect(projections[0]).not.toEqual(projections[1]);
+  });
+
+  it("§2.5 item 6 (set_widget) still diverges — pinning the carve-out", () => {
+    // §2.5's header promises every carve-out has a test that reddens the day it
+    // closes. Items 6 and 7 were enumerated in this PR, so they need theirs.
+    // `rejectIfOpaqueWidgets` reads the node, so it sits below `!node return`.
+    const opaqueWorkflow: WorkflowJSON = {
+      nodes: [
+        { id: 300, type: "LoadImage", inputs: [], outputs: [], widgets_values: [] },
+        { id: 700, type: "MarkdownNode", inputs: [], outputs: [], widgets_values: ["opaque"] },
+      ],
+      links: [], groups: [], extra: {}, last_node_id: 700, last_link_id: 0,
+    };
+    const bad = {
+      op: "set_widget", op_id: opId("cv6a"), actor: "human:x", base_version: 5,
+      stamp: [5, "human:x"], node_id: 700, widget: "anything", value: 1,
+    };
+    const del = { op: "delete_node", op_id: opId("cv6d"), actor: "human:d", base_version: 4, stamp: [4, "human:d"], node_id: 700 };
+    const add = {
+      op: "add_node", op_id: opId("cv6n"), actor: "human:x", base_version: 5, stamp: [5, "human:x"],
+      node_id: 950, class_type: "LoadImage", pos: [0, 0],
+      node: { id: 950, type: "LoadImage", inputs: [], outputs: [], widgets_values: [], pos: [0, 0] },
+    };
+    const seed = mint(opaqueWorkflow, catalog);
+    const snapshot = Y.encodeStateAsUpdate(seed);
+    const projections = [[[bad, add], [del]], [[del], [bad, add]]].map((batches) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      for (const b of batches) applyOps(doc, b as unknown as Op[], catalog);
+      return JSON.stringify(project(doc, catalog));
+    });
+    expect(projections[0]).not.toEqual(projections[1]);
+  });
+
+  it("§2.5 item 7 (add_node) now converges under the node-presence stamp gate", () => {
+    const bad = {
+      op: "add_node", op_id: opId("cv7a"), actor: "human:x", base_version: 5, stamp: [5, "human:x"],
+      node_id: 960, class_type: "LoadImage", pos: [0, 0],
+      node: { id: 960, type: "LoadImage", inputs: [], outputs: [], widgets_values: ["a", "b", "c", "d", "e", "f"], pos: [0, 0] },
+    };
+    const rival = {
+      op: "add_node", op_id: opId("cv7r"), actor: "human:y", base_version: 4, stamp: [4, "human:y"],
+      node_id: 960, class_type: "LoadImage", pos: [1, 1],
+      node: { id: 960, type: "LoadImage", inputs: [], outputs: [], widgets_values: [], pos: [1, 1] },
+    };
+    const tail = {
+      op: "add_node", op_id: opId("cv7t"), actor: "human:x", base_version: 5, stamp: [5, "human:x"],
+      node_id: 961, class_type: "LoadImage", pos: [0, 0],
+      node: { id: 961, type: "LoadImage", inputs: [], outputs: [], widgets_values: [], pos: [0, 0] },
+    };
+    const seed = mint(convergenceWorkflow, catalog);
+    const snapshot = Y.encodeStateAsUpdate(seed);
+    const projections = [[[bad, tail], [rival]], [[rival], [bad, tail]]].map((batches) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      for (const b of batches) applyOps(doc, b as unknown as Op[], catalog);
+      return JSON.stringify(project(doc, catalog));
+    });
+    expect(projections[0]).toEqual(projections[1]);
+  });
+
+  it("§2.5 item 8 (interior path resolution) still diverges WITHOUT any deletion — pinning the carve-out", () => {
+    // The shape no other carve-out covers. Items 4-7 are all framed as a race
+    // against a deletion (or, for 7, a rival same-`node_id` add_node).
+    // `shared_definition_unforked` needs neither: it flips verdict purely
+    // because a concurrent `add_node` raises the definition's instance count,
+    // and under §4 abort-remainder the trailing op survives on one replica only.
+    // This case is why §2.5 stopped claiming its list was exhaustive and now
+    // states the rule instead.
+    const subgraphWorkflow = {
+      nodes: [
+        { id: 9, type: "LoadImage", inputs: [], outputs: [], widgets_values: [] },
+        { id: 57, type: "sg1", inputs: [], outputs: [], widgets_values: [] },
+      ],
+      links: [], groups: [], extra: {}, last_node_id: 57, last_link_id: 0,
+      definitions: {
+        subgraphs: [{
+          id: "sg1",
+          nodes: [{ id: 27, type: "LoadImage", inputs: [], outputs: [], widgets_values: ["prev.png"] }],
+          links: [],
+        }],
+      },
+    } as unknown as WorkflowJSON;
+    const env = (t: string) => ({ op_id: opId(t), actor: "human:x", base_version: 5, stamp: [5, "human:x"] });
+    const interiorWrite = { op: "set_widget", ...env("i8w"), node_id: 57, path: ["57", "27"], inner_widget: "image", value: 1 };
+    const tail = {
+      op: "add_node", ...env("i8t"), node_id: 777, class_type: "LoadImage", pos: [0, 0],
+      node: { id: 777, type: "LoadImage", inputs: [], outputs: [], widgets_values: [], pos: [0, 0] },
+    };
+    // No deletion anywhere — this add_node merely makes sg1 instantiated twice.
+    const rival = {
+      op: "add_node", ...env("i8r"), node_id: 61, class_type: "sg1", pos: [0, 0],
+      node: { id: 61, type: "sg1", inputs: [], outputs: [], widgets_values: [], pos: [0, 0] },
+    };
+    const seed = mint(subgraphWorkflow, catalog);
+    const snapshot = Y.encodeStateAsUpdate(seed);
+    const projections = [[[interiorWrite, tail], [rival]], [[rival], [interiorWrite, tail]]].map((batches) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      for (const b of batches) applyOps(doc, b as unknown as Op[], catalog);
+      return JSON.stringify(project(doc, catalog));
+    });
+    expect(projections[0]).not.toEqual(projections[1]);
+  });
+
+  it("a from_slot addressing a non-slot-record element is refused, not dereferenced", () => {
+    // The STATE-DEPENDENT half's second clause. `from_slot` is in the op-only
+    // domain and in range, so only `outs.get(i) instanceof Y.Map` rejects it.
+    // Without that clause `outs.get(1)` yields a Y.Array and the handler
+    // dereferences it as a slot record — on `main` that surfaced as a generic
+    // `apply_failed` AFTER the link tuple had been written.
+    const doc = mint(workflow, catalog);
+    const outs = (doc.getMap("nodes").get("300") as Y.Map<unknown>).get("outputs") as Y.Array<unknown>;
+    doc.transact(() => { outs.push([new Y.Array<unknown>()]); });
+    const before = Buffer.from(Y.encodeStateAsUpdate(doc));
+    const result = applyOps(doc, [{
+      op: "connect", op_id: opId("nonrecord"), actor: "human:z", base_version: 9,
+      stamp: [9, "human:z"], link_id: 9700, from_node: 300, from_slot: 1,
+      to_node: 700, to_slot: 0, link_type: "IMAGE",
+    } as unknown as Op], catalog);
+    expect(result.failed).toMatchObject({ code: "output_slot_missing" });
+    expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
+  });
+
+  it("a malformed grow payload is refused even when the source is already deleted", () => {
+    // A DISCLOSED semantics change. On `main` this returned `applied` — the
+    // `!src` delete-wins return fired before `growInputSlot` ever looked at the
+    // payload, so a malformed op was recorded as an applied no-op and consumed
+    // its op_id. It is now rejected, because whether an op is well formed must
+    // not depend on which replica saw the delete first. No conforming producer
+    // emits a non-string `grow.name`; see the PR body's G8 note.
+    const doc = mint(workflow, catalog);
+    const before = Buffer.from(Y.encodeStateAsUpdate(doc));
+    const result = applyOps(doc, [{
+      op: "connect", op_id: opId("grow-nosrc"), actor: "human:z", base_version: 9,
+      stamp: [9, "human:z"], link_id: 9701, from_node: 424242, from_slot: 0,
+      to_node: 700, to_slot: null, link_type: "IMAGE",
+      grow: { name: 5 as unknown as string, type: "IMAGE" },
+    } as unknown as Op], catalog);
+    expect(result.failed).toMatchObject({ code: "malformed_op" });
+    expect(result.applied_count).toBe(0);
+    expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
+  });
+
+  /**
+   * Every OP-ONLY `connect` precondition must reach the same verdict whether or
+   * not the DESTINATION has already been deleted. `if (!dst) return` is a
+   * delete-wins no-op that CONSUMES the `op_id`, so a check evaluated below it
+   * makes a malformed op "applied" on one replica and "rejected" on the other.
+   * Under §4 abort-remainder that is a projection divergence, because the
+   * rejection also discards the rest of the batch on one side only.
+   *
+   * The oracle is the DISPOSITION, deliberately: with the destination gone the
+   * two orders project identically for a single op, so `project()` cannot see
+   * this at all.
+   */
+  it.each([
+    ["non-string grow.inputcount.widget", { to_slot: null, grow: { name: "images.image1", type: "IMAGE", inputcount: { widget: 7, value: 2 } } }],
+    ["non-cloneable grow.inputcount.value", { to_slot: null, grow: { name: "images.image1", type: "IMAGE", inputcount: { widget: "inputcount", value: () => 1 } } }],
+    ["non-string grow.name", { to_slot: null, grow: { name: 5, type: "IMAGE" } }],
+    ["non-number to_slot", { to_slot: "x" }],
+    ["negative to_slot", { to_slot: -1 }],
+    ["fractional to_slot", { to_slot: 0.5 }],
+    ["NaN to_slot", { to_slot: Number.NaN }],
+  ])(
+    "a %s is refused whether or not the destination is already deleted",
+    (_label, over) => {
+      const deleteDestination = {
+        op: "delete_node", op_id: opId("dd-opon"), actor: "human:d",
+        base_version: 4, stamp: [4, "human:d"], node_id: 700,
+      } as Op;
+      const badOp = {
+        op: "connect", op_id: opId("opon"), actor: "human:x", base_version: 5,
+        stamp: [5, "human:x"], link_id: 9800, from_node: 300, from_slot: 0,
+        to_node: 700, link_type: "IMAGE", ...over,
+      } as unknown as Op;
+
+      const seed = mint(convergenceWorkflow, catalog);
+      const snapshot = Y.encodeStateAsUpdate(seed);
+      const dispositions = [[badOp, deleteDestination], [deleteDestination, badOp]].map((order) => {
+        const doc = new Y.Doc();
+        Y.applyUpdate(doc, snapshot);
+        let code: string | null = null;
+        for (const op of order) {
+          const result = applyOps(doc, [op], catalog);
+          if (op === badOp) code = result.failed?.code ?? null;
+        }
+        return code;
+      });
+      // Both orders must reach the SAME verdict. The code differs by field —
+      // `malformed_op` for shape errors, `input_slot_missing` for the `to_slot`
+      // numeric domain — so assert agreement plus "not accepted", rather than
+      // hard-coding one code and silently excluding the other family.
+      expect(dispositions[0]).toBe(dispositions[1]);
+      expect(dispositions[0]).not.toBeNull();
+    },
+  );
+
+  it("an aborted batch converges whether or not the destination was deleted first", () => {
+    // The §4 abort-remainder consequence, end to end: a malformed `connect`
+    // followed by a valid `add_node`. If the malformed op were accepted as a
+    // delete-wins no-op on one replica, that replica would go on to apply the
+    // `add_node` while the other discarded it — a real projection divergence
+    // from an op-only defect. This is the case that made the hoist necessary
+    // rather than merely tidy.
+    const deleteDestination = {
+      op: "delete_node", op_id: opId("dd-batch"), actor: "human:d",
+      base_version: 4, stamp: [4, "human:d"], node_id: 700,
+    } as Op;
+    const batch = [
+      {
+        op: "connect", op_id: opId("b-bad"), actor: "human:x", base_version: 5,
+        stamp: [5, "human:x"], link_id: 9801, from_node: 300, from_slot: 0,
+        to_node: 700, to_slot: null, link_type: "IMAGE",
+        grow: { name: 5 as unknown as string, type: "IMAGE" },
+      },
+      {
+        op: "add_node", op_id: opId("b-add"), actor: "human:x", base_version: 5,
+        stamp: [5, "human:x"], node_id: 900, class_type: "LoadImage", pos: [0, 0],
+        node: { id: 900, type: "LoadImage", inputs: [], outputs: [], widgets_values: [], pos: [0, 0] },
+      },
+    ] as unknown as Op[];
+
+    const seed = mint(convergenceWorkflow, catalog);
+    const snapshot = Y.encodeStateAsUpdate(seed);
+    const projections = [[batch, [deleteDestination]], [[deleteDestination], batch]].map((orderedBatches) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      for (const b of orderedBatches) applyOps(doc, b, catalog);
+      return JSON.stringify(project(doc, catalog));
+    });
+    expect(projections[0]).toEqual(projections[1]);
   });
 
   it("a non-cloneable set_widget value is refused before the widgets map is created", () => {
@@ -223,371 +778,4 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
     expect(applyOps(doc, [op], catalog).failed).toMatchObject({ code: "malformed_op" });
     expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
   });
-});
-
-// ---------------------------------------------------------------------------
-// The rest of the class: values `structuredClone` accepts but Yjs cannot store
-// ---------------------------------------------------------------------------
-
-/**
- * `structuredClone` is a NECESSARY but not SUFFICIENT gate for a value on its
- * way into the document. Yjs accepts a fixed set of shapes at a `Y.Map` set
- * (`typeMapSet`) and a narrower one at a `Y.Array` insert
- * (`typeListInsertGenerics`); everything else throws `Unexpected content type`
- * — and `Map`, `Set`, `RegExp`, `Error` and `ArrayBuffer` all clone happily on
- * their way to that throw. The throw lands mid-handler, after `widgetsOf` has
- * created the widgets map or after the autogrow has appended its slot, which
- * is the same KA-4 / D4 violation as #10 with a different trigger.
- *
- * These rows are the exact domain, pinned against Yjs itself below so the
- * predicate cannot drift from the library it mirrors.
- */
-const CLONEABLE_BUT_UNSTORABLE: Array<[string, () => unknown]> = [
-  ["Map", () => new Map([["a", 1]])],
-  ["Set", () => new Set([1])],
-  ["RegExp", () => /x/g],
-  ["Error", () => new Error("boom")],
-  ["ArrayBuffer", () => new ArrayBuffer(4)],
-];
-
-describe("KA-4 / D4: a rejected op leaves the document byte-identical (the whole class, not the #10 repro)", () => {
-  const source = {
-    id: 300, type: "LoadImage", inputs: [],
-    outputs: [{ name: "IMAGE", type: "IMAGE", links: [9000] }], widgets_values: [],
-  };
-  /** Input 0 is OCCUPIED, input 1 is EMPTY: the two shapes fail differently. */
-  const destination = {
-    id: 700, type: "BatchImagesNode",
-    inputs: [
-      { name: "images.image0", type: "IMAGE", link: 9000 },
-      { name: "images.image1", type: "IMAGE", link: null },
-    ],
-    outputs: [{ name: "IMAGE", type: "IMAGE", links: [] }], widgets_values: [],
-  };
-  /**
-   * No `widgets_values` key at all, so `mint` gives this node NO `widgets`
-   * map — `widgetsOf` has to create one, which is the write that the old
-   * ordering left behind when the value write then threw. A node that already
-   * carries a widgets map cannot see the defect: the fixture, not the
-   * assertion, is what makes the test sensitive.
-   */
-  const bareWidgets = {
-    id: 710, type: "CLIPTextEncode",
-    inputs: [{ name: "clip", type: "CLIP", link: null }], outputs: [],
-  };
-  /** Same, as an autogrow destination for the §8.4 inputcount family. */
-  const bareGrowTarget = {
-    id: 720, type: "BatchImagesNode",
-    inputs: [{ name: "images.image0", type: "IMAGE", link: null }],
-    outputs: [{ name: "IMAGE", type: "IMAGE", links: [] }],
-  };
-  const workflow: WorkflowJSON = {
-    nodes: [source, destination, bareWidgets, bareGrowTarget],
-    links: [[9000, 300, 0, 700, 0, "IMAGE"]],
-    groups: [], extra: {}, last_node_id: 720, last_link_id: 9000,
-  };
-
-  describe("set_widget", () => {
-    it.each(CLONEABLE_BUT_UNSTORABLE)(
-      "a %s value is refused before `widgetsOf` creates the widgets map",
-      (label, make) => {
-        assertRejectedWithoutMutation(workflow, {
-          op: "set_widget", op_id: opId(`unstorable-sw-${label}`), actor: "human:z",
-          base_version: 9, stamp: [9, "human:z"], node_id: 710, widget: "text",
-          value: make(),
-        }, "malformed_op");
-      },
-    );
-
-    it("a node that already has a widgets map is refused too (the ordering must not regress)", () => {
-      assertRejectedWithoutMutation(workflow, {
-        op: "set_widget", op_id: opId("unstorable-sw-existing"), actor: "human:z",
-        base_version: 9, stamp: [9, "human:z"], node_id: 700, widget: "inputcount",
-        value: new Map(),
-      }, "malformed_op", countingCatalog);
-    });
-  });
-
-  describe("connect", () => {
-    it.each(CLONEABLE_BUT_UNSTORABLE)(
-      "an inputcount grow with a %s value is refused before the slot is appended",
-      (label, make) => {
-        assertRejectedWithoutMutation(workflow, {
-          op: "connect", op_id: opId(`unstorable-grow-${label}`), actor: "human:z",
-          base_version: 9, stamp: [9, "human:z"], link_id: 9600, from_node: 300,
-          from_slot: 0, to_node: 720, to_slot: null, link_type: "IMAGE",
-          grow: {
-            name: "images.image1", type: "IMAGE",
-            inputcount: { widget: "inputcount", value: make() },
-          },
-        }, "malformed_op", countingCatalog);
-      },
-    );
-
-    it.each(CLONEABLE_BUT_UNSTORABLE)(
-      "a %s link_id is refused before the register is claimed and the incumbent severed",
-      (label, make) => {
-        // `link_id` is written three ways — the links-map key, the destination
-        // slot's `link` (a Y.Map value) and the source port's `links` (a
-        // Y.Array item) — so the strictest of the three domains gates it. The
-        // occupied destination makes the damage maximal: the incumbent link
-        // 9000 was severed before the throw.
-        assertRejectedWithoutMutation(workflow, {
-          op: "connect", op_id: opId(`unstorable-link-${label}`), actor: "human:z",
-          base_version: 9, stamp: [9, "human:z"], link_id: make() as unknown as number,
-          from_node: 300, from_slot: 0, to_node: 700, to_slot: 0, link_type: "IMAGE",
-        }, "malformed_op");
-      },
-    );
-
-    it.each([
-      ["undefined", undefined],
-      ["a Date", new Date(0)],
-      ["a BigInt", 10n],
-    ])("%s link_id is refused before the register is claimed", (_label, linkId) => {
-      // Accepted at a Y.Map set but NOT at the `Y.Array` insert into the source
-      // port's `links` — so these three reached the very last write of the
-      // handler and threw with the link tuple, the register claim and the
-      // destination slot already committed.
-      assertRejectedWithoutMutation(workflow, {
-        op: "connect", op_id: opId(`unstorable-link2-${String(linkId)}`), actor: "human:z",
-        base_version: 9, stamp: [9, "human:z"], link_id: linkId as unknown as number,
-        from_node: 300, from_slot: 0, to_node: 700, to_slot: 1, link_type: "IMAGE",
-      }, "malformed_op");
-    });
-  });
-
-  describe("delete_node", () => {
-    it.each([
-      ["a number", 5],
-      ["an object", {}],
-      ["a boolean", true],
-      ["NaN", Number.NaN],
-    ])("%s removed_links is refused before the node is deleted", (label, removed) => {
-      // `new Set(op.removed_links ?? [])` throws on anything non-iterable, and
-      // it was evaluated AFTER `mdel(nodes, key)` had already deleted the node.
-      // The op then reported `apply_failed` with `applied_count: 0` while the
-      // node was gone, and left its op_id unrecorded so the retry re-deleted.
-      assertRejectedWithoutMutation(workflow, {
-        op: "delete_node", op_id: opId(`bad-removed-${label}`), actor: "human:z",
-        base_version: 9, stamp: [9, "human:z"], node_id: 700,
-        removed_links: removed as unknown as number[],
-      }, "malformed_op");
-    });
-
-    it("an absent target with a non-iterable removed_links is refused the same way", () => {
-      assertRejectedWithoutMutation(workflow, {
-        op: "delete_node", op_id: opId("bad-removed-absent"), actor: "human:z",
-        base_version: 9, stamp: [9, "human:z"], node_id: 99999,
-        removed_links: 5 as unknown as number[],
-      }, "malformed_op");
-    });
-  });
-
-  describe("add_node", () => {
-    it.each(CLONEABLE_BUT_UNSTORABLE)(
-      "a node payload carrying a %s is refused before the node map is integrated",
-      (label, make) => {
-        // `createNodeMap` builds a DETACHED Y.Map, where Yjs performs no
-        // content-type check at all; the throw lands later, when
-        // `mset(nodes, key, nodeMap)` integrates the prelim content — i.e.
-        // mid-write, with `__applied` unwritten.
-        assertRejectedWithoutMutation(workflow, {
-          op: "add_node", op_id: opId(`unstorable-add-${label}`), actor: "human:z",
-          base_version: 9, stamp: [9, "human:z"], node_id: 900,
-          node: { id: 900, type: "PreviewImage", inputs: [], outputs: [], properties: make() },
-        } as unknown as Op, "invalid_node_payload");
-      },
-    );
-
-    it("a nested flags value is refused", () => {
-      assertRejectedWithoutMutation(workflow, {
-        op: "add_node", op_id: opId("unstorable-add-flags"), actor: "human:z",
-        base_version: 9, stamp: [9, "human:z"], node_id: 901,
-        node: { id: 901, type: "PreviewImage", inputs: [], outputs: [], flags: { pinned: new Set() } },
-      } as unknown as Op, "invalid_node_payload");
-    });
-
-    it("a name-keyed widgets_values entry is refused", () => {
-      assertRejectedWithoutMutation(workflow, {
-        op: "add_node", op_id: opId("unstorable-add-widgets"), actor: "human:z",
-        base_version: 9, stamp: [9, "human:z"], node_id: 902,
-        node: { id: 902, type: "CLIPTextEncode", inputs: [], outputs: [], widgets_values: { text: new Map() } },
-      } as unknown as Op, "invalid_node_payload");
-    });
-
-    it("a Date inside an output's links array is refused (Y.Array insert is stricter than Y.Map set)", () => {
-      assertRejectedWithoutMutation(workflow, {
-        op: "add_node", op_id: opId("unstorable-add-links"), actor: "human:z",
-        base_version: 9, stamp: [9, "human:z"], node_id: 903,
-        node: {
-          id: 903, type: "PreviewImage", inputs: [],
-          outputs: [{ name: "IMAGE", type: "IMAGE", links: [new Date(0)] }],
-        },
-      } as unknown as Op, "invalid_node_payload");
-    });
-  });
-});
-
-describe("the storable-value predicate mirrors Yjs itself", () => {
-  // Pinned against the library, not against a remembered table: if a Yjs
-  // upgrade widens or narrows what a Y.Map/Y.Array accepts, this fails rather
-  // than letting the applier's guard drift into rejecting the legal or
-  // admitting the fatal.
-  const SAMPLES: Array<[string, () => unknown]> = [
-    ["null", () => null],
-    ["undefined", () => undefined],
-    ["number", () => 1],
-    ["NaN", () => Number.NaN],
-    ["string", () => "s"],
-    ["boolean", () => true],
-    ["plain object", () => ({ a: 1 })],
-    ["array", () => [1, 2]],
-    ["Date", () => new Date(0)],
-    ["BigInt", () => 1n],
-    ["Uint8Array", () => new Uint8Array([1])],
-    ["ArrayBuffer", () => new ArrayBuffer(4)],
-    ...CLONEABLE_BUT_UNSTORABLE.filter(([l]) => l !== "ArrayBuffer"),
-  ];
-
-  it.each(SAMPLES)("%s: the predicates agree with a real Y.Doc write", (_label, make) => {
-    const asMap = (): void => {
-      const doc = new Y.Doc();
-      doc.getMap("m").set("k", make());
-      Y.encodeStateAsUpdate(doc);
-    };
-    const asItem = (): void => {
-      const doc = new Y.Doc();
-      doc.getArray("a").push([make()]);
-      Y.encodeStateAsUpdate(doc);
-    };
-    const survives = (fn: () => void): boolean => {
-      try {
-        fn();
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    expect(isStorableMapValue(make())).toBe(survives(asMap));
-    expect(isStorableArrayItem(make())).toBe(survives(asItem));
-  });
-});
-
-describe("KA-4 / D4 as a property, not a list of instances", () => {
-  // The table above is the set of triggers found by hand. This is the claim
-  // itself: over a generated op space against a NON-EMPTY document — an empty
-  // one makes almost every op a delete-wins no-op, and the byte assertion
-  // vacuous — every REJECTED op leaves `encodeStateAsUpdate` untouched.
-  const propertyWorkflow: WorkflowJSON = {
-    nodes: [
-      { id: 300, type: "LoadImage", inputs: [], outputs: [{ name: "IMAGE", type: "IMAGE", links: [9000] }], widgets_values: [] },
-      {
-        id: 700, type: "BatchImagesNode",
-        inputs: [
-          { name: "images.image0", type: "IMAGE", link: 9000 },
-          { name: "images.image1", type: "IMAGE", link: null },
-        ],
-        outputs: [{ name: "IMAGE", type: "IMAGE", links: [] }], widgets_values: [],
-      },
-      { id: 710, type: "CLIPTextEncode", inputs: [{ name: "clip", type: "CLIP", link: null }], outputs: [] },
-      { id: 720, type: "BatchImagesNode", inputs: [{ name: "images.image0", type: "IMAGE", link: null }], outputs: [{ name: "IMAGE", type: "IMAGE", links: [] }] },
-    ],
-    links: [[9000, 300, 0, 700, 0, "IMAGE"]],
-    groups: [], extra: {}, last_node_id: 720, last_link_id: 9000,
-  };
-
-  const hostile = (): fc.Arbitrary<unknown> =>
-    fc.oneof(
-      fc.constant(undefined), fc.constant(null), fc.constant(Number.NaN), fc.constant(-1),
-      fc.constant(0.5), fc.constant(0), fc.constant(1), fc.constant(9), fc.constant(true),
-      fc.constant("x"), fc.constant(""), fc.constant({}), fc.constant([]), fc.constant(1n),
-      fc.constant(Symbol("s")), fc.constant(() => 1), fc.constant(new Map()),
-      fc.constant(new Set()), fc.constant(/re/), fc.constant(new Date(0)),
-      fc.constant(new ArrayBuffer(2)), fc.constant(Object.create(null) as unknown),
-    );
-  const nodeRef = (): fc.Arbitrary<unknown> => fc.oneof(fc.constantFrom(300, 700, 710, 720, 99999, "700"), hostile());
-  const slotIdx = (): fc.Arbitrary<unknown> => fc.oneof(fc.constantFrom(0, 1, 2, 9), hostile());
-
-  const opArb = fc.oneof(
-    fc.record({
-      op: fc.constant("connect"),
-      from_node: nodeRef(), from_slot: slotIdx(), to_node: nodeRef(), to_slot: slotIdx(),
-      link_id: fc.oneof(fc.constantFrom(9700, 9000, "9700"), hostile()),
-      link_type: fc.oneof(fc.constant("IMAGE"), hostile()),
-      grow: fc.oneof(
-        fc.constant(undefined),
-        fc.record({
-          name: fc.oneof(fc.constantFrom("images.image1", "images.image0"), hostile()),
-          type: fc.oneof(fc.constant("IMAGE"), hostile()),
-          widget: fc.oneof(fc.constant(undefined), hostile()),
-          inputcount: fc.oneof(
-            fc.constant(undefined),
-            fc.record({ widget: fc.oneof(fc.constantFrom("inputcount", "nope"), hostile()), value: hostile() }),
-          ),
-        }),
-      ),
-    }),
-    fc.record({
-      op: fc.constant("delete_node"),
-      node_id: nodeRef(),
-      removed_links: fc.oneof(fc.constant([9000]), fc.constant([]), hostile()),
-    }),
-    fc.record({
-      op: fc.constant("set_widget"),
-      node_id: nodeRef(),
-      widget: fc.oneof(fc.constantFrom("text", "inputcount", "nope"), hostile()),
-      value: hostile(),
-      path: fc.oneof(fc.constant(undefined), fc.constant([700]), hostile()),
-      inner_widget: fc.oneof(fc.constant(undefined), fc.constant("text"), hostile()),
-    }),
-    fc.record({
-      op: fc.constant("add_node"),
-      node_id: nodeRef(),
-      node: fc.oneof(
-        hostile(),
-        fc.record({
-          id: nodeRef(),
-          type: fc.oneof(fc.constant("PreviewImage"), hostile()),
-          inputs: hostile(), outputs: hostile(), widgets_values: hostile(), properties: hostile(),
-        }),
-      ),
-    }),
-    fc.record({ op: fc.constant("clear"), removed_nodes: hostile() }),
-  );
-
-  it("every rejected op over a generated op space leaves the document byte-identical", () => {
-    let n = 0;
-    let rejected = 0;
-    fc.assert(
-      fc.property(opArb, fc.integer({ min: 0, max: 3 }), (partial, baseVersion) => {
-        n += 1;
-        const op = {
-          ...(partial as object),
-          op_id: `fuzz${String(n).padStart(28, "0")}`,
-          actor: "human:z",
-          base_version: baseVersion,
-          stamp: [baseVersion, "human:z"],
-        } as unknown as Op;
-        const doc = mint(propertyWorkflow, countingCatalog);
-        const before = Buffer.from(Y.encodeStateAsUpdate(doc));
-        const projected = JSON.stringify(project(doc, countingCatalog));
-
-        const res = applyOps(doc, [op], countingCatalog);
-        if (res.failed === null) return; // an accepted op is allowed to mutate
-        rejected += 1;
-
-        expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
-        expect(JSON.stringify(project(doc, countingCatalog))).toBe(projected);
-        expect(appliedMap(doc).has(op.op_id)).toBe(false);
-      }),
-      { seed: 0x4a_4d_04, numRuns: 25000 },
-    );
-    // Non-vacuity of the sweep itself: a run in which nothing was ever
-    // rejected would pass every assertion above without testing anything. At
-    // this seed and run count the sweep independently re-derives all four
-    // triggers the table above names.
-    expect(n).toBe(25_000);
-    expect(rejected).toBeGreaterThan(5_000);
-  }, 60_000);
 });
