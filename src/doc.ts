@@ -292,10 +292,11 @@ export function isStorableMapValue(value: unknown): boolean {
 
 /**
  * Whether Yjs can store `value` as a Y.Array ITEM — yjs
- * `typeListInsertGenerics`, which is STRICTER than the map switch: `undefined`
- * throws on a property read, and `Date`/`BigInt` are not in its fast-path set.
- * A value written to both (a `connect`'s `link_id` is a slot's `link` and an
- * item of the source port's `links`) must satisfy this, the tighter domain.
+ * `typeListInsertGenerics`. NEITHER domain contains the other: an array insert
+ * refuses `undefined` (it throws on a property read), `Date` and `BigInt`,
+ * which a map accepts; a map refuses an `ArrayBuffer`, which an array accepts.
+ * A value written both ways — a `connect`'s `link_id` is a destination slot's
+ * `link` AND an item of the source port's `links` — must satisfy both.
  */
 export function isStorableArrayItem(value: unknown): boolean {
   if (value === undefined) return false;
