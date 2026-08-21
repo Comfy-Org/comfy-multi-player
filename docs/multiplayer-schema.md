@@ -532,7 +532,7 @@ Pinned semantics:
   `definitions`, preserves `last_node_id`/`last_link_id` (id-reuse guard:
   a merge must never resurrect a deleted node's identity), and preserves
   `__stamps` (post-clear writes still LWW correctly).
-- **Amendment A3 (issue #11): `clear.removed_nodes` is the authoritative
+- **Amendment A7 (issue #11): `clear.removed_nodes` is the authoritative
   target set.** It records the node ids present at mint time; an applier MUST
   NOT re-derive the set from its own live `nodes` map when the list is empty,
   because that reads arrival-dependent state and made a `clear([])` remove or
