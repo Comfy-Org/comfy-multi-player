@@ -107,16 +107,22 @@ assembled into positional `widgets_values` (missing names project as `null`);
 `outputs[].links: null` preserved verbatim, never coerced to `[]`; every
 unrecognized workflow key passed through untouched.
 
-**Fails closed on the schema version FIRST (KA-11).** Before it reads a single
-key it throws `SchemaVersionError` when `meta.schema_version` is absent, is not
-a positive integer, or is not this package's `SCHEMA_VERSION`. A document
+**Fails closed on the schema version FIRST (KA-11).** Before it reads any
+workflow content it throws `SchemaVersionError` when `meta.schema_version` is
+absent, is not a positive integer, or is not this package's `SCHEMA_VERSION`. A document
 NEWER than this package is refused rather than best-effort projected; a
 document OLDER is refused too, and the message names the remedy — run
 `migrate(doc, storedVersion)` on the **host** first, then read. `project()`
-never migrates, because every replica including a browser follower calls it and
-a follower must not write the shared document (KA-6/FC-5). This refusal is
-byte-exact: `encodeStateAsUpdate(doc)` and the `doc.share` key set are both
-unchanged. Consequence for callers: `project(new Y.Doc(), catalog)` used to
+never migrates, because it is a read any replica may call — a browser follower
+included — and a follower must not write the shared document (KA-6/FC-5). No
+follower calls it today (the frontend does not depend on this package at all),
+so this is a rule about the API, not an observation about callers.
+
+This refusal is byte-exact: `encodeStateAsUpdate(doc)` and the `doc.share` key
+set are both unchanged. It is also strictly *less* mutating than the old
+behaviour — before the gate, `project()` typed all four roots on every call, so
+projecting a root-less document materialized `meta`/`nodes`/`links`/
+`definitions`; now it refuses first and touches none of them. Consequence for callers: `project(new Y.Doc(), catalog)` used to
 return `{nodes: [], links: []}` and now throws. Bootstrap with `mint()` (schema
 §9) or `initDoc()`; `migrate()` is not an escape, it refuses the same document.
 

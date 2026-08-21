@@ -61,11 +61,18 @@ const META_ROOT = "meta";
  * surface) does.
  *
  * Exported from the entrypoint because a host has the same question to answer
- * BEFORE it reads: the doc host's `/project` endpoint already refuses a
- * catalog-pin mismatch by comparing `meta.catalog_version` and returning a
- * structured `catalog_mismatch` body, rather than by catching a throw, and a
- * schema mismatch wants the same shape. The gate below is the backstop for a
- * caller that does not pre-check.
+ * BEFORE it reads, and it already answers the neighbouring one that way. In
+ * the cloud doc-host sidecar — `Comfy-Org/cloud`,
+ * `services/agent/dochost/src/server.ts`, pinned at
+ * `070dce96b4c475a0d926d570eba411f799329817` (FC-10; registry entry
+ * `cloud/dochost-server` in `docs/upstream-pins.json`) — `requirePin` compares
+ * `meta.catalog_version` and returns a structured `catalog_mismatch` 400
+ * rather than letting a throw escape, and `handleProject` calls it before
+ * `project(doc, catalog)`. The Go client lifts `catalog_mismatch` as a typed
+ * sentinel; a thrown `SchemaVersionError` currently arrives as a generic
+ * `apply_error` 400 instead, which is exactly the asymmetry these exports let
+ * the host close. The gate below stays as the backstop for a caller that does
+ * not pre-check.
  */
 export function readSchemaVersion(doc: Y.Doc): number | undefined {
   if (!doc.share.has(META_ROOT)) return undefined;
@@ -108,9 +115,17 @@ export function assertSchemaVersionAgainst(doc: Y.Doc, context: string, expected
  * (KA-11). `context` names the read entrypoint for the message.
  *
  * WHY AN OLDER DOCUMENT IS REFUSED RATHER THAN MIGRATED IN PLACE. `project()`
- * is a pure read: it takes a `Y.Doc`, returns JSON, and every replica —
- * browser follower included — calls it. Migrating inside it would make a read
- * WRITE the shared document, which breaks two rules at once. The direct one is
+ * is a pure read: it takes a `Y.Doc` and returns JSON, and it is a read ANY
+ * replica may call — a browser follower included. Stated precisely, because
+ * the looser version is false today: no follower calls it. The frontend does
+ * not depend on this package at all (`@comfyorg/comfy-multi-player` is absent
+ * from its `package.json` on every branch), and ADR-004 records that the
+ * follower deliberately consumes only the doc-layout helpers, since it holds
+ * no catalog for the document it renders. That is exactly why the rule is
+ * written as a rule: `follower-boundary.md` says to treat an API that permits
+ * unrestricted document mutation across this boundary as a blocking violation
+ * "even if current callers behave correctly". Migrating inside a read would
+ * make a read WRITE the shared document. The direct rule that breaks is
  * KA-6 / FC-5: followers never write the shared doc, and schema §10 puts
  * migration on the host precisely so followers receive the migrated document
  * via the struct stream or a new epoch. A follower that self-migrated would
