@@ -18,7 +18,7 @@ Detect known CVEs in dependencies and leaked secrets. Applies to any change; esp
 
 ## Repo-specific emphasis
 
-- The production dependency set must remain **`yjs` only** (KA-3/FC-3). Any audit finding that arrives via a *new* production dependency is also a purity violation, not just a CVE — flag both. Dev-only advisories (Stryker, Vitest, TypeScript, fast-check) are lower priority but still reported.
+- The production dependency set must remain **`yjs` only** (KA-3/FC-3). Any audit finding that arrives via a *new* production dependency is also a purity violation, not just a CVE — flag both. Dev-only advisories (Stryker, Vitest, TypeScript, fast-check, dependency-cruiser) are lower priority but still reported.
 - This is a pure library with no server, no credentials, and no network; any secret, token, connection string, or key in the tree is unexpected by construction and is critical.
 
 ## Error handling

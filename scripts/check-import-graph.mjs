@@ -26,7 +26,12 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
+// IMPORT_GRAPH_ROOT overrides the repo root this gate cruises, and
+// IMPORT_GRAPH_MIN_MODULES overrides the work-unit floor. Both exist so
+// `test/check-import-graph.test.ts` can drive the gate against an isolated
+// fixture tree — a gate whose own anti-vacuity floor is unverified is the
+// defect this gate exists to prevent. Neither is set in normal use or in CI.
+const root = process.env.IMPORT_GRAPH_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 
 /**
  * Floor for a run to count as real. The pure op layer is `applier`, `doc`,
@@ -48,7 +53,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
  * not one per change. See `.agents/checks/import-graph.md` and the config's own
  * "NO includeOnly" comment.
  */
-const MIN_MODULES = 8;
+const MIN_MODULES = Number(process.env.IMPORT_GRAPH_MIN_MODULES ?? 8);
 
 const cli = join(root, "node_modules", ".bin", "depcruise");
 const run = spawnSync(cli, ["--output-type", "json", "src"], {

@@ -37,3 +37,6 @@ The exact rule set is the plugin's `recommended` config (currently eslint-plugin
 - Non-vacuousness: an empty findings array also results from linting nothing. Compare the array's length against the number of files you passed; if it is shorter, the missing files were never linted and the run is INCONCLUSIVE for them. Report "No issues found (<n> files linted)" with the count.
   - That comparison only works with `--no-warn-ignored`. **Without the flag ESLint emits an entry for a file it did NOT lint** — `messages: [{ ruleId: null, severity: 1, message: "File ignored because of a matching ignore pattern" }]`, or `"File ignored because no matching configuration was supplied."` for an extension the config does not match — so the lengths agree and the check passes on exactly the case it exists to catch. Verified on ESLint v10.8.1: passing `src/applier.ts src/doc.ts dist/index.js` returns 3 entries without the flag and 1 with it. If you must run without it, count an entry as linted only when it carries no `ruleId: null` "File ignored" message.
   - A run whose linted count is zero is INCONCLUSIVE even at exit `0`.
+
+<!-- Staleness anchor: the run command this profile documents must stay the one the config expects. -->
+<!-- claim: npx eslint --no-config-lookup --config .agents/checks/eslint.strict.config.js :: .agents/checks/eslint.strict.config.js -->

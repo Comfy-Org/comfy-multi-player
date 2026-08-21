@@ -30,7 +30,7 @@ If you must invoke the tool directly, use the project-local binary (`npx depcrui
 Encoded in `.dependency-cruiser.cjs` and enforced by the gate:
 
 - `no-circular` — circular imports among the pure modules are a design smell that makes the package harder to tree-shake and reason about; extract the shared type or helper.
-- `src-runtime-dep-is-yjs-only` — `src/**` may import no npm package other than `yjs`. This is the positive yjs-only assertion at the module-graph level; the purity gate's denylist is the negative one (issue #22).
+- `src-runtime-dep-is-yjs-only` — `src/**` may import no npm package other than `yjs`, checked per source module. This is the module-graph layer of the yjs-only assertion; `scripts/check-purity.mjs` already asserts it positively at the package level (`runtime dependency roots exactly {yjs} (declared and resolved production graph)`), so the two are complementary, not a gap and its fix. Note the rule matches **direct** edges out of `^src` only: a chain `src/x.ts → tools/helper.js → some-package` is not caught, because the offending edge's `from` is not under `src`.
 - `src-no-node-builtins` — a Node builtin in the op layer makes it server-only and unrunnable in a browser or at a peer (FC-3).
 - `no-unresolvable` — an unresolvable import is a typo or a module that exists in only one of the two runtimes.
 
@@ -45,3 +45,19 @@ Still review by hand, because no rule covers them:
 - If more than 20 violations, the gate prints the first 20 and the total; report the same.
 - If the gate exits `0`, report "No issues found (<n> modules, <m> dependencies cruised)" — always quote the counts, so a future vacuous run is visible in the review itself.
 - The module floor bounds vacuity, not rule adequacy. A run can clear it and still be blind: with `includeOnly: "^src"` restored, a planted `node:fs` import in `src/doc.ts` cruises 8 modules / 18 dependencies and exits `0`, because the filter removed the external modules the purity rules target. If you change `.dependency-cruiser.cjs`, re-prove each rule by planting one violation **per rule** and confirming that rule is the one named in the output — `mutant -> the named rule`, never `mutant -> red`.
+
+<!--
+Staleness anchors for the rule names and exit codes this profile restates.
+`scripts/check-profile-claims.mjs` verifies each substring below is still present
+verbatim in the cited file, so renaming a rule or dropping an exit path fails CI
+rather than silently leaving this prose describing a gate that no longer exists.
+-->
+<!-- claim: name: "no-circular" :: .dependency-cruiser.cjs -->
+<!-- claim: name: "src-runtime-dep-is-yjs-only" :: .dependency-cruiser.cjs -->
+<!-- claim: name: "src-no-node-builtins" :: .dependency-cruiser.cjs -->
+<!-- claim: name: "no-unresolvable" :: .dependency-cruiser.cjs -->
+<!-- claim: doNotFollow: { path: "node_modules" } :: .dependency-cruiser.cjs -->
+<!-- claim: if (totalCruised < MIN_MODULES) :: scripts/check-import-graph.mjs -->
+<!-- claim: import-graph check INCONCLUSIVE :: scripts/check-import-graph.mjs -->
+<!-- claim: import-graph check FAILED :: scripts/check-import-graph.mjs -->
+<!-- claim: import-graph check PASSED :: scripts/check-import-graph.mjs -->

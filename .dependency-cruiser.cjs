@@ -29,11 +29,18 @@ module.exports = {
       name: "src-runtime-dep-is-yjs-only",
       severity: "error",
       comment:
-        "KA-3 / FC-3: the op layer runs identically in the browser and the Node doc host, so `yjs` is the only package `src/` may import. This is the POSITIVE yjs-only assertion at the module-graph level (the purity gate's denylist is the negative one — issue #22).",
+        "KA-3 / FC-3: the op layer runs identically in the browser and the Node doc host, so `yjs` is the only package `src/` may import. This is the yjs-only assertion at the MODULE-GRAPH level — per source module. `scripts/check-purity.mjs` already asserts it positively at the PACKAGE level (declared and resolved production roots exactly {yjs}); the two are complementary layers, not a gap and its fix. Issue #22 raised the package-level gap and is closed. Note this matches DIRECT edges out of `^src` only.",
       from: { path: "^src" },
       to: {
         dependencyTypes: ["npm", "npm-dev", "npm-optional", "npm-peer", "npm-bundled", "npm-no-pkg"],
-        pathNot: "^node_modules/yjs(/|$)",
+        // `(^|/)`, not `^`: the resolved path is relative to the cwd, so under
+        // pnpm (`node_modules/.pnpm/yjs@…/node_modules/yjs`), a workspace root,
+        // or any symlinked tree it is not anchored at the start. Anchoring at
+        // `^` turns every legitimate yjs import into a violation there — which
+        // `test/check-import-graph.test.ts` reproduced against a symlinked
+        // fixture tree. Still boundary-anchored at both ends, so
+        // `node_modules/yjs-shim` is NOT exempted.
+        pathNot: "(^|/)node_modules/yjs(/|$)",
       },
     },
     {
