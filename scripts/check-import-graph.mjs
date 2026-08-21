@@ -35,25 +35,30 @@ const root = process.env.IMPORT_GRAPH_ROOT || dirname(dirname(fileURLToPath(impo
 
 /**
  * Floor for a run to count as real. The pure op layer is `applier`, `doc`,
- * `index`, `migrate`, `mint`, `project`, `stamps`, `types` — eight modules (a
- * healthy run also cruises `node_modules/yjs`, so the real count is 9) — so
- * anything below that means the scan missed files rather than that the package
- * shrank. Raise it if the layer grows; never lower it to make a run pass.
+ * `exhaustive`, `index`, `migrate`, `mint`, `project`, `stamps`, `types` —
+ * nine modules as of #64 (a healthy run also cruises `node_modules/yjs`, so
+ * the real count is 10) — so anything below that means the scan missed files
+ * rather than that the package shrank. Raise it when the layer grows; never
+ * lower it to make a run pass. Deliberately NOT derived from a directory
+ * listing: a floor computed from the thing it is checking is a self-referential
+ * oracle and would shrink silently along with the scan.
  *
  * KNOWN LIMIT — this floor bounds VACUITY, not RULE ADEQUACY. It proves the
  * scan saw a plausible amount of work; it does not prove every rule could have
  * fired on what it saw. Worked counter-example: restore `includeOnly: "^src"`
  * to `.dependency-cruiser.cjs` and plant `import "node:fs"` in `src/doc.ts` —
- * the run cruises 8 modules / 18 dependencies, clears this floor, and exits 0
+ * the run cruises 9 modules / 22 dependencies, clears this floor, and exits 0
  * green over a real violation, because the filter removed every external
- * module the purity rules target. (A healthy run is 9 modules / 23
+ * module the purity rules target. (A healthy run is 10 modules / 27
  * dependencies; the missing external layer is visible only in the dependency
- * count.) The floor cannot catch that class. Only mutating each rule
+ * count, which this floor does not look at.) The floor cannot catch that
+ * class, and raising it does not help — the filtered run loses externals, not
+ * source modules. Only mutating each rule
  * separately and confirming the NAMED rule goes red can — one mutant per rule,
  * not one per change. See `.agents/checks/import-graph.md` and the config's own
  * "NO includeOnly" comment.
  */
-const MIN_MODULES = Number(process.env.IMPORT_GRAPH_MIN_MODULES ?? 8);
+const MIN_MODULES = Number(process.env.IMPORT_GRAPH_MIN_MODULES ?? 9);
 
 const cli = join(root, "node_modules", ".bin", "depcruise");
 const run = spawnSync(cli, ["--output-type", "json", "src"], {
