@@ -258,9 +258,11 @@ This is the property the fixture suite pins (checks c1/c2 + the six LWW
 vectors, both orders), plus the permutation suites of
 `test/connect-lww.test.ts` and `test/stamp-target-identity.test.ts`.
 
-**Seven carve-outs, stated rather than implied** (Amendment A1, extended by
-Amendment A6; each is pinned by a test that will start failing the day it is
-closed):
+**Eight carve-outs, stated rather than implied** (Amendment A1, extended by
+Amendment A6). Items 1-7 are each pinned by a test that will start failing the
+day it is closed; item 8 is pinned for `shared_definition_unforked`, the shape no
+other item covers. Read the RULE below the list before concluding anything about
+a rejection that is not named here:
 
 1. `outputs[].links` is a set projected as an ordered array, appended in
    arrival order. Two connects out of ONE source into two DIFFERENT inputs
@@ -314,8 +316,32 @@ closed):
    which PAYLOAD wins, not about one replica discarding the rest of the batch.
    Measured. Amendment A6.
 
-Everything else — including concrete-input contention, which used to be an
-unstated carve-out of its own — converges.
+8. `resolveInteriorNode`'s own rejections — `not_a_subgraph`,
+   `shared_definition_unforked`, `interior_node_not_found` — all read the
+   document and all sit below the interior delete-wins return, so an interior
+   `set_widget` refused by any of them resolves differently by arrival order.
+   **`shared_definition_unforked` does not even need a deletion**: it flips
+   verdict when a concurrent `add_node` raises the definition's instance count,
+   so under §4 abort-remainder a trailing op in the same batch survives on one
+   replica only. Measured. Amendment A6.
+
+**The rule these come from, which is more useful than the list.** A rejection is
+arrival-order-dependent exactly when the check that raises it READS THE DOCUMENT
+and sits below an early return that consumes the `op_id` — a delete-wins return,
+`add_node`'s structural-idempotency return, or the interior null return. Under §4
+abort-remainder any such rejection also decides whether the REST OF THE BATCH
+applies, which is how a bookkeeping difference becomes a projection difference.
+Every precondition that depends on the OP ALONE is hoisted above those returns
+and does NOT carve out.
+
+**Items 1-8 are illustrative of that rule, not an exhaustive enumeration of it.**
+This list has been extended three times in one review, each time by someone
+probing a handler nobody had probed yet, and treating it as complete is what made
+each of those omissions look like a contradiction rather than a gap. If you need
+to know whether a specific rejection converges, apply the rule and measure both
+arrival orders; do not conclude "it is not in the list, therefore it converges".
+Everything that does NOT satisfy the rule — including concrete-input contention,
+which used to be an unstated carve-out of its own — converges.
 
 ---
 
@@ -731,7 +757,7 @@ code did not have. PR #6725 caught the id-type half the same way.
      is checked unconditionally ahead of the claim, and an EXISTING source's
      slot record is resolved ahead of it, so that a rejected op mutates
      nothing. The rationale above is unchanged and is exactly why the split is
-     drawn there; see §2.5 items 4-7 for what remains.
+     drawn there; see §2.5 items 4-8 and the rule beneath them.
    * A stamp outlives the node it names; that is what makes the composed
      case converge, since a later lower-stamped connect is still dropped.
    * Autogrow stays UNGATED by explicit carve-out (§2.5 item 2).
@@ -1159,10 +1185,10 @@ both builds. **This must be resolved before `reset_doc` is un-deferred.**
 
 ---
 
-## Amendment A6 — 2026-08-21 — `from_slot` validation splits; four convergence carve-outs
+## Amendment A6 — 2026-08-21 — `from_slot` validation splits; the convergence carve-out RULE
 
 **Status:** landed with the issue-#10 validate-before-mutate fix (PR #34).
-**Touches:** §2.5 (carve-out list, new items 4-7), Amendment A1 bullet 3,
+**Touches:** §2.5 (carve-out list, new items 4-8, plus the generating rule that replaces its completeness claim), Amendment A1 bullet 3,
 Amendment A4's "before that op mutates anything" claim,
 `docs/api-contract-proposal.md` D3, D4 and D5, `docs/INVARIANTS.md` KA-4,
 `docs/ROADMAP.md`'s #10 bullet, and `README.md` (outcome table, delete-wins
@@ -1315,4 +1341,9 @@ write" but **"does it read the document"** — and if it does not, it belongs in
   is still the reason the split is drawn where it is.
 - **`api-contract-proposal.md` D5** carried the same sentence and is corrected
   alongside it.
-- §2.5's "Everything else … converges" now reads against five carve-outs.
+- §2.5's closing sentence no longer enumerates completeness at all. It now
+  states the RULE that generates the carve-outs — a check that reads the document
+  and sits below an `op_id`-consuming early return — and marks items 1-8 as
+  illustrative of it. That change is the durable one: this list was extended
+  three times in a single review, and each omission read as a contradiction only
+  because the sentence claimed the list was exhaustive.

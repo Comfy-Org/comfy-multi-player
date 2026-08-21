@@ -372,16 +372,13 @@ outright and iterated character by character. Tracked by #59, #61 and #68;
 And `connect.link_id`/`link_type` are copied in with no validation at all, so an
 `undefined` `link_id` mutates and then throws a raw `TypeError` — the same shape
 as `removed_links` — while a `Symbol` `link_id` leaves the document permanently
-UNPROJECTABLE (`project()` throws), the same end state as a cycle. Tracked by
-#59, #61 and #68; until those land, "byte-identical on rejection" holds for
-every rejection code the applier raises deliberately, and not for these four.
+UNPROJECTABLE (`project()` throws), the same end state as a cycle. Until those land, "byte-identical on rejection" holds for every rejection code
+the applier raises deliberately, and not for these.
 
 The four `connect` paths this row used to except — the two `output_slot_missing`
 cases and the two `connect`+`inputcount` grow rejections, swept by
 `test/ka4-rejection-byte-identity.test.ts` — **now hold**, and are additionally
 order-independent (schema Amendment A6).
-
-
 
 `applied` means "this document is done with that op_id", not "your value won".
 A client that renders optimistically must clear a pending op when its effect
@@ -402,9 +399,11 @@ back on throw, so this is a property of write order inside each handler, not
 something the transaction provides — which is why it had to be fixed by moving
 checks rather than by wrapping them.
 
-**Three exceptions remain**, listed under the outcome table above: a value Yjs
-cannot store, a reference cycle, and `delete_node` with a non-array
-`removed_links`. For those three a retry is still not safe on its own.
+**The exceptions listed under the outcome table above still apply** — a value
+Yjs cannot store, a reference cycle, `delete_node` with a non-array
+`removed_links`, and `connect.link_id`/`link_type`. For those a retry is not
+safe on its own. The count lives in one place, above; repeating it here is how
+this paragraph came to contradict that table.
 
 Rejection codes: `malformed_op`, `unknown_op`, `op_deferred`,
 `catalog_required`, `invalid_node_payload`, `unknown_widget`,
@@ -470,7 +469,7 @@ Concretely, pinned by the test suite (`npm test`):
   under §4 abort-remainder the two would then disagree about the rest of the
   batch as well. Checks that must READ the deleted node — slot ranges, opaque
   widget storage, the catalogue lookup — necessarily still resolve differently;
-  schema §2.5 items 4-7 carve that out explicitly — 4 and 5 for `connect`, 6 for `set_widget`, 7 for `add_node`.
+  schema §2.5 items 4-8 carve that out explicitly — 4 and 5 for `connect`, 6 for `set_widget`, 7 for `add_node`, 8 for interior path resolution — and §2.5 now states the general RULE those items illustrate.
 - **Rejection is loud.** An op that is unsatisfiable against a live target is
   rejected, never silently dropped.
 
@@ -507,11 +506,12 @@ is closed.
    node's deletion is rejected by a replica that still holds the node and
    accepted as a delete-wins no-op by one that does not. Checks that depend on
    the OP ALONE are hoisted above the delete-wins return and do not carve out.
-   Schema §2.5 items 4-7, Amendment A6 — the same shape recurs in
-   `set_widget` (item 6) and `add_node` (item 7).
+   Schema §2.5 items 4-8, Amendment A6 — the same shape recurs in
+   `set_widget` (item 6), `add_node` (item 7) and interior path resolution
+   (item 8), and §2.5 states the rule they illustrate.
 
 This list and the schema's are the same list seen from two sides: schema §2.5
-enumerates seven; items 1-3 map one-to-one, schema items 4-7 are folded into
+enumerates eight; items 1-3 map one-to-one, schema items 4-8 are folded into
 item 6 here, item 4 above is the intra-batch `base_version` case (which the
 schema states in §3 instead), and item 5 is the §5.3 shared-definition rejection.
 

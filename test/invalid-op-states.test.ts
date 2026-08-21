@@ -114,7 +114,7 @@ const wireOp = (shape: Record<string, unknown>): Op => shape as unknown as Op;
 // validation at all.
 // Tracked by #59, #61 and #68. `src/applier.ts`'s module JSDoc,
 // `docs/INVARIANTS.md` KA-4, `README.md` and contract D4 list the same four
-// holes; if you change one, change all five.
+// holes; if you change one, change them all.
 //
 // A `Symbol` or throwing-`valueOf` `base_version` used to be a third trigger
 // here. Hoisting `stampKey` into `requireOpOnlyValid` closed it on every

@@ -508,8 +508,11 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
       // Enumerated as the third open hole in `src/applier.ts`,
       // `docs/INVARIANTS.md` KA-4, `README.md`, contract D4 and
       // `test/invalid-op-states.test.ts`. When it is fixed, this goes red —
-      // move it to an assertion of byte-identity and drop it from the five
-      // carriers that enumerate the open holes.
+      // move it to an assertion of byte-identity and drop it from every carrier
+      // that enumerates the open holes (`src/applier.ts`, KA-4, `README.md`,
+      // contract D4, `docs/ROADMAP.md`, this file's siblings in
+      // `test/invalid-op-states.test.ts` and
+      // `test/ka4-rejection-byte-identity.test.ts`).
       const doc = mint(workflow, catalog);
       const before = Buffer.from(Y.encodeStateAsUpdate(doc));
       const result = applyOps(doc, [{
@@ -519,13 +522,13 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
       expect(result.failed?.code).toBe("apply_failed");
       expect(
         Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before),
-        "delete_node/removed_links is fixed: move this into the byte-identity set and drop it from the three-hole enumerations",
+        "delete_node/removed_links is fixed: move this into the byte-identity set and drop it from the open-hole enumerations",
       ).toBe(false);
     },
   );
 
   /**
-   * §2.5 items 4-7 promise "each is pinned by a test that will start
+   * §2.5 items 4-8 promise "each is pinned by a test that will start
    * failing the day it is closed". These are those tests. They assert the
    * carve-out STILL DIVERGES — so closing either one reddens here and forces
    * the schema list to be updated, which is what the header sentence claims.
@@ -622,6 +625,50 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
     const seed = mint(convergenceWorkflow, catalog);
     const snapshot = Y.encodeStateAsUpdate(seed);
     const projections = [[[bad, tail], [rival]], [[rival], [bad, tail]]].map((batches) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      for (const b of batches) applyOps(doc, b as unknown as Op[], catalog);
+      return JSON.stringify(project(doc, catalog));
+    });
+    expect(projections[0]).not.toEqual(projections[1]);
+  });
+
+  it("§2.5 item 8 (interior path resolution) still diverges WITHOUT any deletion — pinning the carve-out", () => {
+    // The shape no other carve-out covers. Items 4-7 are all framed as a race
+    // against a deletion (or, for 7, a rival same-`node_id` add_node).
+    // `shared_definition_unforked` needs neither: it flips verdict purely
+    // because a concurrent `add_node` raises the definition's instance count,
+    // and under §4 abort-remainder the trailing op survives on one replica only.
+    // This case is why §2.5 stopped claiming its list was exhaustive and now
+    // states the rule instead.
+    const subgraphWorkflow = {
+      nodes: [
+        { id: 9, type: "LoadImage", inputs: [], outputs: [], widgets_values: [] },
+        { id: 57, type: "sg1", inputs: [], outputs: [], widgets_values: [] },
+      ],
+      links: [], groups: [], extra: {}, last_node_id: 57, last_link_id: 0,
+      definitions: {
+        subgraphs: [{
+          id: "sg1",
+          nodes: [{ id: 27, type: "LoadImage", inputs: [], outputs: [], widgets_values: ["prev.png"] }],
+          links: [],
+        }],
+      },
+    } as unknown as WorkflowJSON;
+    const env = (t: string) => ({ op_id: opId(t), actor: "human:x", base_version: 5, stamp: [5, "human:x"] });
+    const interiorWrite = { op: "set_widget", ...env("i8w"), node_id: 57, path: ["57", "27"], inner_widget: "image", value: 1 };
+    const tail = {
+      op: "add_node", ...env("i8t"), node_id: 777, class_type: "LoadImage", pos: [0, 0],
+      node: { id: 777, type: "LoadImage", inputs: [], outputs: [], widgets_values: [], pos: [0, 0] },
+    };
+    // No deletion anywhere — this add_node merely makes sg1 instantiated twice.
+    const rival = {
+      op: "add_node", ...env("i8r"), node_id: 61, class_type: "sg1", pos: [0, 0],
+      node: { id: 61, type: "sg1", inputs: [], outputs: [], widgets_values: [], pos: [0, 0] },
+    };
+    const seed = mint(subgraphWorkflow, catalog);
+    const snapshot = Y.encodeStateAsUpdate(seed);
+    const projections = [[[interiorWrite, tail], [rival]], [[rival], [interiorWrite, tail]]].map((batches) => {
       const doc = new Y.Doc();
       Y.applyUpdate(doc, snapshot);
       for (const b of batches) applyOps(doc, b as unknown as Op[], catalog);

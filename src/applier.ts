@@ -16,8 +16,10 @@
  *    failing index are not applied and the applied prefix is retained;
  *  - one Y transaction per op (schema §2.4), preconditions validated before
  *    the first mutation so a rejected op leaves the doc untouched — with the
- *    three exceptions enumerated under VALIDATE BEFORE MUTATE below, which is
- *    the qualified statement of this bullet, not a footnote to it.
+ *    exceptions enumerated under VALIDATE BEFORE MUTATE below, which is the
+ *    qualified statement of this bullet, not a footnote to it. That block owns
+ *    the count; this bullet deliberately does not repeat it, because the two
+ *    have disagreed twice.
  *
  * VALIDATE BEFORE MUTATE (issue #10). Yjs does NOT roll a `transact` body back
  * when it throws, so "the doc is untouched on reject" is a property of write
@@ -63,7 +65,7 @@
  * about arrival order. A precondition that must READ the document resolves
  * differently on a replica that has already applied a concurrent
  * `delete_node`; only the OP-ONLY preconditions are hoisted above the
- * delete-wins returns for that reason. Schema §2.5 items 4-7 carve out
+ * delete-wins returns for that reason. Schema §2.5 items 4-8 carve out
  * what remains.
  *
  * `assertCloneableValue` is a `structuredClone` predicate, not a Yjs-storable
@@ -693,7 +695,7 @@ function requireOutputSlot(src: Y.Map<unknown>, op: ConnectOp): Y.Array<unknown>
  *
  * Checks that need `dst` or `src` (opaque-widget storage, the catalogue
  * lookup, slot ranges) are NOT op-only and deliberately stay below; schema
- * §2.5 items 4-7 carve out what that costs.
+ * §2.5 items 4-8 carve out what that costs.
  */
 function requireOpOnlyValid(op: ConnectOp): void {
   requireOutputSlotDomain(op);
