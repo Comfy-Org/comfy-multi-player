@@ -206,16 +206,34 @@ may legally put on the wire, and it is what `ApplyFailure.op` and the stamp
 helpers take: a rejected `reset_doc` really does land in `failed.op`, so typing
 that field `Op` claimed something false. Ask the applier for an `Op`; model
 what arrives as a `WireOp`; and keep a `default` arm either way, because a peer
-built against a newer vocabulary can send a kind that is in neither.
+built against a newer vocabulary can send a kind that is in neither. A host
+holding received ops as `WireOp[]` casts at the call to `applyOps` — that cast
+is the wire boundary, and `validateEnvelope` is what stands behind it.
 
-Several field combinations that the vocabulary does not allow are also
+Migrating a call site: if you hold `to_slot: number | null` and `grow` in one
+variable, narrow on `grow` before constructing; if you hold `path: string[]`,
+an interior write needs a non-empty tuple. The compiler's message points at
+whichever variant it tried last, so read it as "this matches neither variant"
+rather than as a complaint about the single field it names.
+
+Several field combinations that no conforming producer mints are also
 unrepresentable rather than merely discouraged: `grow` with a numeric
-`to_slot`, a `to_slot` of `null` with no `grow`, and `path`/`inner_widget`
-without each other. `test/types/invalid-states.negative.ts` is the checked list
-and `test/type-negatives.test.ts` is the gate. This binds TypeScript callers
-only — the runtime validator is what protects the document from wire input, and
-`test/invalid-op-states.test.ts` records exactly which of these the wire still
-accepts.
+`to_slot`, a `to_slot` of `null` with no `grow`, `path`/`inner_widget` without
+each other, and an empty `path`. The four sub-union members are
+`ConcreteConnectOp` / `GrowConnectOp` and `TopLevelSetWidgetOp` /
+`InteriorSetWidgetOp`. `test/types/invalid-states.negative.ts` is the checked
+list and `test/type-negatives.test.ts` is the gate.
+
+**This binds TypeScript callers only, and it is not a wire guarantee.** JSON
+does not type-check, so what protects the document is the applier, and it does
+not reject all four: `to_slot: null` with no `grow` and a non-empty `path` with
+no `inner_widget` are `malformed_op`, while `grow` with a numeric `to_slot` and
+an `inner_widget` with no `path` are **accepted and silently mishandled** —
+the first grows its own slot and never reads `to_slot`, the second writes the
+top-level `widget`. Tightening either would change what is legal on the wire
+and needs a comfy-cli counterpart, so it is deliberately not done here.
+`test/invalid-op-states.test.ts` pins the exact behaviour of every case,
+rejected and accepted alike.
 
 An op kind this build does not know — one minted by a peer built against a
 newer vocabulary — is **rejected loudly**, never silently dropped: `applyOps`

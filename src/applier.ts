@@ -114,8 +114,14 @@ const DEFERRED = new Set<string>(DEFERRED_OPS);
  *
  * It is also the ONLY owner of the deferred-kind rejection. `dispatch` handles
  * exactly {@link Op}; `reset_doc` never reaches it because this runs first,
- * before the idempotency gate and before any transaction, so a rejected op
- * consumes no `op_id` and leaves the doc byte-identical.
+ * before the idempotency gate and before any transaction, so the rejected op
+ * itself mutates nothing and consumes no `op_id`.
+ *
+ * Scoped deliberately to THAT OP: `applyOps` is abort-remainder, not
+ * all-or-nothing (vocabulary §4), so ops earlier in the batch stay applied and
+ * the DOCUMENT is byte-identical only when the rejected op is the first one.
+ * See the README's "an op kind this build does not know" paragraph and
+ * `test/exhaustiveness.test.ts`.
  */
 function validateEnvelope(op: WireOp): void {
   if (typeof op !== "object" || op === null || typeof op.op !== "string") {

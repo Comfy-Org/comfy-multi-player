@@ -104,9 +104,10 @@ export function writeTarget(op: WireOp): unknown[] {
       // now named, and the arm below is a guard rather than a fallback.
       return [op.op];
     default:
-      // Exhaustiveness guard (issue #21): with every `Op` member cased above,
-      // `op` is `never` here, so adding a seventh kind to `Op` fails `tsc` at
-      // this line until it is given a write target.
+      // Exhaustiveness guard (issue #21): with every `WireOp` member cased
+      // above — the five `Op` kinds plus the deferred `reset_doc` — `op` is
+      // `never` here, so adding a kind to EITHER union fails `tsc` at this
+      // line until it is given a write target.
       //
       // `checkExhaustive` deliberately does not throw. `writeTarget` is public
       // and ops arrive over the wire from other implementations, so a kind

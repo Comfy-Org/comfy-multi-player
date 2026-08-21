@@ -35,8 +35,12 @@ const WINDOW_BREAKERS = new Set<string>(["clear", "delete_node", "reset_doc"]);
  * Node ids an op reads or writes structurally (conservative).
  *
  * Takes `WireOp`, not `Op`: session streams are recorded wire data and may
- * legally contain a deferred kind, which since #17 is not an `Op`. The
- * exhaustiveness guard below still fires for a kind added to either union.
+ * legally contain a deferred kind, which since #17 is not an `Op`.
+ *
+ * The `assertNever` arm below is documentation, NOT a gate: nothing
+ * type-checks `test/**` — `tsconfig.json` includes only `src`, and
+ * `test/types/tsconfig.json` includes only the negative-type file. A kind
+ * added to either union fails `tsc` at the `src/` sites, not here.
  */
 function touchedNodes(op: WireOp): string[] {
   switch (op.op) {

@@ -13,12 +13,14 @@
  *  - REJECTED — the runtime refuses the op with a named code and leaves the
  *    doc byte-identical. The type change is pure hygiene; the document was
  *    never at risk.
- *  - ACCEPTED, MISHANDLED — the runtime applies the op and silently does
- *    something other than what the op says. The type change closes this repo's
- *    door; the wire door is still open. These tests exist so the behaviour is
- *    named and any future change to it is deliberate rather than accidental.
- *    They are NOT an endorsement: tightening any of them changes what is legal
- *    on the wire and needs a comfy-cli counterpart first (see the PR body).
+ *  - ACCEPTED — the runtime applies the op. Usually it then silently does
+ *    something other than what the op says; the type change closes this repo's
+ *    door while the wire door stays open. These tests exist so the behaviour
+ *    is named and any future change to it is deliberate rather than
+ *    accidental. They are NOT an endorsement: tightening any of them changes
+ *    what is legal on the wire and needs a comfy-cli counterpart first.
+ *    TWO EXCEPTIONS inside that group are invariant-MANDATED rather than
+ *    mishandled — see the group 2 banner below before "fixing" either.
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
@@ -155,7 +157,22 @@ describe("#17 group 1: invalid states the runtime already rejects", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Group 2 — ACCEPTED at runtime and silently mishandled
+// Group 2 — ACCEPTED at runtime; behaviour pinned so a change to it is
+// deliberate. Most of these are genuine silent mishandling. TWO ARE NOT, and
+// the distinction is load-bearing rather than pedantic:
+//
+//  - the `stamp`-contradicts-envelope case is REQUIRED by KA-2/FC-2 (see
+//    `Stamp` in `src/types.ts` and `test/ka2-stamp-inside-op.test.ts`);
+//    "tightening" it would collapse ordering onto the server-assigned scalar
+//    FC-2 forecloses. It is here because the relationship between the three
+//    fields is not expressible in the type system, not because it is a bug;
+//  - the `op_id` shape case is an envelope-hygiene gap: the op does exactly
+//    what it says, nothing is mishandled, and the contract that is unenforced
+//    is a FORMAT rule (vocabulary §8.2), not a field combination.
+//
+// Neither is reachable only from outside this package either — both shapes are
+// valid `Op` literals today, so the `wireOp()` marker on them is about keeping
+// the call sites uniform, not about a type this repo can no longer construct.
 // ---------------------------------------------------------------------------
 
 describe("#17 group 2: invalid states the wire still accepts (behaviour pinned, not endorsed)", () => {
@@ -280,11 +297,43 @@ describe("#17 group 2: invalid states the wire still accepts (behaviour pinned, 
       { name: "model", type: "MODEL", link: null },
       { name: "images.image0", type: "MODEL", link: 100, grow_id: 100 },
     ]);
-    // Sharper still: autogrow is identity-only, never gated (schema §3), so
-    // this op claims NO register at all. The same op WITHOUT `grow` would
-    // claim `["input","1",0]`, so a caller who believed `to_slot: 0` meant
-    // something got neither the slot nor the LWW protection that goes with it.
+    // Sharper still: a grow WITHOUT `grow.inputcount` — this one — is
+    // identity-only and claims NO register at all, because the grown slot is
+    // keyed by `grow_id` and there is nothing to contest (schema §3's
+    // autogrow row). The same op WITHOUT `grow` would claim `["input","1",0]`,
+    // so a caller who believed `to_slot: 0` meant something got neither the
+    // slot nor the LWW protection that goes with it.
+    //
+    // Scoped deliberately: this is NOT true of every autogrow. A grow that
+    // carries `grow.inputcount` DOES claim `("widget", to_node, inputcount)`,
+    // sharing the connect's stamp (schema §8.3, vocabulary §8.4). Pinned
+    // directly below so the two cases cannot be conflated again.
     expect([...doc.getMap("__stamps").keys()]).toEqual([]);
+  });
+
+  it("an autogrow connect carrying grow.inputcount DOES claim a stamped register", () => {
+    // Guards the scoping of the comment above: "autogrow is not gated" is a
+    // statement about the grown SLOT, not about the op. One op, two registers.
+    const doc = baseDoc();
+    const result = applyOps(
+      doc,
+      [
+        wireOp({
+          op: "connect",
+          ...env(),
+          link_id: 101,
+          from_node: 2,
+          from_slot: 0,
+          to_node: 1,
+          to_slot: null,
+          link_type: "MODEL",
+          grow: { name: "images.image0", type: "MODEL", inputcount: { widget: "steps", value: 7 } },
+        }),
+      ],
+      catalog,
+    );
+    expect(result.failed).toBeNull();
+    expect([...doc.getMap("__stamps").keys()]).toEqual([JSON.stringify(["widget", "1", "steps"])]);
   });
 
   it("set_widget with an inner_widget but no path writes the OUTER widget, not the named one", () => {
@@ -359,12 +408,22 @@ describe("#17 group 2: invalid states the wire still accepts (behaviour pinned, 
     ]);
   });
 
-  it("a stamp that contradicts base_version/actor wins the LWW comparison (KA-2)", () => {
-    // `stamp` is `[base_version, actor]` by contract, but it is a third field
-    // rather than a projection of the other two, so an op can carry a stamp
-    // that disagrees. `stampKey` prefers the stamp, so the op's OWN
-    // base_version and actor are ignored for ordering — a high-base_version
-    // op with a low stamp loses to a much older-looking write.
+  it("a stamp that contradicts base_version/actor is HONOURED — the KA-2 design, not a defect", () => {
+    // NOT a mishandled state, and listed here only because the type system
+    // cannot express the relationship between the three fields. `stamp` is
+    // AUTHORITATIVE by design: #56 landed that on `Stamp` in `src/types.ts`
+    // ("the ordering key is read out of THIS field whenever the op carries
+    // one; the envelope reading is a fallback... A minter may set it to
+    // something the envelope does not imply"), because reading the envelope
+    // instead would collapse ordering onto the server-assigned scalar FC-2
+    // forecloses. `test/ka2-stamp-inside-op.test.ts` is the conformance suite
+    // for exactly this, at every register.
+    //
+    // What is pinned HERE is only the consequence a caller must know: because
+    // `stampKey` prefers the stamp, an op's envelope `base_version`/`actor` do
+    // not decide its order, so a high-base_version op with a low stamp loses.
+    // Tightening this — requiring `stamp` to equal `[base_version, actor]` —
+    // would REJECT a currently-legal op and break KA-2/FC-2. Do not.
     const doc = baseDoc();
     const high = applyOps(
       doc,

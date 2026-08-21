@@ -124,7 +124,9 @@ export interface OpBase {
 }
 
 // ---------------------------------------------------------------------------
-// The six frozen op kinds
+// The six declared op kinds: five implemented (`Op`) plus the deferred
+// `reset_doc` (`DeferredOp`); together `WireOp`. "Frozen" now means
+// implemented — `FROZEN_OPS` is pinned to `Op["op"]` exactly (issue #17).
 // ---------------------------------------------------------------------------
 
 export interface AddNodeOp extends OpBase {
@@ -171,12 +173,17 @@ export interface ConcreteConnectOp extends ConnectOpBase {
   /** Concrete input index. */
   to_slot: number;
   /**
-   * Never present on a concrete connect. Issue #17: `grow` and a numeric
-   * `to_slot` are mutually exclusive by construction — the applier grows and
-   * wires its OWN slot whenever `grow` is set and never reads `to_slot`, so
-   * an op carrying both names a destination it does not use.
+   * Absent, or explicitly `null` — the mirror of {@link TopLevelSetWidgetOp}'s
+   * `path`/`inner_widget`, for a peer that emits every field. `null` is what
+   * the applier's discriminant (`op.grow != null`) treats as "no grow", so the
+   * type admits exactly what the runtime treats as concrete.
+   *
+   * Issue #17: a grow PAYLOAD and a numeric `to_slot` are mutually exclusive
+   * by construction — the applier grows and wires its OWN slot whenever `grow`
+   * is set and never reads `to_slot`, so an op carrying both names a
+   * destination it does not use.
    */
-  grow?: undefined;
+  grow?: null;
 }
 
 /**
@@ -184,8 +191,15 @@ export interface ConcreteConnectOp extends ConnectOpBase {
  * vocabulary §1.2 / §8.4). The index is decided by the applier from
  * `grow_id`, so there is no concrete `to_slot` to name.
  *
- * Autogrow is deliberately NOT gated on a shared register: every grow mints
- * its own slot, so two concurrent grows onto one base both survive.
+ * The GROWN SLOT is deliberately not gated on a shared register: every grow
+ * mints its own slot keyed by `grow_id`, so two concurrent grows onto one base
+ * both survive and there is nothing to contest.
+ *
+ * That is a statement about the slot, NOT about the op. A grow carrying
+ * `grow.inputcount` also performs a stamped widget write sharing this op's
+ * `op_id` and stamp, on the ordinary `("widget", to_node, inputcount)`
+ * register (schema §3 / §8.3, vocabulary §8.4) — see `applyInputcountBump`.
+ * One op, two registers.
  */
 export interface GrowConnectOp extends ConnectOpBase {
   /**
@@ -208,7 +222,17 @@ export type ConnectOp = ConcreteConnectOp | GrowConnectOp;
 interface SetWidgetOpBase extends OpBase {
   op: "set_widget";
   node_id: NodeId;
-  /** Widget NAME — widgets are name-addressed, never index-addressed. On an interior write this is the OUTER (proxy) widget name; the write itself targets `inner_widget`. */
+  /**
+   * Widget NAME — widgets are name-addressed, never index-addressed.
+   *
+   * On an INTERIOR write the applier does not read this field at all: the
+   * write and its LWW target both come from `path` + `inner_widget`. Every
+   * interior op in the corpus carries `widget === inner_widget` (promotion
+   * through `proxyWidgets` keeps the interior widget's own name), so the two
+   * agreeing is the norm and a disagreement is not detected — the same "dead
+   * weight on the interior path" hazard `node_id` has, recorded in
+   * `test/invalid-op-states.test.ts`.
+   */
   widget: string;
   value: unknown;
   /** Previous value at mint time (informational; not used for convergence). */

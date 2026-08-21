@@ -244,6 +244,20 @@ const okGrowConnectOmitted: Op = {
   grow: { name: "image_1", type: "X", inputcount: { widget: "inputcount", value: 2 } },
 };
 
+// Explicit `grow: null`, the mirror of the explicit-nulls set_widget control
+// below: a peer that emits every field must still be modellable as concrete.
+const okConcreteConnectExplicitNullGrow: Op = {
+  op: "connect",
+  ...env,
+  link_id: 1,
+  from_node: 2,
+  from_slot: 0,
+  to_node: 3,
+  to_slot: 0,
+  link_type: "X",
+  grow: null,
+};
+
 const okTopLevelSetWidget: Op = {
   op: "set_widget",
   ...env,
@@ -298,6 +312,7 @@ export const checked = [
   okConcreteConnect,
   okGrowConnectExplicitNull,
   okGrowConnectOmitted,
+  okConcreteConnectExplicitNullGrow,
   okTopLevelSetWidget,
   okTopLevelSetWidgetExplicitNulls,
   okInteriorSetWidget,

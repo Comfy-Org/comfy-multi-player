@@ -5,5 +5,5 @@
     "rootDir": "../..",
     "noUnusedLocals": false
   },
-  "include": ["invalid-states.negative.ts", "../../src"]
+  "include": ["invalid-states.negative.ts"]
 }
