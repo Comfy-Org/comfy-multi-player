@@ -27,22 +27,43 @@ The unpinned rows show what the pins are for. Unpinned and idle the number happe
 
 ## Current baseline
 
-Measured 2026-08-21 on the pinned settings over the five-file glob: **84.01% overall** across 1238 mutants (`applier.ts` 78.25%, `doc.ts` 93.93%, `mint.ts` 91.92%, `project.ts` 86.05%, `stamps.ts` 89.00%), with 1031 killed / 9 timeout / 164 survived / 34 no-coverage. The break threshold is **83**, a point under the measured score for the reason #56 recorded when it set the three-file threshold to 79 rather than to the 80.00% it had just measured: a threshold equal to the measurement passes with zero margin and goes red the first time a sibling PR adds an uncovered line, reporting "mutation score regression" when it means "new code arrived". Raise the threshold whenever the score is raised; the headroom is for new code, not for measurement noise, which the pins have removed.
+Measured 2026-08-21 on the pinned settings over the five-file glob, at `main` = `32ab1f2`:
+**85.31% overall** across 1327 mutants (`applier.ts` 80.55%, `doc.ts` 94.09%, `mint.ts` 88.68%,
+`project.ts` 87.89%, `stamps.ts` 89.00%), with 1125 killed / 7 timeout / 167 survived / 28
+no-coverage. The break threshold is **84**, 1.31 points under the measured score for the reason #56
+recorded when it set the three-file threshold to 79 rather than to the 80.00% it had just measured:
+a threshold equal to the measurement passes with zero margin and goes red the first time a sibling
+PR adds an uncovered line, reporting "mutation score regression" when it means "new code arrived".
+Raise the threshold whenever the score is raised; the headroom is for new code, not for measurement
+noise, which the pins have removed.
 
-The three-file baseline this widening replaces was **80.00%** over 925 mutants (`applier.ts` 77.79%, `stamps.ts` 89.00%, `project.ts` 83.14%), reproduced idle and under contention as in the two-by-two table above.
+Per-scope movement, kept because the *shape* of the change matters more than the headline. Both
+"before" columns are a real run of the SAME five-file glob against `origin/main` `32ab1f2` (passed
+on the command line with `--mutate`, pins untouched), so the only difference between the columns is
+this branch:
 
-Per-scope movement, kept because the *shape* of the change matters more than the headline:
-
-| Scope | Before | After | What moved |
+| Scope | Before (`32ab1f2`) | After | What moved |
 | --- | --- | --- | --- |
-| `applier.ts` + `stamps.ts` + `project.ts` | 80.00% (740/925) | 80.86% (748/925) | the KA-4 rejection sweep (`test/ka4-rejection-byte-identity.test.ts`) |
-| `doc.ts` + `mint.ts` | 73.04% (214/293, first ever run) | 93.29% (292/313) | `test/doc-mint-mutation-survivors.test.ts` |
+| five-file overall | 79.98% (1031/1289) | **85.31%** (1132/1327) | both files below |
+| `applier.ts` + `stamps.ts` + `project.ts` | 81.61% (803/984) | 82.83% (815/984) | the KA-4 rejection sweep (`test/ka4-rejection-byte-identity.test.ts`) |
+| `doc.ts` + `mint.ts` | 74.75% (228/305, first ever run) | 92.42% (317/343) | `test/doc-mint-mutation-survivors.test.ts` |
 
-Both "before" columns are a real run, not an inherited figure: the same five-file glob was measured against `origin/main` (`39ccae8`) by passing `--mutate` on the command line, so the only difference between the two columns is this branch's tests and its `src/doc.ts` fix. The `doc.ts` + `mint.ts` mutant total rises from 293 to 313 because the fix itself adds code: `doc.ts` alone goes from 194 to 214 mutants, so the "after" column is measured over more surface, not less.
+The `doc.ts` + `mint.ts` mutant total rises from 305 to 343 because the fix itself adds code, so the
+"after" column is measured over more surface, not less.
+
+The three-file scope reads 81.61% here rather than the 80.00% (740/925) `main` recorded when the pin
+landed, because #67 and #31 have since added tests and code. That is the point of re-measuring the
+baseline at the same commit rather than quoting a stored number: a "before" from a different `main`
+is not a before.
 
 Adding files to the glob moves the headline for two reasons at once — new mutants, and new tests — so compare per-file columns, never the single overall number, when judging whether a change helped.
 
 Earlier figures on this page do not survive. **63.70%** (once recorded here) and **74.81%** (recorded in the workspace) were produced with the knobs unpinned and are void — not low, not high, just not measurements of the test suite.
+
+One more figure is withdrawn rather than merely stale. An earlier revision of this branch cited
+**81.41%** as the "after" for the three-file scope. That number is `main`'s **unpinned, under
+contention** three-file figure from the two-by-two table above — a documented measurement artifact,
+not a measurement of this branch. Do not re-cite it.
 
 The triple **84.38% / 88.01% / 74.59%** was previously cited here as the proof of load-sensitivity. It is withdrawn, and for a sharper reason than staleness: those three runs differed in their `coverageAnalysis`/`timeoutMS`/`concurrency` *flags*, not in host load, so they never evidenced the load claim they were offered for. They do show the score is a function of the knobs. The load half is the two-by-two table above, measured here at fixed settings.
 

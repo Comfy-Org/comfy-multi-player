@@ -43,10 +43,10 @@ export default {
   // Fixed worker count so the measurement does not vary with core count.
   concurrency: 4,
   // Measured 2026-08-21 on the pinned settings above, over the five-file glob:
-  // 84.01% overall (1238 mutants; 1031 killed / 9 timeout / 164 survived / 34
-  // no-coverage). The same glob measured against the parent commit scores
-  // 78.33%, and the three files this widening inherits still score 80.00%
-  // (740/925) there against 80.86% (748/925) here — see docs/mutation-testing.md.
+  // 85.31% overall (1327 mutants; 1125 killed / 7 timeout / 167 survived / 28
+  // no-coverage). The SAME glob run against the parent commit 32ab1f2 scores
+  // 79.98% over 1289 mutants — a real baseline run, not a stored figure — so
+  // the delta is this branch and nothing else. See docs/mutation-testing.md.
   //
   // Threshold sits strictly UNDER the measured score, not at it — the rule #56
   // wrote in when it set the three-file threshold to 79 rather than to the
@@ -57,8 +57,8 @@ export default {
   // whenever the score is raised; the margin is for new code, NOT for
   // measurement noise, which is now zero.
   thresholds: {
-    break: 83,
-    low: 83,
-    high: 95,
+    break: 84,
+    low: 84,
+    high: 90,
   },
 };

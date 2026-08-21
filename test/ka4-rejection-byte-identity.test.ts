@@ -78,6 +78,9 @@ function baseWorkflow(): WorkflowJSON {
       // `Note` is absent from the catalog above, so its values are stored opaquely (§1.2).
       { id: 5, type: "Note", inputs: [], outputs: [], widgets_values: ["hi"] },
       { id: 6, type: DEF, inputs: [], outputs: [] },
+      // A class the catalog above does NOT describe, carrying no widgets_values,
+      // so it is stored name-keyed rather than opaquely (#31).
+      { id: 7, type: "Uncatalogued", inputs: [], outputs: [] },
     ],
     links: [[7, 2, 0, 3, 0, "X"]],
     definitions: {
@@ -251,6 +254,20 @@ const CASES: Row[] = [
         value: 1,
         path: ["6", "27"],
         inner_widget: "nope",
+      }) as unknown as Op,
+  },
+
+  {
+    kind: "set_widget",
+    why: "named write to a class the pinned catalog does not describe (#31, schema §1.2)",
+    code: "uncatalogued_widget_write",
+    build: () =>
+      ({
+        op: "set_widget",
+        ...env(),
+        node_id: 7,
+        widget: "anything",
+        value: 1,
       }) as unknown as Op,
   },
 
@@ -507,6 +524,7 @@ const ALL_REJECTION_CODES = [
   "widget_out_of_range",
   "input_slot_missing",
   "output_slot_missing",
+  "uncatalogued_widget_write",
   "not_a_subgraph",
   "interior_node_not_found",
   "shared_definition_unforked",
