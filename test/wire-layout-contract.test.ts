@@ -261,18 +261,33 @@ describe("layer 1: the bootstrap snapshot literally spells the schema §1 root n
   });
 
   it("CONTROL: a byte scan cannot separate a root name from a payload key, which is why the fixture is split", () => {
-    // The measurement the header cites, held as a test. `collisionFreeDoc()`
-    // spells `nodes`/`links` ONLY as root names; `populatedDoc()` spells them
-    // additionally as subgraph-definition keys. If a future edit gave the
-    // collision-free fixture a subgraph or an output port, this goes red and
-    // the layer-1 split above stops being load-bearing without anyone noticing.
+    // The measurement the header cites, held as a test: the rich document
+    // spells the twinned names MORE often than the collision-free one, because
+    // its subgraph definition maps spell them too.
     const rich = snapshot(populatedDoc());
     const clean = snapshot(collisionFreeDoc());
     for (const name of PAYLOAD_TWINNED) {
-      expect(tokenCount(rich, name), `'${name}' must be spelled by the rich payload as well as the root`).toBeGreaterThan(
-        tokenCount(clean, name),
-      );
+      expect(
+        tokenCount(rich, name),
+        `'${name}' must be spelled by the rich payload as well as the root`,
+      ).toBeGreaterThan(tokenCount(clean, name));
       expect(tokenCount(clean, name), `'${name}' must still be spelled as a root name`).toBeGreaterThan(0);
+    }
+  });
+
+  it("CONTROL: the collision-free fixture carries neither structure that spells a root name", () => {
+    // The count comparison above is necessary and NOT sufficient: adding ONE
+    // subgraph to the collision-free fixture still leaves the two-subgraph rich
+    // document ahead, so it would pass while layer 1 quietly went vacuous
+    // again. This asserts the structural precondition directly, which is the
+    // property that actually matters and which no cardinality can absorb.
+    const wf = collisionFreeWorkflow as unknown as {
+      nodes: { outputs?: unknown[] }[];
+      definitions?: unknown;
+    };
+    expect(wf.definitions, "a subgraph definition map spells `nodes` and `links` itself (src/mint.ts)").toBeUndefined();
+    for (const node of wf.nodes) {
+      expect(node.outputs ?? [], "an output port map spells `links` itself (src/doc.ts createNodeMap)").toEqual([]);
     }
   });
 
