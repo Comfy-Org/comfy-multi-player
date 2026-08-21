@@ -33,6 +33,7 @@ import {
   widgetStorageOf,
 } from "./doc.js";
 import { assertNever } from "./exhaustive.js";
+import { assertReadableSchema } from "./schema-version.js";
 import type { WidgetCatalog, WorkflowJSON, WorkflowNode } from "./types.js";
 
 /** Sorted-by-id comparator: numeric when both ids are numbers, else string order. */
@@ -215,8 +216,26 @@ function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): Record<s
  * Project the doc to canonical ComfyUI workflow JSON (schema §7).
  * `catalog` MUST be the catalog the doc pins (`meta.catalog_version`) — a
  * different catalog resolves different widget positions by design (§1.2).
+ *
+ * FAIL-CLOSED ON SCHEMA (KA-11, #38). The very first thing this does is refuse
+ * a document whose `meta.schema_version` is missing, unreadable, or not this
+ * package's `SCHEMA_VERSION` — `SchemaVersionError`, before a single key is
+ * read. `migrate()` was the only fail-closed read gate before, and nothing
+ * forced a caller through it, so a document minted by a NEWER package was
+ * best-effort projected by an OLDER reader as though it were current: the
+ * silent mis-projection KA-11 exists to prevent.
+ *
+ * This is a WHOLE-DOCUMENT refusal, and it is deliberately not the same
+ * policy as `tryProjectNode`'s per-node skip above. A structurally invalid
+ * node is one corrupt entry in an otherwise readable document, and dropping it
+ * keeps the other nodes readable. A wrong schema version says the reader
+ * cannot interpret the layout AT ALL — every node it went on to project would
+ * be a guess, so there is nothing left to salvage and skipping is not
+ * available as an option.
  */
 export function project(doc: Y.Doc, catalog: WidgetCatalog): WorkflowJSON {
+  assertReadableSchema(doc, "project");
+
   const wf: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   metaMap(doc).forEach((v, k) => {
     if (k === "schema_version" || k === "catalog_version" || k.startsWith("__")) return;

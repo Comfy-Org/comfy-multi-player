@@ -1,35 +1,179 @@
+/**
+ * KA-11 — schema-version discipline is enforced ON READ (#38).
+ *
+ * `migrate()` used to be the only fail-closed read entrypoint, and nothing
+ * forced a caller through it: `project(doc, catalog)` best-effort projected a
+ * document minted by a NEWER package as though it were current, which is the
+ * silent mis-projection KA-11 exists to prevent. The gate now lives in the
+ * read path itself, so a low-context caller cannot skip it.
+ *
+ * Both entrypoints are pinned here, because the point is that they agree:
+ * same failure type (`SchemaVersionError`), same notion of "unreadable", and
+ * the same byte-exact refusal (fail-closed never half-writes, and reading the
+ * claim must not materialize a root — schema §10).
+ *
+ * NON-VACUOUSNESS. Every fail-closed case below runs against a REAL fixture
+ * workflow that projects cleanly one line earlier. An empty `Y.Doc` would
+ * satisfy `toThrow()` for any number of reasons, so the assertion has to be
+ * shown to fire on a document that is otherwise perfectly readable, with the
+ * tampered schema version as the only difference.
+ */
 import { describe, expect, it } from "vitest";
+import * as Y from "yjs";
 import {
   SCHEMA_VERSION,
   SchemaVersionError,
   metaMap,
   migrate,
   mint,
+  project,
+  readSchemaVersion,
+  type WorkflowJSON,
 } from "../src/index.js";
-import { loadCatalog } from "./helpers.js";
+import { assertSchemaVersionAgainst } from "../src/schema-version.js";
+import { canonicalize, loadCatalog, loadSession, sessionFiles } from "./helpers.js";
 
-describe("schema version on read", () => {
-  // project() currently has NO schema-version guard, so migrate() is the
-  // fail-closed read entrypoint a host must call before project(). These tests
-  // pin both guarded branches of migrate() against a tampered meta.schema_version.
+const catalog = loadCatalog();
+/** A real, non-trivial fixture workflow — see NON-VACUOUSNESS above. */
+const baseWorkflow: WorkflowJSON = loadSession(sessionFiles()[0]!).header.base_workflow;
 
+/** A document that reads cleanly, so a later refusal can only be about the schema version. */
+function readableDoc(): Y.Doc {
+  const doc = mint(baseWorkflow, catalog);
+  expect(project(doc, catalog).nodes.length).toBeGreaterThan(0);
+  return doc;
+}
+
+describe("project() enforces schema-version on read (KA-11, #38)", () => {
+  it("projects a document at the current schema version, unchanged", () => {
+    const doc = mint(baseWorkflow, catalog);
+
+    expect(readSchemaVersion(doc)).toBe(SCHEMA_VERSION);
+    // The guard is a gate, not a filter: the happy path is byte-for-byte the
+    // projection this package produced before the gate existed.
+    expect(canonicalize(project(doc, catalog))).toEqual(canonicalize(baseWorkflow));
+  });
+
+  it("fails closed on a document NEWER than this reader, instead of best-effort projecting it", () => {
+    const doc = readableDoc();
+    metaMap(doc).set("schema_version", SCHEMA_VERSION + 1);
+
+    expect(() => project(doc, catalog)).toThrow(SchemaVersionError);
+    expect(() => project(doc, catalog)).toThrow(
+      new RegExp(`doc schema v${SCHEMA_VERSION + 1} is newer than this package's v${SCHEMA_VERSION}`),
+    );
+    expect(() => project(doc, catalog)).toThrow(/refusing to read \(fail-closed/);
+  });
+
+  it("fails closed on a document whose meta.schema_version is absent", () => {
+    const doc = readableDoc();
+    metaMap(doc).delete("schema_version");
+
+    expect(readSchemaVersion(doc)).toBeUndefined();
+    expect(() => project(doc, catalog)).toThrow(SchemaVersionError);
+    expect(() => project(doc, catalog)).toThrow(/no readable meta\.schema_version/);
+  });
+
+  it("fails closed on a document with no meta root at all, without creating one", () => {
+    const doc = new Y.Doc();
+    doc.getMap<Y.Map<unknown>>("nodes").set("1", new Y.Map());
+    const before = Y.encodeStateAsUpdate(doc);
+    const rootsBefore = [...doc.share.keys()];
+
+    expect(() => project(doc, catalog)).toThrow(/no readable meta\.schema_version/);
+    // Reading the claim must not repair the document: `Y.Doc#getMap` CREATES
+    // an absent root, and a refusal that conjures `meta` (or `links`, or
+    // `definitions`) is a read that writes.
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+    expect([...doc.share.keys()]).toEqual(rootsBefore);
+  });
+
+  it.each([
+    ["a string", "1"],
+    ["null", null],
+    ["a float", 1.5],
+    ["zero", 0],
+    ["a negative integer", -1],
+  ])("fails closed when meta.schema_version is %s, not a version", (_label, value) => {
+    const doc = readableDoc();
+    metaMap(doc).set("schema_version", value);
+
+    expect(readSchemaVersion(doc)).toBeUndefined();
+    expect(() => project(doc, catalog)).toThrow(SchemaVersionError);
+    expect(() => project(doc, catalog)).toThrow(/no readable meta\.schema_version/);
+  });
+
+  it("refuses byte-exactly: a rejected read leaves the document untouched", () => {
+    const doc = readableDoc();
+    metaMap(doc).set("schema_version", SCHEMA_VERSION + 1);
+    const before = Y.encodeStateAsUpdate(doc);
+    const rootsBefore = [...doc.share.keys()];
+
+    expect(() => project(doc, catalog)).toThrow(SchemaVersionError);
+
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+    expect([...doc.share.keys()]).toEqual(rootsBefore);
+  });
+
+  it("refuses an OLDER document and points at migrate() rather than projecting or migrating it", () => {
+    // v1 is the first layout, so no document older than this reader can be
+    // constructed today. The rule is exercised against an explicit reader
+    // version instead — the same code path `project()` takes, with the one
+    // value that cannot yet vary held to a future value.
+    const doc = readableDoc();
+    const futureReader = SCHEMA_VERSION + 1;
+
+    expect(() => assertSchemaVersionAgainst(doc, "project", futureReader)).toThrow(SchemaVersionError);
+    expect(() => assertSchemaVersionAgainst(doc, "project", futureReader)).toThrow(
+      new RegExp(`doc schema v${SCHEMA_VERSION} is older than this package's v${futureReader}`),
+    );
+    // The remedy is named, and it is NOT "project it anyway" and NOT "migrate
+    // it here": `project()` is a pure read and a migration is a host-only
+    // write (schema §10).
+    expect(() => assertSchemaVersionAgainst(doc, "project", futureReader)).toThrow(
+      new RegExp(`call migrate\\(doc, ${SCHEMA_VERSION}\\) first`),
+    );
+    // …and the read really is refused, not merely warned about.
+    expect(() => assertSchemaVersionAgainst(doc, "project", SCHEMA_VERSION)).not.toThrow();
+  });
+
+  it("the gate cannot be reached past a wrong catalog: schema is checked first", () => {
+    // Ordering matters for the host: a document at an unreadable schema must
+    // report THAT, not a catalog-contract error from a projection that should
+    // never have started.
+    const doc = readableDoc();
+    metaMap(doc).set("schema_version", SCHEMA_VERSION + 1);
+
+    expect(() => project(doc, { types: {} })).toThrow(SchemaVersionError);
+  });
+});
+
+describe("migrate() and project() agree on what is unreadable (KA-11)", () => {
   it("fails closed when the stored schema is newer than this reader", () => {
-    const doc = mint({ nodes: [], links: [] }, loadCatalog());
+    const doc = mint({ nodes: [], links: [] }, catalog);
     const futureVersion = SCHEMA_VERSION + 1;
     metaMap(doc).set("schema_version", futureVersion);
 
     // Reading a doc minted by a newer package must refuse, not best-effort read.
     expect(() => migrate(doc, futureVersion)).toThrow(SchemaVersionError);
     expect(() => migrate(doc, futureVersion)).toThrow(/newer than this package.*refusing to read/);
+    // The read path refuses the same document, without a migrate() call.
+    expect(() => project(doc, catalog)).toThrow(SchemaVersionError);
   });
 
   it("rejects a fromVersion that disagrees with the stored schema_version", () => {
-    const doc = mint({ nodes: [], links: [] }, loadCatalog());
+    const doc = mint({ nodes: [], links: [] }, catalog);
     metaMap(doc).set("schema_version", SCHEMA_VERSION + 1);
 
     // The stored version and the caller's fromVersion must agree, or the read
     // is ambiguous and must fail closed.
     expect(() => migrate(doc, SCHEMA_VERSION)).toThrow(SchemaVersionError);
     expect(() => migrate(doc, SCHEMA_VERSION)).toThrow(/does not match fromVersion/);
+  });
+
+  it("a document migrate() accepts is a document project() reads", () => {
+    const doc = mint(baseWorkflow, catalog);
+    expect(() => migrate(doc, SCHEMA_VERSION)).not.toThrow();
+    expect(() => project(doc, catalog)).not.toThrow();
   });
 });

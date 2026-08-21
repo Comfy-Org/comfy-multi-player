@@ -63,7 +63,7 @@ This is the machine-addressable review log for the package. IDs are stable; do n
 ### KA-11 — Schema-version discipline is enforced on read
 **Rule:** Bump `SCHEMA_VERSION` when an old reader would mis-project a new doc; fail closed on unreadable schema and provide a `migrate()` path.  
 **Why:** Readers must not silently mis-project an incompatible document.  
-**Enforced by:** `test/roundtrip.test.ts`; normal read-path coverage is **UNGUARDED — see roadmap issue #24**.
+**Enforced by:** `test/roundtrip.test.ts` (the `migrate()` path) and `test/schema-version-on-read.test.ts` (the NORMAL read path). `project()` calls `assertReadableSchema` before it reads a single key, so a doc whose `meta.schema_version` is absent, unreadable, or not this package's `SCHEMA_VERSION` is refused with `SchemaVersionError` without a separate `migrate()` call — the fail-open gap #38 closed. An older doc is refused, not silently migrated: migration is a host-only WRITE (schema §10) and `project()` is a pure read, so the caller runs `migrate()` first. The refusal is byte-exact and materializes no root type, matching `migrate()`.
 
 ### KA-12 — Catalog pinned at mint
 **Rule:** `meta.catalog_version` cites the catalog by SHA, not branch; reject widget writes to uncatalogued classes loudly.  

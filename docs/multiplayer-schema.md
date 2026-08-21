@@ -575,6 +575,19 @@ the epoch; cross-epoch struct updates never merge.
 - Bumping `SCHEMA_VERSION` requires: a migration step, updated fixtures or a
   fixture-format note, an amendment section in this document, and FE
   sign-off (the layout is a cross-repo contract with the FE follower).
+- **The version check is on the READ path, not only on `migrate()`.**
+  `project(doc, catalog)` refuses — `SchemaVersionError`, before it reads any
+  key — a document whose `meta.schema_version` is absent, unreadable (not a
+  positive integer), or not equal to this package's `SCHEMA_VERSION`. Nothing
+  forces a caller through `migrate()`, so a gate that lived only there was a
+  gate a low-context host could skip, and an old reader would best-effort
+  project a new document (KA-11).
+  A document OLDER than the reader is refused too, not migrated in place:
+  migration is a host-only write, `project()` is a pure read available to every
+  replica, and a read that writes the shared doc is both unstamped (KA-2) and,
+  on a follower, an independently edited document (FC-1). The caller runs
+  `migrate(doc, storedVersion)` first, then reads. The refusal is byte-exact
+  and materializes no root type, the same as `migrate()`'s.
 
 ---
 
