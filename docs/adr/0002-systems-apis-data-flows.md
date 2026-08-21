@@ -203,13 +203,19 @@ Only `internal/target` (`Runtime`) and `internal/boundary` (`Policy`) differ.
   ComfyUI_frontend monorepo later is a dependency-source swap, not a protocol change.)
 - **The binary Yjs struct stream** is opaque bytes; nothing to typegen.
 
-## Verification note (V1-042 §7)
+## Verification note (V1-042 §7, corrected 2026-08-20 against the actual charts)
 
-A green preview/ephemeral smoke proves **nothing** about the CRDT path: comfy-agent is absent
-from the ephemeral appset and the doc host is not deployed there, so the write path is never
-exercised. Real evidence = local stack (`SMOKE_TARGET_CAPABILITIES=agent` +
-`SMOKE_DOC_HOST_ENDPOINT` + `SMOKE_WIDGET_CATALOG_PATH`) + `agenteval` + staging +
-`crdt-shadow-diff`.
+A green preview/ephemeral built from **main/V0** proves nothing about the CRDT path — main has
+no doc-host, and agent smoke scenarios self-skip without `SMOKE_TARGET_CAPABILITIES=agent`. But
+the PR-ephemeral appset (`appsets/ephemeral-env-template.yaml`) **does include comfy-agent**,
+and the CRDT integration branch's ephemeral overlay enables the sidecar
+(`docHost.sidecar.enabled: true`, `AGENT_CRDT_MODE: "on"`, `DOC_HOST_ENDPOINT`) — so a
+**provisioned** #6711 preview or staging exercises the real CRDT write path. The env that
+genuinely excludes comfy-agent is the fixed shared `comfy-cloud-test-v2`; V1-042 §7 conflated
+it with PR ephemerals. Getting a preview is operational (re-apply the `preview-*` label and get
+the image build green), not a chart change. Real evidence = local stack
+(`SMOKE_TARGET_CAPABILITIES=agent` + `SMOKE_DOC_HOST_ENDPOINT` + `SMOKE_WIDGET_CATALOG_PATH`) +
+`agenteval` + a provisioned CRDT preview/staging + `crdt-shadow-diff`.
 
 ## Not yet built (do not describe as shipped)
 
