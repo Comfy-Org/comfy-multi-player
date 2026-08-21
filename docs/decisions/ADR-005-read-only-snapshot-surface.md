@@ -107,11 +107,27 @@ classify, so a future export cannot widen the surface unreviewed.
   move past #18 without hand-mirroring schema v1 in raw `yjs`, which is what
   ADR-004 closed. The migration is import-level; see the PR body for the exact
   before/after per call site.
-- `readGraph` costs about **2x** a raw live-handle read of the same four fields
-  — measured at +0.06 ms per frame at 200 nodes and +0.32 ms at 1000 nodes on
-  Node 25 (`node scripts/bench-read.mjs <nodes>`), against a 16.6 ms frame
-  budget. Reads on the doc-host guard path (`docCatalogPin`, `hasNode`,
-  `hasAppliedOp`) are O(1) and allocation-free, so that path pays nothing.
+- `readGraph` costs about **2x** a raw live-handle read of the same four
+  fields. Re-measured on Node 25 at this commit over three runs each
+  (`node scripts/bench-read.mjs <nodes>`): **1.90-2.24x, +0.055 to +0.066 ms
+  per frame at 200 nodes**, and **1.91-1.97x, +0.285 to +0.300 ms at 1000
+  nodes**, against a 16.6 ms frame budget — so ~0.4% of the budget at 200
+  nodes. The rejected full-node copy measures **3.94-4.51x**, about twice
+  `readGraph` again, in the same runs. (An earlier figure of +0.32 ms at 1000
+  nodes is withdrawn: it does not reproduce at this base, and +0.29 is the
+  median here.)
+- The schema gate is free on `readGraph` — 0.1195 ms/call without it against
+  0.1219 with it at 200 nodes, inside run-to-run spread. On the doc-host's
+  per-op probes (`docCatalogPin`, `hasNode`, `hasAppliedOp`) it is not free but
+  it is nanoseconds: 0.029-0.063 µs/call before the gate, 0.035-0.075 µs after
+  — about 1.4x — and still O(1). It is O(1) for two separate reasons, and both
+  were found by measuring rather than by a test. The gate short-circuits on a
+  readable document, and the content probe behind it stops at the first live
+  key rather than asking `Y.Map#size`, which walks the whole entry map
+  filtering tombstones. Removing the short-circuit costs 7x (0.048 -> 0.35
+  µs/call); removing it AND keying on `size` costs 90x (-> 3.15 µs/call at 200
+  nodes, and growing with the document) on a path whose whole point is being
+  O(1).
 - `readGraph` returns a fixed subset of node fields. A consumer that needs
   another field needs a one-line package change and a pin bump. That friction is
   deliberate: it keeps each widening reviewable.

@@ -217,9 +217,10 @@ function carriesContent(doc: Y.Doc): boolean {
     if (!doc.share.has(name)) continue;
     try {
       // `keys()` rather than `size`: `Y.Map#size` walks the whole entry map
-      // filtering tombstones, which made this probe O(nodes) on the host's
-      // per-op guard path — measured at 3.1 µs/call against 0.035 µs before
-      // the gate existed. The first live key is all the question needs.
+      // filtering tombstones, so a size-keyed probe is O(nodes). Measured at
+      // 200 nodes with the short-circuit above removed, so that the probe is
+      // what is being timed: 3.15 µs/call by `size`, 0.35 µs by first-key.
+      // The first live key is all the question needs.
       if (!doc.getMap<unknown>(name).keys().next().done) return true;
     } catch {
       // A root whose concrete type this package cannot name is not "nothing".
@@ -282,9 +283,10 @@ function assertSnapshotReadable(doc: Y.Doc, context: string): void {
   // holds at least the version it just read), so asking it would be a second
   // root walk for an answer already known. Deleting this line changes no
   // result — no test in the suite reddens — but it costs ~7x on the host's
-  // O(1) per-op probes (`node scripts/bench-read.mjs` and the µs probe in the
-  // gauntlet report). It is held by the getMap-call-count assertion in
-  // `test/readonly-surface.test.ts`, not by any behavioural test.
+  // O(1) per-op probes: 0.048 µs/call with it, 0.35 µs without, against
+  // 0.035 µs for the same call before the gate existed. It is held by the
+  // getMap-call-count assertion in `test/readonly-surface.test.ts`, not by any
+  // behavioural test.
   if (readSchemaVersion(doc) === SCHEMA_VERSION) return;
   if (!carriesContent(doc)) return;
   assertReadableSchema(doc, context);
