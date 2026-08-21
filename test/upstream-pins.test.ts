@@ -39,6 +39,17 @@ const entries = Object.entries(registry.pins);
 const read = (relative: string) => readFileSync(join(root, relative), "utf8");
 
 /**
+ * Strip JSDoc/Markdown continuation furniture and join lines, so a citation that
+ * wraps across lines reads as one string. Mirrors the windowing in
+ * scripts/check-pins.mjs; keep the two in step.
+ */
+const flatten = (text: string) =>
+  text
+    .split("\n")
+    .map((line) => line.replace(/^\s*(?:\/\/+|\*+|#+|>+)\s?/, "").trim())
+    .join(" ");
+
+/**
  * The three source/doc citations named in the FC-10 finding, plus the README.
  * Listed literally rather than derived from the registry: a registry that
  * quietly dropped a site would otherwise shrink the test with itself.
@@ -88,7 +99,23 @@ describe("FC-10 — upstream citations are pinned by SHA, not by branch", () => 
     // The branch is `fix/validate-lowers-ui-to-api`; it was deleted upstream on
     // 2026-08-21 when comfy-cli PR #511 merged. Naming it as provenance is fine
     // (docs/upstream-pins.json does); naming it as the citation is FC-10.
-    expect(read(site)).not.toMatch(/\(\s*branch\s+`[^`]+`/i);
+    //
+    // Read the file with continuation furniture stripped and lines joined, the
+    // same way scripts/check-pins.mjs does. A per-line regex here would pass a
+    // citation that wraps `(branch` onto one line and the name onto the next —
+    // which is how two of the three original citations were written, and why the
+    // first cut of the gate caught only one of them.
+    expect(flatten(read(site))).not.toMatch(/\(\s*branch\s+`[^`]+`/i);
+  });
+
+  it("README names a revision at all, which is the defect README actually had", () => {
+    // README never named the deleted branch, so the assertion above can never
+    // fail for it. Its defect was the opposite: "Which revision of that document
+    // this package tracks is an open question" — a citation with no revision.
+    // Guard THAT, or the README row of the suite is decorative.
+    const readme = read("README.md");
+    expect(readme).not.toMatch(/which revision of that document this package tracks/i);
+    expect(readme).toMatch(/comfy-cli commit\s+`?[0-9a-f]{40}/i);
   });
 
   it("keeps every pin's former branch on record so the pins stay auditable", () => {

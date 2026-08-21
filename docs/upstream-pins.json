@@ -18,7 +18,7 @@
         "ref": "main",
         "commit": "3ff9f55a5841407bfee67e520c2485e5d46ff488",
         "content_sha256": "7bd2e31e784f3aaa2c48a2340d51cbcc24623b6bd28e8b612d0589423c19f6ee",
-        "drift": "Upstream has moved past the pin: amendments v1.1 (§10), v1.3 (§12) and v1.4 (§13) all post-date it. See reports/pr-review/cmp-fc10-pins.md and docs/api-contract-proposal.md Q5. Moving this pin is a deliberate contract change, not a refresh: re-read each section in sections_cited, reconcile the applier, then move commit, blob_sha1, content_sha256 and every cited_by site together."
+        "drift": "Upstream has moved past the pin: amendments v1.1 (§10), v1.3 (§12) and v1.4 (§13) all post-date it. See docs/api-contract-proposal.md Q5 and Amendment A1 in docs/multiplayer-schema.md. Moving this pin is a deliberate contract change, not a refresh: re-read each section in sections_cited, reconcile the applier, then move commit, blob_sha1, content_sha256 and every cited_by site together."
       }
     },
     "comfy-cli/op-vocabulary-v1@amendment-v1.2": {

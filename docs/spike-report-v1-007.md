@@ -10,7 +10,10 @@
 > reference. References to `applier.mjs` below describe the code as it was
 > during the spike.
 >
-> **Provenance resolution (FC-10, added later; the body below is unedited).**
+> **Provenance resolution (FC-10, added later.** The body below is unedited
+> except for one inline `FC-10-historical` marker in the scope paragraph, which
+> is what tells `npm run check:pins` that the dead branch name there is a
+> preserved historical record rather than a live citation.**)**
 > The scope paragraph cites the generator by the moving branch
 > `pr511-reconcile`. That branch no longer exists: it was renamed to
 > `fix/validate-lowers-ui-to-api` (comfy-cli PR #511) and deleted when the PR
@@ -26,7 +29,7 @@
 
 Scope: validate the candidate Yjs schema by replaying team-authored op streams
 produced by the real `comfy_cli.workflow_ops` primitives (branch
-`pr511-reconcile`, prod `object_info.json` catalog from
+`pr511-reconcile`, prod `object_info.json` catalog from <!-- FC-10-historical: dead branch preserved as the spike's record; the revision is pinned in docs/upstream-pins.json -->
 `services/ingest/data/`), through a prototype applier
 (`applier.mjs`), against the exact convergence semantics of `apply_op`
 (idempotency via `op_id`, delete-wins, stamp-LWW `[base_version, actor, op_id]`

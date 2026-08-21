@@ -34,10 +34,18 @@
  * Non-vacuousness: a run that inspects fewer than MIN_CITATION_SITES citation
  * sites or fewer than MIN_SCANNED_FILES tree files is INCONCLUSIVE, not clean —
  * a green that analyzed nothing proves nothing. Same rule, same exit codes, as
- * scripts/check-import-graph.mjs.
+ * scripts/check-import-graph.mjs and scripts/check-profile-claims.mjs.
+ *
+ * The moving-reference scan (rule 3) runs over CONTINUATION-JOINED blocks, not
+ * raw lines: this repository writes its citations across wrapped JSDoc and
+ * Markdown lines, so `(branch` and the branch name routinely land on different
+ * lines. A line-scoped version of this rule caught one of the three citations
+ * that motivated it and passed the other two.
  *
  * Exit codes: 0 pinned, 1 violation, 2 inconclusive (registry missing or
- * unparseable, nothing scanned, or — in remote mode — no way to reach upstream).
+ * unparseable, nothing scanned, or — in remote mode — no definitive answer from
+ * upstream). "No definitive answer" includes an unusable token and a rate limit:
+ * only 404/422/451 are evidence about a pin.
  */
 
 import { spawnSync } from "node:child_process";
@@ -77,21 +85,21 @@ const MOVING_REF_PATTERNS = [
 ];
 
 /**
- * Lines that legitimately name a dead or historical branch. FC-10 is about what
- * a citation RESOLVES to; naming the branch a pin replaced is provenance, and
- * removing that context would make the pins harder to audit, not easier. The
- * marker must be on the same line, so it cannot be pasted once at the top of a
- * file to silence the whole file.
+ * Markers that legitimately name a dead or historical branch. FC-10 is about
+ * what a citation RESOLVES to; naming the branch a pin replaced is provenance,
+ * and removing that context would make the pins harder to audit, not easier.
+ *
+ * These are STRUCTURAL on purpose. An earlier cut also accepted ordinary English
+ * — "no longer exists", "was deleted", "since renamed" — which meant any line
+ * carrying a live moving citation plus one of those phrases went green, and they
+ * are phrases a well-meaning author writes by accident. Prose cannot be the
+ * escape hatch for a rule about prose. A registry field name or an explicit
+ * `FC-10-historical` marker is a deliberate act; a turn of phrase is not.
+ *
+ * The marker must fall inside the same citation window, so it cannot be pasted
+ * once at the top of a file to silence the rest of it.
  */
-const ALLOW_MARKERS = [
-  /former_branch_citation/,
-  /branch_status/,
-  /FC-10-historical/,
-  /no longer exists/i,
-  /has since been deleted/i,
-  /was deleted/i,
-  /since renamed/i,
-];
+const ALLOW_MARKERS = [/former_branch_citation/, /branch_status/, /FC-10-historical/];
 
 const SCAN_EXTENSIONS = [".ts", ".mts", ".mjs", ".js", ".cjs", ".md", ".json", ".yml", ".yaml"];
 const SCAN_EXCLUDE = [/^dist\//, /^node_modules\//, /^package-lock\.json$/, /^\.git\//];
@@ -233,21 +241,61 @@ if (citationSites < MIN_CITATION_SITES) {
 
 const selfPath = "scripts/check-pins.mjs";
 
+/**
+ * How many consecutive lines a single citation may span. Citations here wrap
+ * across JSDoc continuation lines and Markdown prose; `(branch` and the branch
+ * name are routinely on different lines, and a per-line scan sees neither half
+ * as a violation. Three covers every citation shape in this tree with room to
+ * spare — the longest real one, docs/multiplayer-schema.md's Amendment A1
+ * paragraph, wraps across two.
+ */
+const WINDOW_LINES = 3;
+
+/** Strip leading comment/quote furniture so a wrapped citation reads as prose. */
+const stripContinuation = (line) => line.replace(/^\s*(?:\/\/+|\*+|#+|>+)\s?/, "").trim();
+
 for (const file of tracked) {
   if (file === selfPath) continue; // this file quotes the patterns it bans
   const lines = readFileSync(join(root, file), "utf8").split("\n");
-  lines.forEach((line, index) => {
-    if (!UPSTREAM_REPOS.some((repo) => repo.test(line))) return;
-    if (ALLOW_MARKERS.some((marker) => marker.test(line))) return;
-    for (const { name, re } of MOVING_REF_PATTERNS) {
-      if (re.test(line)) {
-        errors.push(
-          `${file}:${index + 1}: upstream citation uses a moving reference [${name}]: ${line.trim().slice(0, 120)}`,
-        );
-        return;
+  const stripped = lines.map(stripContinuation);
+
+  let index = 0;
+  while (index < lines.length) {
+    let reported = false;
+
+    // Widen from a single line up to WINDOW_LINES so the narrowest window that
+    // shows the violation is the one reported, and single-line citations keep
+    // their exact previous behaviour.
+    for (let span = 1; span <= WINDOW_LINES && index + span <= lines.length; span += 1) {
+      const window = stripped.slice(index, index + span).join(" ");
+      if (!UPSTREAM_REPOS.some((repo) => repo.test(window))) continue;
+      if (ALLOW_MARKERS.some((marker) => marker.test(window))) break;
+
+      const hit = MOVING_REF_PATTERNS.find(({ re }) => re.test(window));
+      if (!hit) continue;
+
+      // Shrink from the left to the narrowest sub-window that still shows both
+      // signals, so the reported range names the citation and not its preamble.
+      let start = index;
+      while (start + 1 < index + span) {
+        const tighter = stripped.slice(start + 1, index + span).join(" ");
+        if (!UPSTREAM_REPOS.some((repo) => repo.test(tighter)) || !hit.re.test(tighter)) break;
+        start += 1;
       }
+
+      const reportedWindow = stripped.slice(start, index + span).join(" ");
+      const where = start + 1 === index + span ? `${start + 1}` : `${start + 1}-${index + span}`;
+      errors.push(
+        `${file}:${where}: upstream citation uses a moving reference [${hit.name}]: ${reportedWindow.slice(0, 140)}`,
+      );
+      // Consume the whole window so one wrapped citation is one finding.
+      index += span;
+      reported = true;
+      break;
     }
-  });
+
+    if (!reported) index += 1;
+  }
 }
 
 const scannedSummary = `${tracked.length} tracked files, ${citationSites} citation sites, ${Object.keys(pins).length} pins`;
@@ -274,37 +322,67 @@ if (ghProbe.error || ghProbe.status !== 0) {
 }
 
 /**
- * A definitive answer from GitHub is an HTTP status. Anything else — DNS, TLS,
- * proxy, rate limit, expired token — means the check did not happen, and
- * reporting that as "the commit no longer resolves" would be a false red of
- * exactly the kind this gate exists to prevent. So `ok` is a pass, `http` is a
- * definitive negative, and everything else escalates to INCONCLUSIVE.
+ * Statuses that are evidence about the OBJECT that was asked for. Only these
+ * may be read as "this pin is broken".
+ *
+ *   404 — no such commit/path in this repository
+ *   422 — the SHA is well-formed but names no object here
+ *   451 — the object exists but is legally unavailable; not a pin problem to
+ *         fix by re-pinning, but it is a definite answer about this object
+ *
+ * Everything else that carries a status is evidence about the REQUEST, not the
+ * object: 401/403 (no or bad credentials, SAML, SSO), 429 (throttled), 5xx
+ * (GitHub is unwell). An earlier cut of this gate treated "carries an HTTP
+ * status" as "is definitive", so an expired token reported every pin as
+ * "commit no longer resolves" — a confident, specific, wrong answer, which is
+ * strictly worse than an error. That is the same defect this PR fixes one level
+ * down: a claim asserted without the check that would establish it.
  */
+const OBJECT_SCOPED_STATUSES = new Set([404, 422, 451]);
+
 function gh(endpoint) {
   const run = spawnSync("gh", ["api", endpoint], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   const stderr = (run.stderr ?? run.error?.message ?? "").trim();
   const status = /\(HTTP (\d{3})\)/.exec(stderr);
+  const http = status ? Number(status[1]) : null;
   return {
     ok: run.status === 0 && !run.error,
-    http: status ? Number(status[1]) : null,
+    http,
+    /** True only when the answer is about the object we asked for. */
+    definitive: http !== null && OBJECT_SCOPED_STATUSES.has(http),
     stdout: run.stdout,
     stderr,
   };
 }
 
 function requireDefinitive(result, what) {
-  if (result.ok || result.http !== null) return;
+  if (result.ok || result.definitive) return;
+  const status = result.http === null ? "no HTTP status (DNS/TLS/proxy)" : `HTTP ${result.http}`;
   inconclusive(
-    `could not reach GitHub while checking ${what}`,
+    `could not get a definitive answer from GitHub while checking ${what} — ${status}`,
     result.stderr.split("\n")[0] || "no error output",
     "This is NOT a passing pin and NOT a failing pin — the check did not happen.",
+    "Only 404/422/451 are answers about the object; 401/403/429/5xx are answers about the",
+    "request (credentials, rate limit, outage) and prove nothing about the pin.",
     `Offline result: ${errors.length === 0 ? "clean" : `${errors.length} violation(s)`}`,
   );
 }
 
-// Preflight: prove the API is reachable and the token works before reading any
-// per-commit failure as evidence about a commit.
-requireDefinitive(gh("rate_limit"), "GitHub API reachability");
+// Preflight: prove the API is reachable AND the credentials work before reading
+// any per-commit failure as evidence about a commit. `rate_limit` needs no
+// scopes, so anything other than a clean 200 here means the transport or the
+// token is the problem, never the pin — hence `ok`, not merely `definitive`.
+const preflight = gh("rate_limit");
+if (!preflight.ok) {
+  const status = preflight.http === null ? "no HTTP status (DNS/TLS/proxy)" : `HTTP ${preflight.http}`;
+  inconclusive(
+    `could not reach GitHub as an authenticated caller — ${status}`,
+    preflight.stderr.split("\n")[0] || "no error output",
+    "`gh api rate_limit` must return 200 before any pin result can be trusted. Run `gh auth login`,",
+    "or wait out the rate limit, then re-run. Remote reachability was NOT checked.",
+    `Offline result: ${errors.length === 0 ? "clean" : `${errors.length} violation(s)`}`,
+  );
+}
 
 for (const [id, pin] of Object.entries(pins)) {
   if (typeof pin?.commit !== "string" || !/^[0-9a-f]{40}$/.test(pin.commit)) continue;
@@ -343,11 +421,22 @@ for (const [id, pin] of Object.entries(pins)) {
     errors.push(`${id}: content_sha256 recorded ${pin.content_sha256}, fetched blob hashes to ${digest}`);
   }
 
-  if (pin.path.endsWith(".md") && Array.isArray(pin.sections_cited)) {
+  // `sections_cited` means "the parts of this file the package actually reads".
+  // For Markdown that is a heading; for Python it is a definition. Both are
+  // checked, because a pin whose cited section has been renumbered or whose
+  // cited symbol has been renamed is precise and useless — and because three
+  // prose sites (INVARIANTS.md FC-10, catalog-pinning.md, ROADMAP.md) promise a
+  // reviewer that this check happens.
+  if (Array.isArray(pin.sections_cited)) {
     for (const section of pin.sections_cited) {
-      const heading = new RegExp(`^#{2,6} ${section.replace(/\./g, "\\.")}[. ]`, "m");
-      if (!heading.test(text)) {
-        errors.push(`${id}: section §${section} has no heading in ${pin.path} at ${pin.commit}`);
+      const quoted = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const anchor = pin.path.endsWith(".md")
+        ? { re: new RegExp(`^#{1,6} +${quoted}[. ]`, "m"), kind: `section §${section}`, what: "heading" }
+        : pin.path.endsWith(".py")
+          ? { re: new RegExp(`^\\s*(?:def|class) +${quoted}\\b`, "m"), kind: `symbol \`${section}\``, what: "definition" }
+          : null;
+      if (anchor && !anchor.re.test(text)) {
+        errors.push(`${id}: ${anchor.kind} has no ${anchor.what} in ${pin.path} at ${pin.commit}`);
       }
     }
   }
