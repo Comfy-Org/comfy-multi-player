@@ -37,7 +37,25 @@
  * re-typed by the next author, and a gate that only checks what a profile still
  * says cannot notice what it started saying again.
  *
- * Claim markers are stripped out of the target text before either test runs. A
+ * There is a third marker form, for a defect that has been DIAGNOSED and
+ * deliberately NOT fixed — a tombstone:
+ *
+ *   <!-- known-defect: <#issue> :: <exact substring> :: <repo-relative path> -->
+ *
+ * It asserts the defective text is still there, and fails when it is gone, with
+ * a diagnostic that tells the finder to delete the tombstone and close the
+ * issue. That inversion is the whole point of a separate form: a positive
+ * `claim` on the same substring would tell whoever fixed the defect to put it
+ * back. The history: the rejection-oracle line in `test-quality.md` was
+ * correctly diagnosed by four separate merge reviews, each of which correctly
+ * scoped it out of its own change, and every one of those findings was written
+ * to a report outside this repository. Zero GitHub reviews and zero inline
+ * comments exist on those PRs, so no reader of this repo — human or bot — ever
+ * met a warning attached to the line, and it survived four passes. A tombstone
+ * makes the finding cost one line, live at the site, name an owner, and fail
+ * CI at exactly the moment someone edits the text it is about.
+ *
+ * Markers are stripped out of the target text before any test runs. A
  * marker is metadata about prose, not prose; a claim that only its own marker
  * satisfies would be exactly the vacuous pass this gate exists to prevent, and
  * a ban on a phrase must not be tripped by the marker that spells the phrase
@@ -46,8 +64,9 @@
  * Exit codes:
  *   0  every claim still holds
  *   1  one or more claims are stale (or target file missing)
- *   2  INCONCLUSIVE — no claim markers found at all (a vacuous pass; add markers
- *      to the profiles that restate code facts, starting with api-contract.md)
+ *   2  INCONCLUSIVE — nothing anchors a fact: no presence claims and no
+ *      known-defect tombstones (a vacuous pass; add markers to the profiles
+ *      that restate code facts, starting with api-contract.md)
  */
 
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
@@ -60,11 +79,20 @@ import { fileURLToPath } from "node:url";
 const root = process.env.PROFILE_CLAIMS_ROOT || dirname(dirname(fileURLToPath(import.meta.url)));
 const checksDir = process.env.PROFILE_CHECKS_DIR || join(root, ".agents", "checks");
 
-// <!-- claim: <needle> :: <path> -->            needle MUST be present in path
-// <!-- claim-absent: <needle> :: <path> -->     needle MUST NOT be present
-// (needle may contain any char except the literal " :: " separator and the
-// closing "-->"; split on the LAST " :: ").
-const CLAIM_RE = /<!--\s*claim(-absent)?:\s*([\s\S]*?)\s*-->/g;
+// <!-- claim: <needle> :: <path> -->                     needle MUST be present
+// <!-- claim-absent: <needle> :: <path> -->              needle MUST NOT be present
+// <!-- known-defect: <#issue> :: <needle> :: <path> -->  needle MUST be present,
+//                                                        and is WRONG on purpose
+// (a needle may contain any char except the closing "-->"; the path is taken
+// after the LAST " :: ", and a tombstone's issue reference before the FIRST.)
+const CLAIM_RE = /<!--\s*(claim-absent|claim|known-defect):\s*([\s\S]*?)\s*-->/g;
+
+// A tombstone must name an owner. Requiring the reference is the forcing
+// function no report-based ledger had: you cannot write the tombstone without
+// filing the issue, which is the thirty seconds four earlier diagnoses never
+// spent. The gate checks the SHAPE only — whether the issue is still open needs
+// the network, and a gate that cannot reach GitHub must not decide anything.
+const ISSUE_RE = /^(#\d+|https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+)$/;
 
 /**
  * Strip claim markers from a target's text before testing it. A marker is
@@ -87,24 +115,51 @@ const profiles = readdirSync(checksDir)
 
 let positiveCount = 0;
 let absentCount = 0;
+let defectCount = 0;
 const stale = [];
+const tombstones = [];
 
 for (const name of profiles) {
   const profilePath = join(checksDir, name);
   const text = readFileSync(profilePath, "utf8");
   for (const match of text.matchAll(CLAIM_RE)) {
-    const mustBeAbsent = match[1] === "-absent";
+    const kind = match[1];
+    const mustBeAbsent = kind === "claim-absent";
+    const isTombstone = kind === "known-defect";
     const body = match[2];
     const sep = body.lastIndexOf(" :: ");
     if (sep === -1) {
       stale.push(
-        `${name}: malformed claim marker (missing " :: " separator): ${JSON.stringify(body)}`,
+        `${name}: malformed ${isTombstone ? "known-defect" : "claim"} marker ` +
+          `(missing " :: " separator): ${JSON.stringify(body)}`,
       );
       continue;
     }
-    const needle = body.slice(0, sep).trim();
+    let head = body.slice(0, sep);
     const target = body.slice(sep + 4).trim();
+    let issue = null;
+    if (isTombstone) {
+      const refSep = head.indexOf(" :: ");
+      if (refSep === -1) {
+        stale.push(
+          `${name}: malformed known-defect marker ` +
+            `(expected "<#issue> :: <exact substring> :: <path>"): ${JSON.stringify(body)}`,
+        );
+        continue;
+      }
+      issue = head.slice(0, refSep).trim();
+      head = head.slice(refSep + 4);
+      if (!ISSUE_RE.test(issue)) {
+        stale.push(
+          `${name}: known-defect marker needs an issue reference (#N or a GitHub ` +
+            `issue URL), got: ${JSON.stringify(issue)}`,
+        );
+        continue;
+      }
+    }
+    const needle = head.trim();
     if (mustBeAbsent) absentCount += 1;
+    else if (isTombstone) defectCount += 1;
     else positiveCount += 1;
 
     if (!needle) {
@@ -136,7 +191,17 @@ for (const name of profiles) {
     }
     const targetText = withoutMarkers(readFileSync(targetPath, "utf8"));
     const present = targetText.includes(needle);
-    if (mustBeAbsent && present) {
+    if (isTombstone) {
+      if (present) tombstones.push(`  - ${issue} at ${target} (tombstone in ${name})`);
+      else {
+        stale.push(
+          `${name}: RESOLVED known-defect ${issue} — the defect text is gone from ${target}:\n` +
+            `      ${needle}\n` +
+            `      If it is fixed, delete this tombstone and close ${issue}. ` +
+            `If it only moved, repoint the marker.`,
+        );
+      }
+    } else if (mustBeAbsent && present) {
       stale.push(
         `${name}: REVIVED claim — banned text is present again in ${target}:\n      ${needle}`,
       );
@@ -153,17 +218,20 @@ if (stale.length > 0) {
   for (const message of stale) console.error(`  - ${message}`);
   console.error(
     `\nFix the profile prose to match the code (or correct the marker). ` +
-      `Checked ${positiveCount} presence claim(s) and ${absentCount} absence claim(s).`,
+      `Checked ${positiveCount} presence claim(s), ${absentCount} absence claim(s) ` +
+      `and ${defectCount} known-defect tombstone(s).`,
   );
   process.exit(1);
 }
 
-// The floor is on PRESENCE claims specifically. An absence claim passes against
-// almost any file, so a profile set carrying only bans would satisfy a combined
-// floor while anchoring no restated fact at all — nonzero work unit, zero work.
-if (positiveCount === 0) {
+// The floor is on the markers that assert a substring is PRESENT somewhere: a
+// presence claim or a tombstone. An absence claim passes against almost any
+// file, so a profile set carrying only bans would satisfy a combined floor while
+// anchoring no text at all — nonzero work unit, zero work.
+if (positiveCount + defectCount === 0) {
   console.error(
-    `profile-claims check INCONCLUSIVE — no presence claims in .agents/checks/*.md ` +
+    `profile-claims check INCONCLUSIVE — no presence claims or known-defect ` +
+      `tombstones in .agents/checks/*.md ` +
       `(${absentCount} absence claim(s) found, which anchor no restated fact).\n` +
       'Annotate each restated code fact with `<!-- claim: <exact substring> :: <path> -->`\n' +
       "so it fails when the code drifts, and each retired-because-wrong phrase with\n" +
@@ -174,5 +242,14 @@ if (positiveCount === 0) {
 }
 
 console.log(
-  `profile-claims check PASSED (${positiveCount} presence + ${absentCount} absence claims still hold)`,
+  `profile-claims check PASSED (${positiveCount} presence + ${absentCount} absence claims ` +
+    `still hold, ${defectCount} known-defect tombstone(s) standing)`,
 );
+// Print the roster on every green run. A tombstone is only worth writing if
+// something surfaces it, and CI output is the one place every contributor
+// already looks. The gate cannot tell whether the issue is still open — that
+// needs the network — so the roster is a prompt to check, not an assertion.
+if (tombstones.length > 0) {
+  console.log("known-defect tombstones still standing (each names an open issue):");
+  for (const line of tombstones) console.log(line);
+}

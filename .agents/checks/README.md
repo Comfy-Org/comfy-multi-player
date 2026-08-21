@@ -75,7 +75,10 @@ These profiles are prose, so any code fact they restate (an exported symbol name
 ```
 <!-- claim: <exact substring> :: <repo-relative path> -->
 <!-- claim-absent: <exact substring> :: <repo-relative path> -->
+<!-- known-defect: <#issue> :: <exact substring> :: <repo-relative path> -->
 ```
+
+The third form is a tombstone for a defect you have diagnosed and are deliberately not fixing; it has its own section below.
 
 `npm run check:profile-claims` ([`../../scripts/check-profile-claims.mjs`](../../scripts/check-profile-claims.mjs)) asserts every `claim` substring is still present verbatim in its cited file, and every `claim-absent` substring is still *missing* from it. If an export is renamed or a file moves, the claim goes stale and the gate fails, forcing the prose to be corrected. The gate exits `2` (INCONCLUSIVE) if a profile set has no markers at all, so a profile that restates code facts without anchoring them is treated as an unverified pass, not a clean one. Keep the substring narrow enough to actually break when the fact changes.
 
@@ -86,6 +89,32 @@ These profiles are prose, so any code fact they restate (an exported symbol name
 **Prefer needles that no reflow can split.** The gate reads raw file text. In a YAML folded scalar (`>-`), which is how [`../../.coderabbit.yaml`](../../.coderabbit.yaml) carries its `path_instructions`, a purely cosmetic rewrap inserts a newline at a space — which turns a positive claim red for no reason and, worse, makes a `claim-absent` silently stop firing. A needle containing no spaces cannot be broken that way, so use one there.
 
 Targets are ordinary repo-relative paths, so they are not limited to `src/`. Where the same advice exists in a machine-consumed copy — `.coderabbit.yaml`'s `path_instructions`, the copy that actually runs on every PR — anchor the profile's wording to the copy in both directions (`claim` on the corrected phrasing, `claim-absent` on the retired one). Fixing one site and not the other is how the `test-quality.md` oracle survived. That file is now generated (next section), which makes the transport exact; the markers remain the check on the *content*, because a source block that was re-typed wrongly regenerates perfectly cleanly.
+
+## Tombstones for a defect you are not fixing
+
+A reviewer who finds a real defect outside their change's scope is right to leave it. What is not right is leaving **no trace in the repository**. The rejection-oracle line in `test-quality.md` was correctly diagnosed by four separate merge reviews (#34, #58, #60, #62) and correctly scoped out by all four; every finding went into a report in a workspace outside this repo, and `gh api` confirms **zero** GitHub reviews and **zero** inline comments on those PRs. So nobody editing that file ever met a warning, and a defect that had been found four times survived four times. It was not undiscovered. It was never deposited.
+
+The third marker form is the deposit:
+
+```
+<!-- known-defect: <#issue> :: <exact substring> :: <repo-relative path> -->
+```
+
+It asserts the defective text is **still there** and fails when it is gone, telling whoever removed it to delete the tombstone and close the issue. `npm run check:profile-claims` prints the standing roster on every green run.
+
+Four properties, and each one is why a cheaper option was rejected:
+
+- **It fires at the moment someone touches the defect.** Change the text a tombstone names and CI reddens with the issue number attached. A *code comment at the site* is the obvious alternative and is worse: nothing keeps it true, nothing removes it when the defect is fixed, and a stale comment describing a closed defect is itself the assertive-documentation failure [`vacuity.md`](vacuity.md) P5 is about. A comment is visible only to someone already reading that exact region; the gate reaches anyone who changes it.
+- **It costs one line, so it actually gets written.** *Filing an issue* is strictly better as a record — it has an owner, a thread and a close event — and it is exactly what the four gauntlet passes did not do. This form does not replace the issue, it **requires** one: the marker is malformed without an issue reference, so you cannot deposit the tombstone without filing. That is the forcing function a report-based ledger never had.
+- **It is a merge-blocking obligation, not a ledger entry.** *An entry in a checked file* — a `KNOWN-DEFECTS.md` — is visible only to someone who opens it, which is nobody. Binding the entry to a substring at the site is what turns a list into a gate.
+- **It reuses the mechanism that already exists.** Same file, same parser, same CI step, same conventions as `claim` and `claim-absent`. A parallel gate with its own format would be a second thing to learn and a second thing to rot.
+
+What it deliberately does **not** do:
+
+- **It cannot tell whether the issue is still open.** That needs the network, and a gate that cannot reach GitHub must report INCONCLUSIVE rather than decide — so this one checks the reference's *shape* only. The roster is a prompt to look, not an assertion that the issue is live.
+- **It does not live at the site.** Markers are only read from `.agents/checks/*.md`, so a tombstone is hosted by the profile whose concern the defect belongs to and points at the site. Widening the scan to the whole tree would make every file a marker surface for a much smaller gain.
+- **It is a substring test.** Reword the defect without fixing it and the tombstone goes red; that is a false alarm whose fix is one line (repoint it), and it is the same trade every marker here makes. Keep tombstones few, load-bearing, and pointed at text that only the actual fix would change.
+- **A defect of pure omission cannot be tombstoned.** There is no substring to point at. Use `claim-absent` when the *wrong* thing is present, and an issue alone when nothing is.
 
 ## The machine-consumed copy (`.coderabbit.yaml`)
 

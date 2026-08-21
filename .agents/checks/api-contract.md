@@ -38,4 +38,26 @@ CI so the prose above cannot silently describe a contract that no longer exists.
 <!-- claim: export * from "./types.js" :: src/index.ts -->
 <!-- claim: export * from "./stamps.js" :: src/index.ts -->
 
+## Known defects, left standing on purpose
+
+Two findings about this profile and the contract it describes are **diagnosed, filed and not fixed
+here**. They are recorded as `known-defect` tombstones rather than as a line in a report, because a
+report is not something the repository can see: the `test-quality.md` rejection oracle was correctly
+diagnosed by four separate merge reviews, each of which correctly scoped it out, and every one of
+those findings was written outside this repo. Zero reviews and zero inline comments exist on those
+PRs. The defect survived four passes for want of one line. See [`README.md`](README.md#tombstones-for-a-defect-you-are-not-fixing).
+
+- **Rule 4 lists four `ApplyResult` fields and the interface has five** — `applied_count` is missing,
+  and its own doc-comment calls it the vocabulary §4 ack field, so a reviewer applying this profile
+  would not flag its removal as breaking. Filed as [#73](https://github.com/Comfy-Org/comfy-multi-player/issues/73),
+  together with the unanchored rules 2/3/5 that are the reason nothing caught it. Not fixed here
+  because the fix is to anchor rules 2-5, which is that issue's whole subject.
+- **`ApplyResult.version` is an op count, not a version**, and the shape cannot express a per-op
+  outcome — [#16](https://github.com/Comfy-Org/comfy-multi-player/issues/16). The tombstone sits on
+  the field's doc-comment, so the change that reshapes the interface is the change that has to close
+  the issue.
+
+<!-- known-defect: #73 :: (`applied`, `skipped`, `failed`, `version`) :: .agents/checks/api-contract.md -->
+<!-- known-defect: #16 :: Doc revision after apply: total ops ever consumed by this doc :: src/types.ts -->
+
 > Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P10 to what that guard's test asserts on, P2 to any tool you ran, and P7 to any run you quote.
