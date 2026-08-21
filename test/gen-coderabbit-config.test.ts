@@ -252,6 +252,87 @@ describe("gen-coderabbit-config", () => {
     expect(run(root).status).toBe(0);
   });
 
+  it("stays green on CodeRabbit's OTHER real path_instructions keys", () => {
+    // `path_instructions` is a legitimate key elsewhere in CodeRabbit's schema,
+    // under `code_generation.docstrings` and `code_generation.unit_tests`.
+    // Counting those reddened a config that works and delivers all five
+    // entries. Only indent 0 or 2 can be a child of top-level `reviews:`.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeConfig(
+      "code_generation:\n  docstrings:\n    path_instructions:\n" +
+        '      - path: "**"\n        instructions: doc it\n' +
+        `reviews:\n${BEGIN}\n${END}\n`,
+    );
+    expect(run(root, "--write").status).toBe(0);
+    expect(run(root).status).toBe(0);
+  });
+
+  it("recognises a block-scalar header with a trailing comment or a quoted key", () => {
+    // Both are legal YAML. Missing the header meant the BODY was scanned as
+    // keys, so a note mentioning the key reddened a working config.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    // Every body line below BEGINS with the key, so if the header is not
+    // recognised the body is scanned in key position and the gate goes red.
+    // That is what makes these fixtures reach the clause they are testing.
+    for (const preamble of [
+      "note: >- # why this exists\n  path_instructions: is prose here\n",
+      "note: >-\n  path_instructions: folded, no comment\n",
+      "note: |+\n  path_instructions: with a chomping indicator\n",
+      "note: >2\n   path_instructions: with an indent indicator\n",
+      '"note: read me": |\n  path_instructions: is a key\n',
+      "note: |\n  first\n\n  path_instructions: after a blank line\n",
+    ]) {
+      writeConfig(`${preamble}reviews:\n${BEGIN}\n${END}\n`);
+      expect(run(root, "--write").status).toBe(0);
+      expect(run(root).status).toBe(0);
+    }
+  });
+
+  it("ends a nested block scalar at its key's column, not at column 0", () => {
+    // The hole direction: if the body is taken to start at column 0, every
+    // following indented line is swallowed — including real keys after the
+    // scalar ends. Here the duplicate at indent 2 must still be counted.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeConfig(
+      "outer:\n  inner: |\n    body text\n" +
+        '  path_instructions: [{path: "**", instructions: x}]\n' +
+        `reviews:\n${BEGIN}\n${END}\n`,
+    );
+    run(root, "--write");
+    const swallowed = run(root);
+    expect(swallowed.status).toBe(1);
+    expect(swallowed.stderr).toContain("path_instructions keys, any spelling: 2 (expected 1)");
+  });
+
+  it("measures a block-scalar body from the key, not from the `- ` of its item", () => {
+    // Taking the column from the dash swallowed the item's SIBLING keys, which
+    // is the hole direction: real keys silently dropped from the scan.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    run(root, "--write");
+    writeConfig(
+      readFileSync(join(root, ".coderabbit.yaml"), "utf8") +
+        "  extras:\n    - note: |\n        body text\n      path_instructions: sibling\n",
+    );
+    // The sibling key is at indent 6 — deeper than `reviews:` can own, so it is
+    // not a duplicate; the point is that it is SEEN rather than swallowed.
+    expect(run(root).status).toBe(0);
+  });
+
+  it("counts a flow-style duplicate that follows a comma, not only a brace", () => {
+    // Isolates the `,` half of the flow arm: `{profile: chill, path_…}` is a
+    // duplicate reached through a comma, and dropping `,` from the character
+    // class left it uncounted.
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    run(root, "--write");
+    writeConfig(
+      readFileSync(join(root, ".coderabbit.yaml"), "utf8") +
+        'other: {profile: chill, path_instructions: [{path: "**", instructions: x}]}\n',
+    );
+    const comma = run(root);
+    expect(comma.status).toBe(1);
+    expect(comma.stderr).toContain("path_instructions keys, any spelling: 2 (expected 1)");
+  });
+
   it("stays green on a document-START marker, which begins no second document", () => {
     // `---` on the first content line is legal YAML and delivers every entry;
     // refusing it was this gate firing on a config that works.

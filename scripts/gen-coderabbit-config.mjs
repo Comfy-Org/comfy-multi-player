@@ -269,7 +269,15 @@ function keyLines(all) {
     }
     if (line.trim().startsWith("#")) continue;
     out.push(line);
-    const opener = /^( *)(?:[^#\s][^:]*):\s*[|>][-+0-9]*\s*$/.exec(line);
+    // `#.*` because a trailing comment on a block-scalar header is legal YAML
+    // and rejecting it left the body to be scanned as keys — a config that works
+    // going red. The key may itself be quoted and contain a colon.
+    // Group 1 is everything before the key, so its length IS the key's column.
+    // Measured from the key rather than from the `- ` of a sequence item, so a
+    // block scalar under a list item does not swallow that item's sibling keys.
+    const opener = /^( *(?:-\s+)?)(?:"[^"]*"|'[^']*'|[^#\s][^:]*):\s*[|>][-+0-9]*\s*(?:#.*)?$/.exec(
+      line,
+    );
     if (opener) bodyOf = opener[1].length;
   }
   return out;
@@ -288,10 +296,19 @@ const reviewsKeys = outside.filter((l) => REVIEWS_KEY.test(l)).length;
 // start (a flow-style duplicate sits mid-line) and not free-floating either: an
 // earlier draft matched the bare word anywhere, which reddened
 // `tone_instructions: "Never add a second path_instructions: key."` — a config
-// that works. Every spelling YAML accepts for the key is covered in each
-// position, including the quoted forms of the explicit key and a trailing
-// comment, because a spelling the comment claims and the regex misses is how
-// the flow-style hole got here in the first place.
+// that works.
+//
+// WHAT THIS DOES NOT COVER, stated exactly rather than generously, because an
+// overclaiming comment beside a regex is how the flow-style hole got here: a
+// key carrying a YAML anchor (`&a path_instructions:`), a tag
+// (`!!str path_instructions:`), an alias in key position (`*pi :`), or an
+// explicit key whose name is itself a folded scalar or a line-continued quoted
+// string, all pass this scan. Each really does override the region. They are
+// left because they are adversarial rather than accidental — no hand-written
+// CodeRabbit config anchors or tags a key — and closing them needs a YAML
+// parser, which is the disclosed limit above. The four spellings a person might
+// actually type ARE covered, in all three positions.
+//
 // Spelled out rather than back-referenced: the alternation is interpolated in
 // three positions, and a `\1` would renumber in each of them.
 const NAME = String.raw`(?:"path_instructions"|'path_instructions'|path_instructions)`;
@@ -302,10 +319,20 @@ const DUP_KEY = new RegExp(
     String.raw`^\s*\?\s*${NAME}\s*(?:#.*)?$`, // the explicit-key form
   ].join("|"),
 );
+// Counted only at the depth where a CHILD OF TOP-LEVEL `reviews:` can live —
+// indent 0 (a flow mapping written on the `reviews:` line itself) or indent 2.
+// `path_instructions` is a real key elsewhere in CodeRabbit's schema, at
+// `code_generation.docstrings.path_instructions` and
+// `code_generation.unit_tests.path_instructions`; counting those reddened a
+// config that works and delivers all five entries. A duplicate deeper than
+// indent 2 is a different key belonging to a different parent, so it cannot
+// override this region.
+//
 // Counted outside the region and reported as "including the generated one", so
 // the number reads the way a person checking the file would count it. On a
 // freshly-stubbed file the region is empty and this is still correct.
-const instructionKeys = outside.filter((l) => DUP_KEY.test(l)).length + 1;
+const atReviewsDepth = (l) => l.match(/^ */)[0].length <= 2;
+const instructionKeys = outside.filter((l) => atReviewsDepth(l) && DUP_KEY.test(l)).length + 1;
 // The nearest preceding TOP-LEVEL key, so hand-written keys nested under
 // `reviews:` (a `profile:` line, say) may sit between it and the region.
 const parent = lines
