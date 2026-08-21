@@ -205,6 +205,21 @@ describe("layer 2: a replica forked from the snapshot recovers exactly the §1 r
     expect(replica.getMap(golden.roots["stamps"]!).size).toBe(1);
   });
 
+  it("carries no structural or comfy-cli bookkeeping key inside the meta root (schema §6, §4)", () => {
+    // The byte-side counterpart of R-D. `test/doc-mint-mutation-survivors.test.ts`
+    // asserts mint's `NON_META_KEYS` filter against the document; the harm it
+    // prevents is on the wire, where a leaked `_applied_ops` reaches every
+    // replica as a SECOND, stale idempotency record next to `__applied` (§4),
+    // and a leaked `nodes` ships a whole duplicate document inside the
+    // document. Asserted here on the decoded snapshot for the same reason the
+    // roots are: this is what a second implementation actually receives.
+    const meta = replicaOf(populatedDoc()).getMap(golden.roots["meta"]!);
+    expect([...meta.keys()].sort()).toEqual(["__definitions_extra", "catalog_version", "extra", "schema_version"]);
+    for (const leaked of ["nodes", "links", "definitions", "_applied_ops", "_widget_stamps"]) {
+      expect(meta.has(leaked), `meta must not carry '${leaked}' on the wire`).toBe(false);
+    }
+  });
+
   it("finds the opaque-widgets values under the reserved node key", () => {
     const replica = replicaOf(populatedDoc());
     const node2 = replica.getMap(golden.roots["nodes"]!).get("2") as Y.Map<unknown>;
