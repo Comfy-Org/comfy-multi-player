@@ -334,11 +334,34 @@ here:
    replica only. Measured. Amendment A6.
 
 **The rule these come from, which is more useful than the list.** A rejection is
-arrival-order-dependent exactly when the check that raises it READS THE DOCUMENT
-and sits below an early return that consumes the `op_id` — a delete-wins return
-or the interior null return. Under §4
-abort-remainder any such rejection also decides whether the REST OF THE BATCH
-applies, which is how a bookkeeping difference becomes a projection difference.
+arrival-order-dependent when **whether it is raised at all depends on document
+state**. That happens two ways, and the first version of this paragraph got both
+of them wrong by saying "exactly when the CHECK reads the document":
+
+- **The throw sits below a document-dependent early return that consumes the
+  `op_id`** — a delete-wins return or the interior null return. A replica in a
+  different state takes the return and never reaches the throw. **What the check
+  itself reads is irrelevant — only WHERE IT SITS.** The sharpest example is
+  `connect.link_id`: #59 added a storability check that reads NOTHING BUT THE
+  OP, and it still resolves differently by arrival order, because it sits below
+  the destination delete-wins return. An op-only check in the wrong position is
+  exactly as order-dependent as a document-reading one — which is why
+  `requireOpOnlyValid` is about POSITION, not about what is read.
+- **The check's own verdict is computed from document state a concurrent op can
+  change.** `shared_definition_unforked` (item 8) needs no deletion and no early
+  return: `countDefinitionInstances` returns 1 or 2 depending on whether a rival
+  `add_node` has been applied yet.
+
+**The direction that IS a guarantee**, and the one Amendment A6 buys: a
+precondition that depends on the OP ALONE and is evaluated before any document
+read cannot be arrival-order-dependent by either mechanism. That is what
+`requireOpOnlyValid` is for, and it is why hoisting is the fix rather than
+wrapping. The converse does not hold — do not read "the check reads only the op"
+off a rejection code and conclude anything about where the check runs.
+
+Under §4 abort-remainder any order-dependent rejection also decides whether the
+REST OF THE BATCH applies, which is how a bookkeeping difference becomes a
+projection difference.
 Every precondition that depends on the OP ALONE is hoisted above those returns
 and does NOT carve out.
 
@@ -348,8 +371,8 @@ probing a handler nobody had probed yet, and treating it as complete is what mad
 each of those omissions look like a contradiction rather than a gap. If you need
 to know whether a specific rejection converges, apply the rule and measure both
 arrival orders; do not conclude "it is not in the list, therefore it converges".
-Everything that does NOT satisfy the rule — including concrete-input contention,
-which used to be an unstated carve-out of its own — converges.
+Everything that satisfies neither mechanism — including concrete-input
+contention, which used to be an unstated carve-out of its own — converges.
 
 ---
 
