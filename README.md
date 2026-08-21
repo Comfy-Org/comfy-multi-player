@@ -357,10 +357,10 @@ wrong:
 | **Delete-wins no-op** — the target node is gone | `applied` | no | yes |
 | **Malformed on its face, whatever the document state** — `connect` with a `from_slot` or `to_slot` outside the non-negative integers, a non-numeric `to_slot` without `grow`, a non-string `grow.name`/`grow.type`/`grow.inputcount.widget`, a non-cloneable widget value, or a `base_version` that throws on conversion | `failed` | no (byte-identical for this op; a valid prefix earlier in the batch is still applied — §4) | **no** |
 | Duplicate — already applied to this document | `skipped` | no | already was |
-| Rejected | `failed` | no (byte-identical) — **with three known exceptions, below** | **no** |
+| Rejected | `failed` | no (byte-identical) — **with four known exceptions, below** | **no** |
 
-**The three exceptions, stated because the row above would otherwise overclaim
-(`docs/INVARIANTS.md` KA-4 and contract D4 record the same three).** Issue #10's
+**The four exceptions, stated because the row above would otherwise overclaim
+(`docs/INVARIANTS.md` KA-4 and contract D4 record the same four).** Issue #10's
 class is not fully closed. A rejection still mutates before it throws when the
 op carries a value `structuredClone` accepts but Yjs cannot store (`Map`, `Set`,
 `RegExp`, `ArrayBuffer`, `Error`). A REFERENCE CYCLE is not rejected at all
@@ -369,18 +369,19 @@ document cannot be encoded or projected again. And `delete_node` with a
 non-array `removed_links` (`5`, `{}`, `true`) DELETES THE NODE and only then
 throws, leaving the document changed by a "rejected" op; a string is accepted
 outright and iterated character by character. Tracked by #59, #61 and #68;
-until those land, "byte-identical on rejection" holds for every rejection code
-the applier raises deliberately, and not for these three.
+And `connect.link_id`/`link_type` are copied in with no validation at all, so an
+`undefined` `link_id` mutates and then throws a raw `TypeError` — the same shape
+as `removed_links` — while a `Symbol` `link_id` leaves the document permanently
+UNPROJECTABLE (`project()` throws), the same end state as a cycle. Tracked by
+#59, #61 and #68; until those land, "byte-identical on rejection" holds for
+every rejection code the applier raises deliberately, and not for these four.
 
 The four `connect` paths this row used to except — the two `output_slot_missing`
 cases and the two `connect`+`inputcount` grow rejections, swept by
 `test/ka4-rejection-byte-identity.test.ts` — **now hold**, and are additionally
 order-independent (schema Amendment A6).
 
-Separately, `connect.link_id` and `connect.link_type` are copied into the
-document unvalidated, so an `undefined` `link_id` throws mid-write and a `null`
-or object one is accepted. That is long-standing behaviour, not a rejection
-path, and is tracked with the same issues.
+
 
 `applied` means "this document is done with that op_id", not "your value won".
 A client that renders optimistically must clear a pending op when its effect
@@ -469,7 +470,7 @@ Concretely, pinned by the test suite (`npm test`):
   under §4 abort-remainder the two would then disagree about the rest of the
   batch as well. Checks that must READ the deleted node — slot ranges, opaque
   widget storage, the catalogue lookup — necessarily still resolve differently;
-  schema §2.5 items 4 and 5 carve that out explicitly.
+  schema §2.5 items 4-7 carve that out explicitly — 4 and 5 for `connect`, 6 for `set_widget`, 7 for `add_node`.
 - **Rejection is loud.** An op that is unsatisfiable against a live target is
   rejected, never silently dropped.
 
@@ -506,10 +507,11 @@ is closed.
    node's deletion is rejected by a replica that still holds the node and
    accepted as a delete-wins no-op by one that does not. Checks that depend on
    the OP ALONE are hoisted above the delete-wins return and do not carve out.
-   Schema §2.5 items 4 and 5, Amendment A6.
+   Schema §2.5 items 4-7, Amendment A6 — the same shape recurs in
+   `set_widget` (item 6) and `add_node` (item 7).
 
 This list and the schema's are the same list seen from two sides: schema §2.5
-enumerates five; items 1-3 map one-to-one, schema items 4 and 5 are folded into
+enumerates seven; items 1-3 map one-to-one, schema items 4-7 are folded into
 item 6 here, item 4 above is the intra-batch `base_version` case (which the
 schema states in §3 instead), and item 5 is the §5.3 shared-definition rejection.
 

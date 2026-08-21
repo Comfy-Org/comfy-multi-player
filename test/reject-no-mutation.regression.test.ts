@@ -397,8 +397,10 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
     // returned `output_slot_missing` on `main` too (only `from_slot` is
     // invalid, nothing for the `to_slot` check to catch), and `[-1, 0]`
     // returned the raw-TypeError `apply_failed` — the headline case this PR
-    // exists to fix, and the only combination whose CLASS of outcome changed.
-    // Both are in the table below so the claim is checkable rather than
+    // exists to fix. TWO combinations changed class, `[-1, 0]` and `[0.5, 0]`,
+    // both marked below; an earlier version of this comment said "the only",
+    // fifteen lines above a row annotated `(CLASS CHANGED)` that contradicted
+    // it. All ten rows are in the table so the claim is checkable rather than
     // asserted.
     // README tells integrators to "Match on `code`, never on `message`", so the
     // code is contractual and this precedence should not drift again unnoticed.
@@ -470,8 +472,10 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
       // This hole was open until `stampKey` was hoisted into
       // `requireOpOnlyValid` for a convergence reason; closing it here was a
       // side effect. Pinned so the enumerations in `src/applier.ts`,
-      // `docs/INVARIANTS.md` KA-4 and `test/invalid-op-states.test.ts` — which
-      // now say TWO holes, not three — cannot quietly become wrong again.
+      // `docs/INVARIANTS.md` KA-4 and `test/invalid-op-states.test.ts` cannot
+      // quietly become wrong again. (They enumerate FOUR open holes; this
+      // sentence has already been wrong once by naming a stale count, so it
+      // deliberately names none.)
       const doc = mint(workflow, countingCatalog);
       const before = Buffer.from(Y.encodeStateAsUpdate(doc));
       const result = applyOps(doc, [{
@@ -504,7 +508,8 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
       // Enumerated as the third open hole in `src/applier.ts`,
       // `docs/INVARIANTS.md` KA-4, `README.md`, contract D4 and
       // `test/invalid-op-states.test.ts`. When it is fixed, this goes red —
-      // move it to an assertion of byte-identity and drop it from those five.
+      // move it to an assertion of byte-identity and drop it from the five
+      // carriers that enumerate the open holes.
       const doc = mint(workflow, catalog);
       const before = Buffer.from(Y.encodeStateAsUpdate(doc));
       const result = applyOps(doc, [{
@@ -520,7 +525,7 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
   );
 
   /**
-   * §2.5 items 4 and 5 promise "each is pinned by a test that will start
+   * §2.5 items 4-7 promise "each is pinned by a test that will start
    * failing the day it is closed". These are those tests. They assert the
    * carve-out STILL DIVERGES — so closing either one reddens here and forces
    * the schema list to be updated, which is what the header sentence claims.
@@ -557,6 +562,66 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
     const seed = mint(convergenceWorkflow, catalog);
     const snapshot = Y.encodeStateAsUpdate(seed);
     const projections = [[[bad, add], [del]], [[del], [bad, add]]].map((batches) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      for (const b of batches) applyOps(doc, b as unknown as Op[], catalog);
+      return JSON.stringify(project(doc, catalog));
+    });
+    expect(projections[0]).not.toEqual(projections[1]);
+  });
+
+  it("§2.5 item 6 (set_widget) still diverges — pinning the carve-out", () => {
+    // §2.5's header promises every carve-out has a test that reddens the day it
+    // closes. Items 6 and 7 were enumerated in this PR, so they need theirs.
+    // `rejectIfOpaqueWidgets` reads the node, so it sits below `!node return`.
+    const opaqueWorkflow: WorkflowJSON = {
+      nodes: [
+        { id: 300, type: "LoadImage", inputs: [], outputs: [], widgets_values: [] },
+        { id: 700, type: "MarkdownNode", inputs: [], outputs: [], widgets_values: ["opaque"] },
+      ],
+      links: [], groups: [], extra: {}, last_node_id: 700, last_link_id: 0,
+    };
+    const bad = {
+      op: "set_widget", op_id: opId("cv6a"), actor: "human:x", base_version: 5,
+      stamp: [5, "human:x"], node_id: 700, widget: "anything", value: 1,
+    };
+    const del = { op: "delete_node", op_id: opId("cv6d"), actor: "human:d", base_version: 4, stamp: [4, "human:d"], node_id: 700 };
+    const add = {
+      op: "add_node", op_id: opId("cv6n"), actor: "human:x", base_version: 5, stamp: [5, "human:x"],
+      node_id: 950, class_type: "LoadImage", pos: [0, 0],
+      node: { id: 950, type: "LoadImage", inputs: [], outputs: [], widgets_values: [], pos: [0, 0] },
+    };
+    const seed = mint(opaqueWorkflow, catalog);
+    const snapshot = Y.encodeStateAsUpdate(seed);
+    const projections = [[[bad, add], [del]], [[del], [bad, add]]].map((batches) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      for (const b of batches) applyOps(doc, b as unknown as Op[], catalog);
+      return JSON.stringify(project(doc, catalog));
+    });
+    expect(projections[0]).not.toEqual(projections[1]);
+  });
+
+  it("§2.5 item 7 (add_node) still diverges — pinning the carve-out", () => {
+    // `nodes.has(key)` structural idempotency sits above the catalogue checks.
+    const bad = {
+      op: "add_node", op_id: opId("cv7a"), actor: "human:x", base_version: 5, stamp: [5, "human:x"],
+      node_id: 960, class_type: "LoadImage", pos: [0, 0],
+      node: { id: 960, type: "LoadImage", inputs: [], outputs: [], widgets_values: ["a", "b", "c", "d", "e", "f"], pos: [0, 0] },
+    };
+    const rival = {
+      op: "add_node", op_id: opId("cv7r"), actor: "human:y", base_version: 4, stamp: [4, "human:y"],
+      node_id: 960, class_type: "LoadImage", pos: [1, 1],
+      node: { id: 960, type: "LoadImage", inputs: [], outputs: [], widgets_values: [], pos: [1, 1] },
+    };
+    const tail = {
+      op: "add_node", op_id: opId("cv7t"), actor: "human:x", base_version: 5, stamp: [5, "human:x"],
+      node_id: 961, class_type: "LoadImage", pos: [0, 0],
+      node: { id: 961, type: "LoadImage", inputs: [], outputs: [], widgets_values: [], pos: [0, 0] },
+    };
+    const seed = mint(convergenceWorkflow, catalog);
+    const snapshot = Y.encodeStateAsUpdate(seed);
+    const projections = [[[bad, tail], [rival]], [[rival], [bad, tail]]].map((batches) => {
       const doc = new Y.Doc();
       Y.applyUpdate(doc, snapshot);
       for (const b of batches) applyOps(doc, b as unknown as Op[], catalog);

@@ -33,7 +33,7 @@
  * grow payload shape, and opaque destinations.
  *
  * NOT "every precondition that can throw" — that claim was false when this
- * file first made it, and stating it accurately is the point. THREE holes are
+ * file first made it, and stating it accurately is the point. FOUR holes are
  * known and open:
  *  - a value `structuredClone` ACCEPTS but Yjs cannot store (`Map`, `Set`,
  *    `RegExp`, `ArrayBuffer`, `Error`) still mutates and then throws
@@ -44,10 +44,17 @@
  *    so far: `set_widget.value`, `grow.inputcount.value`, `add_node`'s
  *    `widgets_values`, `connect.link_type`, `connect.link_id`, and
  *    `connect.grow.widget` (the one `grow` field nothing type-checks);
- *  - and `applyDeleteNode` reads `op.removed_links` — an OP-ONLY value — only
+ *  - `applyDeleteNode` reads `op.removed_links` — an OP-ONLY value — only
  *    AFTER `mdel(nodes, key)`, so a non-array (`5`, `{}`, `true`) deletes the
  *    node and then throws, and a string is accepted and iterated character by
- *    character. Identical on `main`. Treat
+ *    character;
+ *  - and `connect.link_id`/`link_type` are copied in with NO validation at all,
+ *    so an `undefined` `link_id` mutates and then throws a raw `TypeError` —
+ *    structurally identical to `removed_links` — while a `Symbol` `link_id`
+ *    leaves the document permanently UNPROJECTABLE. An earlier revision of this
+ *    file excluded it as "not a rejection path"; that criterion does not
+ *    separate it from `removed_links`, which is counted, so it is counted too.
+ *    All four are identical on `main`. Treat
  *    this as a lower bound, not a closed set: every op field copied into the
  *    doc without a storability check is a candidate, and #68's gate must be
  *    written against the WRITE sites rather than against this list.
@@ -56,13 +63,13 @@
  * about arrival order. A precondition that must READ the document resolves
  * differently on a replica that has already applied a concurrent
  * `delete_node`; only the OP-ONLY preconditions are hoisted above the
- * delete-wins returns for that reason. Schema §2.5 items 4 and 5 carve out
+ * delete-wins returns for that reason. Schema §2.5 items 4-7 carve out
  * what remains.
  *
  * `assertCloneableValue` is a `structuredClone` predicate, not a Yjs-storable
  * one; closing the class needs the latter.
  *
- * A third hole USED to be listed here: `stampKey`'s `Number(stamp[0])` was
+ * A further hole USED to be listed here: `stampKey`'s `Number(stamp[0])` was
  * evaluated after the autogrow slot append, so a `Symbol` or throwing-`valueOf`
  * `base_version` mutated and then threw. Hoisting `stampKey` into
  * `requireOpOnlyValid` — done for a convergence reason, not this one — closed it
@@ -671,10 +678,9 @@ function requireOutputSlot(src: Y.Map<unknown>, op: ConnectOp): Y.Array<unknown>
  * `link_type` are copied into the document with no validation at all — an
  * `undefined` `link_id` still reaches `outPort.get("links")` and throws a raw
  * `TypeError` mid-write, and a `null` or object `link_id` is accepted outright.
- * That is pre-existing and identical on `main`, it is NOT part of issue #10's
- * ordering class, and adding a check would be a new rejection needing its own
- * G8 vocabulary analysis — so it is disclosed here rather than fixed in
- * passing. It belongs with #61/#68/#71.
+ * Pre-existing and identical on `main`. Adding a check would be a new rejection
+ * needing its own G8 vocabulary analysis, so it is disclosed and ENUMERATED
+ * (hole 4 above) rather than fixed in passing. It belongs with #61/#68/#71.
  *
  * Runs before the applier reads the document at all, so two replicas in
  * different states cannot disagree about whether the op is well formed. That
@@ -687,7 +693,7 @@ function requireOutputSlot(src: Y.Map<unknown>, op: ConnectOp): Y.Array<unknown>
  *
  * Checks that need `dst` or `src` (opaque-widget storage, the catalogue
  * lookup, slot ranges) are NOT op-only and deliberately stay below; schema
- * §2.5 items 4 and 5 carve out what that costs.
+ * §2.5 items 4-7 carve out what that costs.
  */
 function requireOpOnlyValid(op: ConnectOp): void {
   requireOutputSlotDomain(op);

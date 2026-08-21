@@ -258,7 +258,7 @@ This is the property the fixture suite pins (checks c1/c2 + the six LWW
 vectors, both orders), plus the permutation suites of
 `test/connect-lww.test.ts` and `test/stamp-target-identity.test.ts`.
 
-**Five carve-outs, stated rather than implied** (Amendment A1, extended by
+**Seven carve-outs, stated rather than implied** (Amendment A1, extended by
 Amendment A6; each is pinned by a test that will start failing the day it is
 closed):
 
@@ -295,6 +295,24 @@ closed):
    an `__applied` one. Amendment A6. As on the source axis, every OP-ONLY
    precondition is checked before the delete-wins return and does NOT carve
    out; only the checks that must read the destination do.
+
+6. The same shape in `applySetWidget`. `if (!node) return` (and the interior
+   path's `resolveInteriorNode(...) === null` return) are delete-wins no-ops
+   that consume the `op_id`, and `rejectIfOpaqueWidgets`, `validateWidgetName`
+   and the `widget_out_of_range` check all READ the node, so they sit below
+   them. A `set_widget` refused by any of those, racing its target's deletion,
+   is rejected by a replica that still holds the node and applied as a no-op by
+   one that does not; under §4 abort-remainder that reaches the projection.
+   Measured. Amendment A6.
+7. The same shape in `applyAddNode`, behind a different early return:
+   `if (nodes.has(key)) return` is structural idempotency and also consumes the
+   `op_id`, while the catalogue checks (`catalog_required`,
+   `uncatalogued_widget_write`, `unknown_widget`) and the `createNodeMap`
+   try/catch (`invalid_node_payload`) sit below it. An `add_node` with a bad
+   payload racing a rival same-`node_id` `add_node` therefore resolves
+   differently by arrival order. Distinct from carve-out 3, which is about
+   which PAYLOAD wins, not about one replica discarding the rest of the batch.
+   Measured. Amendment A6.
 
 Everything else — including concrete-input contention, which used to be an
 unstated carve-out of its own — converges.
@@ -713,7 +731,7 @@ code did not have. PR #6725 caught the id-type half the same way.
      is checked unconditionally ahead of the claim, and an EXISTING source's
      slot record is resolved ahead of it, so that a rejected op mutates
      nothing. The rationale above is unchanged and is exactly why the split is
-     drawn there; see §2.5 items 4 and 5 for what remains.
+     drawn there; see §2.5 items 4-7 for what remains.
    * A stamp outlives the node it names; that is what makes the composed
      case converge, since a later lower-stamped connect is still dropped.
    * Autogrow stays UNGATED by explicit carve-out (§2.5 item 2).
@@ -1141,10 +1159,10 @@ both builds. **This must be resolved before `reset_doc` is un-deferred.**
 
 ---
 
-## Amendment A6 — 2026-08-21 — `from_slot` validation splits; two convergence carve-outs
+## Amendment A6 — 2026-08-21 — `from_slot` validation splits; four convergence carve-outs
 
 **Status:** landed with the issue-#10 validate-before-mutate fix (PR #34).
-**Touches:** §2.5 (carve-out list, new items 4 and 5), Amendment A1 bullet 3,
+**Touches:** §2.5 (carve-out list, new items 4-7), Amendment A1 bullet 3,
 Amendment A4's "before that op mutates anything" claim,
 `docs/api-contract-proposal.md` D3, D4 and D5, `docs/INVARIANTS.md` KA-4,
 `docs/ROADMAP.md`'s #10 bullet, and `README.md` (outcome table, delete-wins
@@ -1243,21 +1261,18 @@ range or addressing a slot record, an opaque widget destination, and a
 the destination is gone, and the three alternatives above are rejected here for
 the same reasons.
 
-**Scope, stated precisely.** Items 4 and 5 are about `connect`, and about
-WHERE an existing check runs rather than which properties are checked.
+**Scope, stated precisely.** Items 4 and 5 are about `connect`. The identical
+shape in `applySetWidget` and `applyAddNode` is items **6 and 7** — enumerated
+rather than merely mentioned in passing, because §2.5's closing sentence claims
+completeness and "adjacent to carve-out 3" is not "listed in §2.5". All four are
+about WHERE an existing check runs rather than which properties are checked.
 
-`add_node` has the same shape behind a different early return: `if
-(nodes.has(key)) return` (structural idempotency, which also consumes the
-`op_id`) sits above the catalogue checks, so an `add_node` with a bad payload
-racing a rival same-`node_id` `add_node` is rejected in one arrival order
-(`catalog_required` / `uncatalogued_widget_write` from the catalogue check, or
-`invalid_node_payload` from the `createNodeMap` try/catch) and an applied no-op
-in the other. Measured, identical on `main`,
-and NOT closed here — hoisting that check would make a duplicate `add_node`
-with a bad payload reject where it now no-ops, a new rejection needing its own
-analysis. It is adjacent to carve-out 3, which already says same-`node_id`
-`add_node` is reachable only from hand-authored or replayed streams. Named so
-the `connect` scope of items 4 and 5 is not read as a whole-applier guarantee. `connect.link_id` and
+None of items 4-7 is CLOSED here. Hoisting those checks would newly reject
+payloads `main` accepts — a `set_widget` naming a deleted node, a duplicate
+`add_node` with a bad payload — on handlers this amendment does not otherwise
+touch, so each needs its own vocabulary analysis. They are enumerated and
+pinned instead, on the principle that a convergence list claiming completeness
+must either list a divergence or stop claiming completeness. `connect.link_id` and
 `connect.link_type` are copied into the document with no validation whatsoever:
 an `undefined` `link_id` throws a raw `TypeError` mid-write and a `null` or
 object one is accepted. That behaviour is identical on `main`, is not part of

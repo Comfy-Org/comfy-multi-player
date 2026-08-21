@@ -32,10 +32,13 @@
  * instructed. `KNOWN_KA4_VIOLATIONS` is kept, empty, so a future regression has
  * somewhere to be recorded rather than being bolted on again.
  *
- * The class is NOT fully closed: a value `structuredClone` accepts but Yjs
- * cannot store still mutates before throwing, and a reference cycle is accepted
- * and then makes the document permanently unencodable (#59, #61, #68). Neither
- * is reachable through the rejection codes swept here.
+ * The class is NOT fully closed. Four holes remain, enumerated identically in
+ * `src/applier.ts`, `docs/INVARIANTS.md` KA-4, `README.md` and contract D4:
+ * a value `structuredClone` accepts but Yjs cannot store; a reference cycle,
+ * accepted and then making the document permanently unencodable;
+ * `delete_node`'s `removed_links`, read from the op but only after the node is
+ * deleted; and `connect.link_id`/`link_type`, copied in unvalidated (#59, #61,
+ * #68). None is reachable through the rejection codes swept here.
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
