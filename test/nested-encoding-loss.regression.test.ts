@@ -27,12 +27,12 @@ import { describe, expect, it } from "vitest";
 import {
   applyOps,
   encodingLosses,
-  isStorableMapValue,
   mint,
   project,
   type Op,
   type WorkflowJSON,
 } from "../src/index.js";
+import { isStorableMapValue } from "../src/doc.js";
 import { loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
@@ -328,14 +328,17 @@ describe("KA-1: two replicas disagree about document contents, end to end", () =
   });
 });
 
-describe("KA-1: a reference cycle is accepted and the document can never be encoded again", () => {
-  it("applyOps succeeds and every later encodeStateAsUpdate throws", () => {
+describe("KA-1: a reference cycle is detected even though A8 rejects it before the write", () => {
+  it("reports the cycle while applyOps leaves the document encodable", () => {
     const doc = mint(workflow, catalog);
     const cyclic: Record<string, unknown> = {};
     cyclic["self"] = cyclic;
-    expect(applyOps(doc, [setWidget({ a: cyclic }, "cycle")], catalog).failed).toBeNull();
-    expect(() => Y.encodeStateAsUpdate(doc)).toThrow(RangeError);
-    // Detectable up front — the detector is what a host would gate on.
+    expect(applyOps(doc, [setWidget({ a: cyclic }, "cycle")], catalog).failed).toMatchObject({
+      code: "payload_too_deep",
+    });
+    expect(() => Y.encodeStateAsUpdate(doc)).not.toThrow();
+    // Still detectable independently of the whole-op depth gate, for hosts
+    // inspecting values before they construct an op.
     expect(encodingLosses({ a: cyclic })).not.toEqual([]);
   });
 });
