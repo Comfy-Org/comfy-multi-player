@@ -68,7 +68,7 @@ This is the machine-addressable review log for the package. IDs are stable; do n
 ### KA-12 — Catalog pinned at mint
 **Rule:** `meta.catalog_version` cites the catalog by SHA, not branch; reject widget writes to uncatalogued classes loudly.  
 **Why:** Replay semantics must not drift with a moving vocabulary.  
-**Enforced by:** `test/roundtrip.test.ts`, [`catalog-pinning`](../.agents/checks/catalog-pinning.md), and [ADR-003](decisions/ADR-003-catalog-sha-at-mint.md). Branch-pin lint is **UNGUARDED — see roadmap**.
+**Enforced by:** `test/roundtrip.test.ts`, [`catalog-pinning`](../.agents/checks/catalog-pinning.md), [ADR-003](decisions/ADR-003-catalog-sha-at-mint.md), and — for the citations rather than `meta.catalog_version` itself — `scripts/check-pins.mjs` (`npm run check:pins`) with `docs/upstream-pins.json` and `test/upstream-pins.test.ts`.
 
 ## FORECLOSE
 
@@ -112,5 +112,6 @@ This is the machine-addressable review log for the package. IDs are stable; do n
 **Enforced by:** [`op-identity`](../.agents/checks/op-identity.md); logical-clock evolution is **UNGUARDED — see roadmap**.
 
 ### FC-10 — Never cite the frozen vocabulary/catalog by moving branch instead of SHA
-**Why:** A moving reference causes silent contract drift.  
-**Enforced by:** [`catalog-pinning`](../.agents/checks/catalog-pinning.md) and [ADR-003](decisions/ADR-003-catalog-sha-at-mint.md). Automated lint is **UNGUARDED — see roadmap**.
+**Rule:** Every cross-repository citation names a commit SHA registered in `docs/upstream-pins.json` with the derivation that established it; the branch a pin replaced may be recorded as provenance but is never the citation. Moving a pin is a contract change — re-read the cited sections, reconcile the code, then move the registry and every citation together.  
+**Why:** A moving reference causes silent contract drift. Observed, not hypothetical: the branch this package cited for the op vocabulary was deleted upstream on 2026-08-21 while three citations still named it, and two contract drifts (`reset_doc` deferred status, the batch-policy error codes) reached this repository through it.  
+**Enforced by:** `scripts/check-pins.mjs` (`npm run check:pins`, offline in CI; `-- --verify-remote` also proves each pinned SHA still resolves and each cited section still exists at it), `test/upstream-pins.test.ts`, [`catalog-pinning`](../.agents/checks/catalog-pinning.md), and [ADR-003](decisions/ADR-003-catalog-sha-at-mint.md).
