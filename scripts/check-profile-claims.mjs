@@ -123,14 +123,20 @@ const profiles = readdirSync(checksDir)
 // indented, which is what distinguishes them.
 const readmePath = join(checksDir, "README.md");
 if (existsSync(readmePath)) {
-  const stray = [...readFileSync(readmePath, "utf8").matchAll(/^<!--\s*(claim|claim-absent|known-defect):[^\n]*/gm)];
+  // "Indented" means a LEADING SPACE, specifically. A tab is indentation to a
+  // reader and to Markdown, so a tab-indented marker would look like an example
+  // and be skipped — restoring the silent inertness this rule exists to stop.
+  const stray = readFileSync(readmePath, "utf8")
+    .split("\n")
+    .filter((line) => /<!--\s*(claim|claim-absent|known-defect):/.test(line) && !line.startsWith(" "));
   if (stray.length > 0) {
     console.error(
-      `profile-claims check FAILED — ${stray.length} claim marker(s) at column 0 in ` +
+      `profile-claims check FAILED — ${stray.length} unindented claim marker(s) in ` +
         "README.md, which this gate does not scan (it is the convention doc, and its\n" +
         "examples would otherwise run as claims). A marker there is silently inert.\n" +
-        "Move it to the profile that owns the fact, or indent it to mark it as an example:\n" +
-        stray.map((m) => `  ${m[0]}`).join("\n"),
+        "Move it to the profile that owns the fact, or indent it with SPACES to mark it\n" +
+        "as an example (a tab does not count — it reads as indentation and would be skipped):\n" +
+        stray.map((line) => `  ${line.trim()}`).join("\n"),
     );
     process.exit(1);
   }

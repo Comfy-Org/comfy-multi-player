@@ -353,13 +353,19 @@ describe("check-profile-claims staleness gate", () => {
     const run = runAgainst(root);
     expect(run.status).toBe(1);
     expect(run.stderr).toBe(
-      "profile-claims check FAILED — 1 claim marker(s) at column 0 in README.md, which this gate does not scan (it is the convention doc, and its\n" +
+      "profile-claims check FAILED — 1 unindented claim marker(s) in README.md, which this gate does not scan (it is the convention doc, and its\n" +
         "examples would otherwise run as claims). A marker there is silently inert.\n" +
-        "Move it to the profile that owns the fact, or indent it to mark it as an example:\n" +
+        "Move it to the profile that owns the fact, or indent it with SPACES to mark it\n" +
+        "as an example (a tab does not count — it reads as indentation and would be skipped):\n" +
         "  <!-- claim: anything :: src/index.ts -->\n",
     );
 
-    // Indented, it is documentation and the gate is green again.
+    // A TAB reads as indentation to a human and to Markdown, so it must not be
+    // accepted as an example marker — that would restore the silent inertness.
+    writeFileSync(join(checks, "README.md"), "\t<!-- claim: anything :: src/index.ts -->\n");
+    expect(runAgainst(root).status).toBe(1);
+
+    // Indented with a space, it is documentation and the gate is green again.
     writeFileSync(join(checks, "README.md"), "  <!-- claim: anything :: src/index.ts -->\n");
     expect(runAgainst(root).status).toBe(0);
   });

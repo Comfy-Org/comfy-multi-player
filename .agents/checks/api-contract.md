@@ -59,13 +59,16 @@ second line is forgotten.
   #73's subject is the missing anchors for rules 2-5 rather than this one instance. Rule 4 above now
   warns the reader in place, so nobody is misled while the tombstone stands.
 - **`ApplyResult.version` is an op count, not a version**, and the shape cannot express a per-op
-  outcome — [#16](https://github.com/Comfy-Org/comfy-multi-player/issues/16). The needle spans the
-  doc-comment **and the field declaration under it**, because a needle on the comment alone survives
-  the fix: renaming `version` away leaves the comment in place and the tombstone would go on
-  advertising a defect that was gone. That was measured by applying #16's fix, not reasoned about.
+  outcome — [#16](https://github.com/Comfy-Org/comfy-multi-player/issues/16). The needle is the
+  **field declaration**, and getting it there took two corrections. A needle on the doc-comment alone
+  survives the fix — renaming `version` away leaves the comment in place, so the tombstone would go
+  on advertising a defect that was gone. A needle spanning comment *and* declaration fixes that and
+  introduces the opposite fault: rewrapping the JSDoc, which fixes nothing, breaks it and tells the
+  author to close an open issue. Point a tombstone at the defect itself and at nothing else. Both
+  faults were measured by applying real edits, not reasoned about.
 
 <!-- known-defect: #73 :: (`applied`, `skipped`, `failed`, `version`) :: .agents/checks/api-contract.md -->
-<!-- known-defect: #16 :: total ops ever consumed by this doc (`__applied` size). */
-  version: number; :: src/types.ts -->
+<!-- known-defect: #16 ::   version: number;
+} :: src/types.ts -->
 
 > Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P10 to what that guard's test asserts on, P2 to any tool you ran, and P7 to any run you quote.

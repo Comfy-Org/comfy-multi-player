@@ -49,9 +49,13 @@ make non-fatal the build, purity, corpus-verify, or test CI steps.
 
 Each block's load-bearing phrase is anchored into the generated file, so a body replaced with
 plausible-sounding prose fails CI rather than regenerating cleanly. Needles are space-free because
-the YAML carries them in a folded scalar, where any space is a legal line break.
+the YAML carries them in a folded scalar, where any space is a legal line break — and each must be
+**unique to its own block**: the first draft anchored the build/CI block on `yjs-only`, which also
+appears in the `scripts/**` block, so that whole instruction could be replaced with "Looks fine to
+me." and both gates stayed green. Anchoring is only as good as the needle's uniqueness, and the way
+to know is to blank each body in turn and watch which claim goes stale.
 
 <!-- claim: denylist :: .coderabbit.yaml -->
-<!-- claim: yjs-only :: .coderabbit.yaml -->
+<!-- claim: corpus-verify :: .coderabbit.yaml -->
 
 > Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P10 to what that guard's test asserts on, P2 to any tool you ran, and P7 to any run you quote.
