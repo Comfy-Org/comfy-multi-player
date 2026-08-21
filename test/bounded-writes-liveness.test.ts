@@ -4,23 +4,35 @@
  *
  * `test/applier.test.ts` "bounded writes (schema §11)" compares
  * `_getMutationCount()` against a ceiling for every op in the fixture corpus.
- * MUT-GLOB-KA4-1 found that `mutations++` in `apush`/`mdel`/`adel` could be
- * flipped to `mutations--` with the suite green, and PR #58 pinned the
+ * PR #58 found that `mutations++` in `apush`/`mdel`/`adel` could be
+ * flipped to `mutations--` with the suite green, and pinned the
  * DIRECTION of each helper in `test/doc-mint-mutation-survivors.test.ts`.
  *
  * Direction is necessary and not sufficient. A stated bound is only a bound if
  * some reachable input can violate it and if the number being compared tracks
  * the work actually done. Two things were still unheld:
  *
- *  1. **That the gate can fire at all.** The corpus's worst measured op is 7
- *     against a ceiling of 12, so every green run is green with headroom, and
- *     nothing demonstrated that any input pushes the count past a fixed
- *     ceiling. The tests below show the count is UNBOUNDED in the size of the
- *     op's blast radius — `delete_node` costs `2·degree + 2` Y-writes — so any
- *     fixed ceiling K is exceeded at degree > K/2. That is a proof rather than
- *     a second copy of the constant, which is why no ceiling value appears
- *     here: the ceiling lives in `test/applier.test.ts` and is deliberately
- *     NOT touched by this file (see `reports/audit/mut-gaps-rcdf.md` §R-F).
+ *  1. **That the gate can fire at all.** Re-measured through the gate's own
+ *     harness at this commit, the corpus's worst non-`clear` op is 8 (a
+ *     `connect` in `session-edit-heavy`) against a ceiling of 12 — so every
+ *     green run is green with headroom, and nothing demonstrated that any
+ *     input pushes the count past a fixed ceiling. (7 is schema §11's spike
+ *     figure and the number `test/applier.test.ts` quotes; this counter is one
+ *     higher per op because it also charges the §4 `__applied` set.) The tests
+ *     below show the count is UNBOUNDED in the size of the op's blast radius —
+ *     `delete_node` costs `2·degree + 2` Y-writes — so any fixed ceiling K is
+ *     exceeded at degree > K/2. That is a proof rather than a second copy of
+ *     the constant, which is why no ceiling value appears here: the ceiling
+ *     lives in `test/applier.test.ts` and is deliberately NOT touched by this
+ *     file, which several open PRs also edit.
+ *
+ *     Scope, because §11's own table calls `delete_node` bounded ("writes
+ *     bounded by the node's degree") and names only `clear` as unbounded: a
+ *     high-degree delete tripping `LIMIT` would be the ceiling firing on a
+ *     legal op, not on a §11 violation. What is proven here is that the
+ *     quantity is caller-controlled and unbounded, which is what makes
+ *     `toBeLessThanOrEqual(LIMIT)` an assertion rather than a formality. Whether
+ *     `LIMIT` should be degree-relative belongs to whoever owns that file.
  *
  *  2. **That the count is the applier's real write count.** If a future
  *     refactor wrote through raw `m.set(…)` instead of `mset(…)`, the count
@@ -34,13 +46,19 @@
  *
  * These are deliberately expressed as EXACT counts and as growth, not as
  * `toBeGreaterThan(0)`: an op-count assertion that only checks non-zero passes
- * for any implementation that writes at least once, which is the "surface too
- * coarse to express the property" shape in `reports/vacuous-verification.md`.
+ * for any implementation that writes at least once — a surface too coarse to
+ * express the property.
+ *
+ * The perturb/red/restore transcript behind the claims above is kept OUTSIDE
+ * this repository, in the in-app-agent workspace, so it is not citable from
+ * here; each `it` names the invariant and the behaviour it pins so the claim
+ * can be re-derived from this tree alone.
  */
 import { describe, expect, it } from "vitest";
 import {
   applyOps,
   mint,
+  stampsMap,
   type ConnectOp,
   type DeleteNodeOp,
   type SetWidgetOp,
@@ -173,9 +191,15 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     expect(running).toEqual([3, 6, 9, 12]);
   });
 
-  it("charges a connect exactly five (link + input slot + output-array push + stamp + applied)", () => {
-    // Reaches `apush`, which `deleteHubCost` never does: the applier's only
-    // array APPEND is wiring a link id into the source output port's list.
+  it("charges an autogrow connect exactly five (link + input slot + output push + grown-slot push + applied), and NO stamp", () => {
+    // Reaches both `apush` sites, which `deleteHubCost` never does: wiring the
+    // link id into the source output port's list, and appending the grown input
+    // slot itself. Itemized precisely because this is an exact-accounting test:
+    // `to_slot: null` + `grow` takes the AUTOGROW branch, which schema §3 marks
+    // "identity only" and Amendment A1 leaves UNGATED, so it claims no
+    // `__stamps` register at all. The stamp emptiness is asserted rather than
+    // narrated — otherwise a change that gated autogrow (an A1 violation) while
+    // dropping the grown-slot append would hold the total at five and pass.
     const doc = mint(chainWorkflow(), catalog);
     const op = {
       op: "connect",
@@ -191,6 +215,7 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     _resetMutationCount();
     expect(applyOps(doc, [op], catalog).failed).toBeNull();
     expect(_getMutationCount()).toBe(5);
+    expect(stampsMap(doc).size, "the autogrow branch claims no stamp register (§3, A1)").toBe(0);
   });
 
   it("charges the array delete when a delete strands an output link", () => {
@@ -211,10 +236,17 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     // absorbing work that the idempotency gate is supposed to have removed.
     const doc = mint(hubWorkflow(1), catalog);
     const op = { op: "set_widget", ...env(), node_id: 1, widget: "text", value: "z" } as SetWidgetOp;
-    expect(applyOps(doc, [op], catalog).failed).toBeNull();
+    const first = applyOps(doc, [op], catalog);
+    expect(first.failed).toBeNull();
+    expect(first.applied).toEqual([op.op_id]);
     _resetMutationCount();
     const replay = applyOps(doc, [op], catalog);
     expect(replay.failed).toBeNull();
+    // `failed === null` plus a zero count is ALSO satisfied by an applier that
+    // does nothing for every op, so the reason must be asserted too: this op
+    // was recognized as a duplicate and skipped, not quietly ignored.
+    expect(replay.skipped).toEqual([op.op_id]);
+    expect(replay.applied).toEqual([]);
     expect(_getMutationCount()).toBe(0);
   });
 });

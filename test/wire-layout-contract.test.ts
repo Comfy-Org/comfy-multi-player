@@ -1,20 +1,25 @@
 /**
  * KA-3 / KA-11 / schema §1 — the doc's WIRE layout, held from three sides.
  *
- * MUT-GLOB-KA4-1 (PR #58) found that every schema §1 root-map name and the
- * reserved `__widgets_opaque` node key could be renamed to `""` with the whole
- * suite green, and closed that with `test/doc-mint-mutation-survivors.test.ts`
- * "schema §1 doc layout: root-map names …", which addresses the roots by
- * literal name through `doc.getMap("nodes")` instead of through `nodesMap()`.
- * That kills the mutants, and it is still only an *in-process TS* pin: it
- * asserts what this package's own `Y.Doc` object looks like in this process.
+ * PR #58 found that the schema §1 root-map names and the reserved
+ * `__widgets_opaque` node key could be renamed with most of the suite green,
+ * and closed that with `test/doc-mint-mutation-survivors.test.ts` "schema §1
+ * doc layout: root-map names …", which addresses the roots by literal name
+ * through `doc.getMap("nodes")` instead of through `nodesMap()`. The exact
+ * prior exposure is recorded in `docs/INVARIANTS.md` KA-3 — four of the seven
+ * names had no holder at all, `nodes` reddened 2 tests and `meta` 6 — so "the
+ * whole suite was green" is NOT the claim; the claim is that the gap was large
+ * but not total. That guard kills the mutants, and it is still only an
+ * *in-process TS* pin: it asserts what this package's own `Y.Doc` object looks
+ * like in this process.
  *
  * The names are the wire contract. A follower forks from ONE bootstrap
  * snapshot (KA-10) — `Y.applyUpdate(new Y.Doc(), Y.encodeStateAsUpdate(minted))`
- * — and resolves roots BY NAME out of those bytes. comfy-cli and the Node doc
- * host do the same. So the property that actually matters is not "this Y.Doc
- * has a root called nodes", it is "the encoded update spells these names, and
- * a reader that has only the bytes recovers exactly these roots".
+ * — and resolves roots BY NAME out of those bytes; so does the Node doc host,
+ * which runs this package by SHA pin (ADR-001, ADR-004). So the property that
+ * actually matters is not "this Y.Doc has a root called nodes", it is "the
+ * encoded update spells these names, and a reader that has only the bytes
+ * recovers exactly these roots".
  *
  * Three layers, deliberately, because they fail for DIFFERENT reasons and the
  * difference is the signal a reviewer needs:
@@ -23,6 +28,19 @@
  *     length-prefixed UTF-8 token. Fails on a rename in `src/`, and also on a
  *     `yjs` upgrade that changed how root names are spelled on the wire, which
  *     layer 2 would not notice (`yjs` is a caret range).
+ *
+ *     SCOPED, because a byte scan cannot tell a root name from a payload key
+ *     that happens to spell the same string, and this document has two: a
+ *     subgraph definition map carries its own `nodes` and `links` keys
+ *     (`src/mint.ts` `mintDefinition`), and a node output port carries a
+ *     `links` key. Measured: with the `nodes` and `links` ROOTS renamed in
+ *     `src/doc.ts`, a rich fixture still spells both tokens twice apiece, so
+ *     asserting them on that fixture would have been an assertion that cannot
+ *     fail. Layer 1 therefore holds those two names on `collisionFreeDoc()`,
+ *     whose payload contains neither key, and the four names with no payload
+ *     twin on the rich document. `CONTROL: a byte scan cannot separate a root
+ *     name from a payload key` pins the collision itself, so the split cannot
+ *     be undone by accident.
  *  2. DECODE — a bare `Y.Doc` fed only those bytes recovers exactly the six
  *     roots, and the opaque-widgets key on the node it decodes. This is the
  *     second implementation, standing in for itself: no helper from this
@@ -35,13 +53,28 @@
  * Together they separate an ACCIDENTAL rename from a DELIBERATE one. Rename a
  * root in `src/` only and layers 1–2 go red on the wire break. Rename it in
  * `src/` and in the golden vector and layer 3 goes red on the schema document.
- * Rename it everywhere and you have edited the document that says a layout
- * change bumps `SCHEMA_VERSION` (§1, §10) — which layer 3's last assertion then
- * holds you to. There is no path that renames a wire name quietly.
+ *
+ * WHAT THIS FILE DOES NOT HOLD, stated because the wording invites the wider
+ * reading. A rename applied CONSISTENTLY to `src/`, the vector, schema §1 and
+ * KA-3 leaves every assertion here green: layer 3's last case checks only that
+ * the three declarations of `SCHEMA_VERSION` agree with each other, and after a
+ * consistent rename they still all read 1. So this file forces a deliberate
+ * rename to be a FOUR-FILE edit, which is what makes it visible in review — it
+ * does NOT mechanically force the `SCHEMA_VERSION` bump or the `migrate()` step
+ * that §1/§10 and KA-11 require. Measured, not argued: renaming the
+ * `definitions` root in all four places with `SCHEMA_VERSION` left at 1 reddens
+ * `test/doc-mint-mutation-survivors.test.ts`, `test/project.test.ts` and
+ * `test/schema-version-on-read.test.ts` — and nothing in this file. The bump
+ * obligation is UNGUARDED; only its consistency once taken is held.
  *
  * The golden vector is a JSON file rather than literals in this test on
  * purpose: KA-3 says cross-language implementations pass the vectors in
  * `fixtures/golden-vectors/`, and a Python reader cannot import a `.test.ts`.
+ *
+ * The mutate/red/restore transcript behind every measured claim above is kept
+ * OUTSIDE this repository, in the in-app-agent workspace, so it is not citable
+ * from here; each `it` names the invariant and the behaviour it pins so the
+ * claim can be re-derived from this tree alone.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -91,10 +124,11 @@ const env = () => {
  * A workflow that puts content in EVERY root, because Yjs does not encode an
  * empty root type at all: `doc.getMap("links")` on a doc where nothing wrote a
  * link produces no structs, so a replica built from the bytes has no `links`
- * root and layer 2 would pass while asserting nothing about it. (That is also
- * why `initDoc`'s five seeding calls are equivalent mutants — see
- * `reports/audit/mut-glob-ka4.md` §6.1 — and it is exactly the "fixture too
- * simple to be sensitive" trap `reports/vacuous-verification.md` catalogues.)
+ * root and layer 2 would pass while asserting nothing about it. That is also
+ * why `initDoc`'s five seeding calls are equivalent mutants, recorded in
+ * `docs/INVARIANTS.md` KA-10 correction 1 — "seeding the root maps in
+ * `mint()`/`initDoc()` contributes NOTHING to `encodeStateAsUpdate`" — and it
+ * is the fixture-too-simple-to-be-sensitive shape.
  * `sparseWorkflow` below is the control that proves the trap is real.
  *
  * Two nodes, two links and two definitions rather than one of each, so a
@@ -122,13 +156,53 @@ const richWorkflow: WorkflowJSON = {
 /** Nothing but meta: the negative control for the empty-root encoding trap. */
 const sparseWorkflow = { nodes: [], links: [] } as unknown as WorkflowJSON;
 
+/**
+ * Populates `nodes` and `links` while containing NEITHER string anywhere in its
+ * payload — no subgraph definitions (whose maps carry literal `nodes`/`links`
+ * keys) and no output ports (which carry a literal `links` key). That is what
+ * makes the layer-1 byte assertion for those two names capable of failing.
+ */
+const collisionFreeWorkflow: WorkflowJSON = {
+  nodes: [
+    { id: 1, type: "Inner", inputs: [], outputs: [], widgets_values: ["v"] },
+    { id: 2, type: "Inner", inputs: [], outputs: [], widgets_values: ["w"] },
+  ],
+  links: [
+    [11, 1, 0, 2, 0, "X"],
+    [12, 2, 0, 1, 0, "X"],
+  ],
+} as unknown as WorkflowJSON;
+
 /** Mint `richWorkflow` and land one op, so `__applied` and `__stamps` are non-empty too. */
 function populatedDoc(): Y.Doc {
-  const doc = mint(richWorkflow, catalog);
+  return minted(richWorkflow);
+}
+
+/** The same, on the payload that cannot supply a `nodes`/`links` token itself. */
+function collisionFreeDoc(): Y.Doc {
+  return minted(collisionFreeWorkflow);
+}
+
+function minted(wf: WorkflowJSON): Y.Doc {
+  const doc = mint(wf, catalog);
   const op = { op: "set_widget", ...env(), node_id: 1, widget: "text", value: "w" } as SetWidgetOp;
   expect(applyOps(doc, [op], catalog).failed).toBeNull();
   return doc;
 }
+
+/** Length-prefixed occurrences of `name` in `buf`. */
+function tokenCount(buf: Buffer, name: string): number {
+  const t = wireToken(name);
+  let n = 0;
+  for (let i = buf.indexOf(t); i !== -1; i = buf.indexOf(t, i + 1)) n++;
+  return n;
+}
+
+/**
+ * The two §1 root names that a rich document ALSO spells inside its payload,
+ * and which layer 1 must therefore assert on `collisionFreeDoc()`.
+ */
+const PAYLOAD_TWINNED = ["nodes", "links"];
 
 /** The bootstrap snapshot (schema §9 / KA-10): the only thing a follower ever gets. */
 const snapshot = (doc: Y.Doc): Buffer => Buffer.from(Y.encodeStateAsUpdate(doc));
@@ -161,9 +235,45 @@ function rootNameOf(doc: Y.Doc, type: unknown): string | undefined {
 
 describe("layer 1: the bootstrap snapshot literally spells the schema §1 root names (KA-3)", () => {
   it("encodes every root name as a length-prefixed UTF-8 token", () => {
-    const update = snapshot(populatedDoc());
+    // Each name is asserted on a document whose PAYLOAD cannot spell it, so
+    // every one of these assertions can fail. See the header: on the rich
+    // fixture, `nodes` and `links` are spelled by the subgraph definition maps
+    // regardless of what the roots are called.
+    const rich = snapshot(populatedDoc());
+    const clean = snapshot(collisionFreeDoc());
     for (const name of goldenRootNames) {
+      const twinned = PAYLOAD_TWINNED.includes(name);
+      const update = twinned ? clean : rich;
       expect(update.includes(wireToken(name)), `encoded update must spell the root name '${name}'`).toBe(true);
+    }
+    // Each document must actually MATERIALIZE the roots it is asked about, or
+    // the split above would be silently asserting nothing for the names it
+    // moved: an empty root type encodes no struct, so a missing root would
+    // simply produce no token and the assertion would have to be met by
+    // payload — which is the very failure being fixed. The collision-free
+    // document cannot carry `definitions` (any definition map spells `nodes`
+    // and `links` itself), which is exactly why only the twinned pair moves.
+    const richRoots = [...(replicaOf(populatedDoc()).share as Map<string, unknown>).keys()].sort();
+    const cleanRoots = [...(replicaOf(collisionFreeDoc()).share as Map<string, unknown>).keys()].sort();
+    expect(richRoots).toEqual(goldenRootNames);
+    for (const name of PAYLOAD_TWINNED) {
+      expect(cleanRoots, `collision-free document must materialize the '${name}' root`).toContain(name);
+    }
+  });
+
+  it("CONTROL: a byte scan cannot separate a root name from a payload key, which is why the fixture is split", () => {
+    // The measurement the header cites, held as a test. `collisionFreeDoc()`
+    // spells `nodes`/`links` ONLY as root names; `populatedDoc()` spells them
+    // additionally as subgraph-definition keys. If a future edit gave the
+    // collision-free fixture a subgraph or an output port, this goes red and
+    // the layer-1 split above stops being load-bearing without anyone noticing.
+    const rich = snapshot(populatedDoc());
+    const clean = snapshot(collisionFreeDoc());
+    for (const name of PAYLOAD_TWINNED) {
+      expect(tokenCount(rich, name), `'${name}' must be spelled by the rich payload as well as the root`).toBeGreaterThan(
+        tokenCount(clean, name),
+      );
+      expect(tokenCount(clean, name), `'${name}' must still be spelled as a root name`).toBeGreaterThan(0);
     }
   });
 
