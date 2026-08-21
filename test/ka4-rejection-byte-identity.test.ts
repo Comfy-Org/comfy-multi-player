@@ -5,9 +5,10 @@
  * `src/applier.ts:18` states it ("preconditions validated before the first
  * mutation so a rejected op leaves the doc untouched") and
  * `docs/api-contract-proposal.md` D4 repeats it, but the property was pinned
- * one rejection code at a time. `reports/audit/mutation-survivors.md` §4 found
- * it held only for `set_widget` and non-grow `connect`; `reports/audit/
- * mut-ka2-pin.md` §4 narrowed the remaining gap to `delete_node`, `clear` and
+ * one rejection code at a time. Two earlier audits (kept outside this
+ * repository, in the in-app-agent workspace) found
+ * it held only for `set_widget` and non-grow `connect`, and narrowed the
+ * remaining gap to `delete_node`, `clear` and
  * `reset_doc` and asked for ONE table-driven sweep instead of three more
  * one-offs. This is that sweep, widened to every rejection code the applier can
  * reach so a new code cannot be added without a row.
@@ -27,12 +28,13 @@
  * mutate the document — Yjs does not roll a `transact` body back on throw, so
  * "untouched on reject" is a property of write order inside each handler, and
  * these four validate after their first write. That is issue #10, reproduced
- * and tabulated in `reports/audit/mut-glob-ka4.md` §3; the fix is in flight on
+ * and asserted below in `describe("KA-4 known violations …")`; the fix is in flight on
  * PR #34 (`fix/reject-no-mutation`), which is not an ancestor of this branch.
  * Adding those rows here would either go red in CI or force an assertion that
  * accommodates the bug, so they are listed as `KNOWN_KA4_VIOLATIONS` below and
  * belong in `CASES` the moment #34 lands.
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import {
@@ -340,7 +342,8 @@ const CASES: Row[] = [
 
 /**
  * Rejections that violate KA-4 on this branch. Each is reproduced in
- * `reports/audit/mut-glob-ka4.md` §3 with its exact post-rejection projection.
+ * the `KA-4 known violations (issue #10) are still violations` block below,
+ * which asserts that each one still breaks byte-identity TODAY.
  * Move these into `CASES` when PR #34 (issue #10) is an ancestor.
  */
 const KNOWN_KA4_VIOLATIONS = [
@@ -381,6 +384,222 @@ describe("KA-4: a rejected op leaves the doc byte-identical and does not consume
     }
     expect(KNOWN_KA4_VIOLATIONS.length).toBe(4);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Rejection codes that need their own fixture or catalog, and so cannot ride
+// the shared `CASES` table. Same two assertions.
+// ---------------------------------------------------------------------------
+
+/** `catalog_required`: positional `widgets_values` with no catalog to decompose them. */
+function catalogRequiredCase(): { doc: Y.Doc; op: Op; catalog?: WidgetCatalog; code: string } {
+  return {
+    doc: mint(baseWorkflow(), catalog),
+    op: {
+      op: "add_node",
+      ...env(),
+      node_id: 40,
+      node: { id: 40, type: "KSampler", inputs: [], outputs: [], widgets_values: [1, 2] },
+    } as unknown as Op,
+    catalog: undefined,
+    code: "catalog_required",
+  };
+}
+
+/** `widget_out_of_range`: an interior write past the node's current positional length. */
+function widgetOutOfRangeCase(): { doc: Y.Doc; op: Op; catalog?: WidgetCatalog; code: string } {
+  // `Inner` declares two widgets but the fixture node carries one value, so
+  // index 1 is out of range — interior writes never pad (schema §8, applier).
+  const twoWidget: WidgetCatalog = { types: { ...catalog.types, Inner: { widget_order: ["text", "extra"] } } };
+  return {
+    doc: mint(baseWorkflow(), twoWidget),
+    op: {
+      op: "set_widget",
+      ...env(),
+      node_id: 6,
+      widget: "extra",
+      value: "x",
+      path: ["6", "27"],
+      inner_widget: "extra",
+    } as unknown as Op,
+    catalog: twoWidget,
+    code: "widget_out_of_range",
+  };
+}
+
+/**
+ * `shared_definition_unforked`: the rejection this branch's `src/doc.ts` fix
+ * newly reaches. Two nodes instantiate ONE definition — one by id, one by its
+ * unique cosmetic name — so schema §5.3 rejects the interior write.
+ */
+function sharedDefinitionCase(): { doc: Y.Doc; op: Op; catalog?: WidgetCatalog; code: string } {
+  const wf = {
+    nodes: [
+      { id: 10, type: DEF, inputs: [], outputs: [] },
+      { id: 11, type: "D", inputs: [], outputs: [] },
+    ],
+    links: [],
+    definitions: {
+      subgraphs: [
+        { id: DEF, name: "D", nodes: [{ id: 27, type: "Inner", widgets_values: ["t"] }], links: [] },
+        { id: "def-2", name: "Other", nodes: [{ id: 27, type: "Inner", widgets_values: ["u"] }], links: [] },
+      ],
+    },
+  } as unknown as WorkflowJSON;
+  return {
+    doc: mint(wf, catalog),
+    op: {
+      op: "set_widget",
+      ...env(),
+      node_id: 10,
+      widget: "text",
+      value: "CORRUPTION",
+      path: ["10", "27"],
+      inner_widget: "text",
+    } as unknown as Op,
+    catalog,
+    code: "shared_definition_unforked",
+  };
+}
+
+const FIXTURE_CASES = [
+  ["add_node without a catalog", catalogRequiredCase],
+  ["interior set_widget past the positional length", widgetOutOfRangeCase],
+  ["interior set_widget into a definition two nodes instantiate", sharedDefinitionCase],
+] as const;
+
+describe("KA-4: the rejection codes that need their own fixture", () => {
+  it.each(FIXTURE_CASES)("%s", (_name, make) => {
+    const { doc, op, catalog: cat, code } = make();
+    const before = bytes(doc);
+    const beforeProjection = project(doc, cat ?? catalog);
+
+    const res = applyOps(doc, [op], cat as WidgetCatalog);
+
+    expect(res.failed?.code).toBe(code);
+    expect(bytes(doc).equals(before), "encodeStateAsUpdate must be byte-identical").toBe(true);
+    expect(project(doc, cat ?? catalog)).toEqual(beforeProjection);
+    const opId = (op as { op_id?: unknown })?.op_id;
+    expect(appliedMap(doc).has(String(opId)), "a rejected op must not consume its op_id").toBe(false);
+    expect(res.applied).toEqual([]);
+    expect(res.applied_count).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Completeness, by CODE rather than by kind, and the known violations made
+// self-retiring.
+// ---------------------------------------------------------------------------
+
+/**
+ * Every code `src/applier.ts` can throw. `apply_failed` is the deliberate
+ * exclusion: it is the wrapper for an unexpected internal error, so forcing it
+ * would mean planting a fault rather than sending a legal-shaped bad op.
+ */
+const ALL_REJECTION_CODES = [
+  "malformed_op",
+  "unknown_op",
+  "op_deferred",
+  "catalog_required",
+  "invalid_node_payload",
+  "unknown_widget",
+  "opaque_widgets",
+  "widget_out_of_range",
+  "input_slot_missing",
+  "output_slot_missing",
+  "not_a_subgraph",
+  "interior_node_not_found",
+  "shared_definition_unforked",
+] as const;
+
+describe("KA-4 sweep completeness", () => {
+  it("has a row for every rejection code the applier can reach", () => {
+    const covered = new Set<string>([...CASES.map((c) => c.code), ...FIXTURE_CASES.map(([, make]) => make().code)]);
+    for (const code of ALL_REJECTION_CODES) {
+      expect(covered.has(code), `no KA-4 rejection row for code '${code}'`).toBe(true);
+    }
+  });
+
+  it("names every code the applier actually throws, so a new one cannot be added silently", () => {
+    const src = readFileSync(new URL("../src/applier.ts", import.meta.url), "utf8");
+    const thrown = new Set(Array.from(src.matchAll(/new OpRejectedError\(\s*"([a-z_]+)"/g), (m) => m[1] as string));
+    const known = new Set<string>([...ALL_REJECTION_CODES, "apply_failed"]);
+    for (const code of thrown) {
+      expect(known.has(code), `src/applier.ts throws '${code}', which this sweep does not know about`).toBe(true);
+    }
+  });
+});
+
+/**
+ * The four issue #10 violations, asserted rather than merely listed. Each MUST
+ * still break byte-identity today; when PR #34 lands, these go red and the rows
+ * move into `CASES`. A prose list cannot do that — it stays true-looking after
+ * the bug is fixed.
+ */
+const VIOLATION_BUILDERS: ReadonlyArray<readonly [string, string, () => Op]> = [
+  [
+    "connect / from_slot out of range, empty destination slot",
+    "output_slot_missing",
+    () =>
+      ({ op: "connect", ...env(), link_id: 80, from_node: 1, from_slot: 99, to_node: 3, to_slot: 1, link_type: "X" }) as unknown as Op,
+  ],
+  [
+    "connect / from_slot out of range, OCCUPIED destination slot",
+    "output_slot_missing",
+    () =>
+      ({ op: "connect", ...env(), link_id: 81, from_node: 1, from_slot: 99, to_node: 3, to_slot: 0, link_type: "X" }) as unknown as Op,
+  ],
+  [
+    "connect+inputcount / widget absent from the destination's widget_order",
+    "unknown_widget",
+    () =>
+      ({
+        op: "connect",
+        ...env(),
+        link_id: 82,
+        from_node: 1,
+        from_slot: 0,
+        to_node: 3,
+        to_slot: null,
+        link_type: "X",
+        grow: { name: "image_2", type: "X", inputcount: { widget: "nope", value: 2 } },
+      }) as unknown as Op,
+  ],
+  [
+    "connect+inputcount / non-string widget",
+    "malformed_op",
+    () =>
+      ({
+        op: "connect",
+        ...env(),
+        link_id: 83,
+        from_node: 1,
+        from_slot: 0,
+        to_node: 3,
+        to_slot: null,
+        link_type: "X",
+        grow: { name: "image_3", type: "X", inputcount: { widget: 7, value: 2 } },
+      }) as unknown as Op,
+  ],
+];
+
+describe("KA-4 known violations (issue #10) are still violations", () => {
+  it("the prose list and the executable list agree", () => {
+    expect(VIOLATION_BUILDERS.length).toBe(KNOWN_KA4_VIOLATIONS.length);
+  });
+
+  it.each(VIOLATION_BUILDERS.map(([name, code, build]) => [name, code, build] as const))(
+    "%s still mutates on rejection",
+    (_name, code, build) => {
+      const doc = mint(baseWorkflow(), catalog);
+      const before = bytes(doc);
+      const res = applyOps(doc, [build()], catalog);
+      expect(res.failed?.code).toBe(code);
+      // Deliberately asserting the BUG. When PR #34 lands this flips to true
+      // and this test goes red, which is the signal to move the row into CASES.
+      expect(bytes(doc).equals(before), "issue #10 is fixed: move this row into CASES").toBe(false);
+    },
+  );
 });
 
 describe("KA-4 abort-remainder: a rejection mid-batch leaves exactly the applied prefix (vocabulary §4)", () => {

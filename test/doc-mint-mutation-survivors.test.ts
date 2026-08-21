@@ -4,7 +4,11 @@
  * glob until this branch, so nothing here had ever been mutation-tested.
  *
  * Every `it` below was verified to fail against a named surviving mutant and to
- * pass against the unmutated tree — see `reports/audit/mut-glob-ka4.md` for the
+ * pass against the unmutated tree. The mutate/red/restore transcript is kept
+ * OUTSIDE this repository, in the in-app-agent workspace
+ * (`reports/audit/mut-glob-ka4.md`), so it is not citable from here; each `it`
+ * below names the invariant and the behaviour it pins so the claim can be
+ * re-derived by mutating the named line. Historical pointer only:
  * mutate/red/restore transcript. Ordered by the invariant each one defends:
  *
  *  - KA-1 / schema §5.3 — `countDefinitionInstances` counts INTERIOR
@@ -17,9 +21,11 @@
  *    would otherwise decide which definition an interior write lands in.
  *  - KA-3 / KA-11 / schema §1 — the root-map key names and the reserved
  *    per-node opaque-widgets key are the doc's WIRE layout, shared with the
- *    Node doc host and with any second implementation. Every one of them could
- *    be renamed to "" with the suite green, because every reader in this
- *    package goes through the same helper.
+ *    Node doc host and with any second implementation. Four of the seven
+ *    (`links`, `definitions`, `__applied`, `__stamps`) could be renamed with
+ *    the pre-existing suite fully green, because every reader in this package
+ *    goes through the same helper; `nodes` and `meta` reddened 2 and 6 tests
+ *    respectively, so the gap was large but not total.
  *  - schema §6 / §4 — mint's structural/bookkeeping key filter.
  *  - schema §5.1 / §7 — interior `node_order` / `link_order`.
  *  - schema §11 — the bounded-writes mutation counter's direction.
@@ -186,7 +192,32 @@ describe("schema §5.3: instances addressed by the definition's NAME count too (
   });
 
   it("counts a node typed by the definition's unique name as an instance", () => {
-    expect(countDefinitionInstances(mint(aliasedInstancesWorkflow("MySubgraph"), catalog), "D1")).toBe(2);
+    // The catalogue is what makes the name answerable: it is an alias only
+    // because the catalogue does NOT describe "MySubgraph" as a node class.
+    expect(countDefinitionInstances(mint(aliasedInstancesWorkflow("MySubgraph"), catalog), "D1", catalog)).toBe(2);
+  });
+
+  it("does NOT treat the name as an alias when the pinned catalogue owns it as a node CLASS", () => {
+    // Three shipped cloud-snapshot templates name a definition after the very
+    // node class it wraps (`WanMoveTrackToVideo`). Counting the class node as an
+    // instance rejects a legal interior write, and says "instantiated 2 times"
+    // about a definition instantiated once.
+    const classCatalog: WidgetCatalog = {
+      types: { ...catalog.types, MySubgraph: { widget_order: [] } },
+    };
+    const doc = mint(aliasedInstancesWorkflow("MySubgraph"), classCatalog);
+    expect(countDefinitionInstances(doc, "D1", classCatalog)).toBe(1);
+    expect(applyOps(doc, [aliasWrite(100, "legal")], classCatalog).failed).toBeNull();
+    expect(interiorTextOf(doc, "D1")).toBe("legal");
+  });
+
+  it("does NOT treat the name as an alias when there is no catalogue to ask", () => {
+    // Unverifiable, so not an alias: the frontend always writes a definition's
+    // UUID into an instance `type`, which makes an unverifiable name far more
+    // likely to be a class than a legacy instance. The ID half is unaffected.
+    const doc = mint(aliasedInstancesWorkflow("MySubgraph"), catalog);
+    expect(countDefinitionInstances(doc, "D1")).toBe(1);
+    expect(countDefinitionInstances(mint(aliasedInstancesWorkflow("D1"), catalog), "D1")).toBe(2);
   });
 
   it("rejects an interior write reached through the ID-typed instance when a NAME-typed instance also exists", () => {
@@ -247,8 +278,32 @@ describe("schema §5.3: instances addressed by the definition's NAME count too (
     // address it. Asking by id and by name must agree, or the guard's answer
     // depends on how the caller happened to spell the lookup.
     const doc = mint(aliasedInstancesWorkflow("MySubgraph"), catalog);
-    expect(countDefinitionInstances(doc, "D1")).toBe(2);
-    expect(countDefinitionInstances(doc, "MySubgraph")).toBe(2);
+    expect(countDefinitionInstances(doc, "D1", catalog)).toBe(2);
+    expect(countDefinitionInstances(doc, "MySubgraph", catalog)).toBe(2);
+  });
+
+  it("THROWS on a nodes entry that is not a Y.Map, rather than skipping it", () => {
+    // Skipping would UNDERCOUNT, which makes the §5.3 guard fail OPEN — an
+    // interior write that `main` rejected would apply and mutate. Reached
+    // through the exported `nodesMap()` and through `Y.applyUpdate` of a
+    // snapshot from a non-conforming peer, so it is not merely theoretical.
+    const doc = mint(aliasedInstancesWorkflow("SomethingElse"), catalog);
+    nodesMap(doc).set("999", "not-a-y-map" as unknown as Y.Map<unknown>);
+    expect(() => countDefinitionInstances(doc, "D1", catalog)).toThrow(TypeError);
+    expect(() => countDefinitionInstances(doc, "D1", catalog)).toThrow(/not a Y\.Map/);
+  });
+
+  it("surfaces that throw as a LOUD rejection that leaves the document untouched", () => {
+    // The fail-open version of this counted 1 instead of 2, passed the guard,
+    // and wrote. The loud version must reject AND change nothing.
+    const doc = mint(aliasedInstancesWorkflow("SomethingElse"), catalog);
+    nodesMap(doc).set("999", 7 as unknown as Y.Map<unknown>);
+    const before = bytes(doc);
+    const res = applyOps(doc, [aliasWrite(100, "MUST_NOT_LAND")], catalog);
+    expect(res.failed?.code).toBe("apply_failed");
+    expect(res.applied).toEqual([]);
+    expect(res.applied_count).toBe(0);
+    expect(bytes(doc).equals(before)).toBe(true);
   });
 
   it("counts nodes claiming a type no definition resolves", () => {
@@ -533,7 +588,8 @@ describe("schema §11 bounded-writes instrumentation counts up, once per Y opera
     // The §11 conformance test compares `_getMutationCount()` against a ceiling.
     // A helper that decremented would make that check pass no matter how many
     // writes an op performed — a gate structurally incapable of failing, which
-    // is the failure mode `reports/vacuous-verification.md` exists to catch.
+    // is the failure mode the workspace's vacuity profile exists to catch
+    // (`.agents/checks/vacuity.md`, band A).
     const doc = new Y.Doc();
     const m = doc.getMap<unknown>("m");
     const a = doc.getArray<unknown>("a");

@@ -20,7 +20,7 @@
 
 import * as Y from "yjs";
 import { assertNever } from "./exhaustive.js";
-import { SCHEMA_VERSION, type WorkflowNode } from "./types.js";
+import { SCHEMA_VERSION, type WidgetCatalog, type WorkflowNode } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Opaque widgets (schema §1.2 — unknown classes)
@@ -393,13 +393,30 @@ export function resolveDefinition(doc: Y.Doc, key: string): Y.Map<unknown> | nul
  * `defId` addresses: the definition's own map key, plus its cosmetic `name`
  * when that name is a legal alias.
  *
- * A name is an alias only when `resolveDefinition` would actually reach the
- * definition through it — that is, when no definition owns it as an ID (id
- * always wins) and no OTHER definition shares it (an ambiguous name resolves to
- * nothing, so a node typed with it cannot be descended into at all and is not
- * an instance anything can reach).
+ * Three conditions, and the third is the one that cost a review. A name is an
+ * alias only when:
+ *
+ *  1. no definition owns it as an ID — an id always wins over a name;
+ *  2. no OTHER definition shares it — an ambiguous name resolves to nothing, so
+ *     a node typed with it cannot be descended into at all; and
+ *  3. **the pinned catalogue does not own it as a node CLASS.** A cosmetic
+ *     display name is user-chosen and unvalidated, and naming a subgraph after
+ *     the node it wraps is the obvious convention — three shipped cloud-snapshot
+ *     templates name a definition `WanMoveTrackToVideo`, which is a real backend
+ *     class instantiated inside that very definition. Counting such a node as an
+ *     instance rejects a legal interior write with a message that is not even
+ *     true ("instantiated 2 times" when it is instantiated once). A type the
+ *     catalogue describes is a class, not a subgraph instance.
+ *
+ * Without a catalogue condition 3 cannot be evaluated, and the name is NOT
+ * treated as an alias. That is deliberate: the name fallback is a legacy path
+ * (the frontend always writes a definition's UUID into an instance `type`), so
+ * an unverifiable name is far more likely to be a class than a legacy instance,
+ * and guessing the other way turns a correctness fix into a false rejection.
+ * The id half of the count — which is what every non-legacy document uses —
+ * is unaffected and needs no catalogue.
  */
-function definitionAliases(doc: Y.Doc, defId: string): Set<string> {
+function definitionAliases(doc: Y.Doc, defId: string, catalog?: WidgetCatalog): Set<string> {
   const aliases = new Set<string>([defId]);
   const target = resolveDefinition(doc, defId);
   if (!target) return aliases;
@@ -409,6 +426,8 @@ function definitionAliases(doc: Y.Doc, defId: string): Set<string> {
   });
   const name = String(target.get("name") ?? "");
   if (name === "" || defs.has(name)) return aliases; // unnamed, or shadowed by an id
+  if (!catalog) return aliases; // no catalogue to ask: cannot verify, so not an alias
+  if (Object.prototype.hasOwnProperty.call(catalog.types, name)) return aliases; // a node class
   let sameName = 0;
   defs.forEach((dm) => {
     if (String(dm.get("name") ?? "") === name) sameName++;
@@ -419,8 +438,13 @@ function definitionAliases(doc: Y.Doc, defId: string): Set<string> {
 
 /**
  * How many nodes (top-level + interior across all definitions) instantiate the
- * definition `defId` addresses — the schema §5.3 shared-definition guard input
- * (mirrors comfy-cli `engine._count_instances`).
+ * definition `defId` addresses — the schema §5.3 shared-definition guard input.
+ *
+ * This no longer mirrors comfy-cli `engine._count_instances`, which still
+ * matches the literal id string. That is a deliberate, recorded divergence:
+ * comfy-cli forks a shared definition where schema §5.3 requires this applier to
+ * reject, and its own count misses the name-addressed pair the same way this one
+ * used to. See `docs/decisions/EXCEPTIONS.md`.
  *
  * Counted by DEFINITION, not by literal type string. `resolveDefinition`
  * accepts a definition id or its unique cosmetic name, so one definition can be
@@ -429,17 +453,31 @@ function definitionAliases(doc: Y.Doc, defId: string): Set<string> {
  * interior `set_widget` mutated a definition backing two nodes while `applyOps`
  * reported success (KA-1: an op is the replication unit — it must not fan out
  * to N nodes).
+ *
+ * A `nodes` entry that is not a `Y.Map` is a malformed document, and this
+ * function throws on it rather than skipping it. Skipping would UNDERCOUNT and
+ * so make the §5.3 guard fail OPEN — quieter, and exactly backwards. The
+ * interior sweep keeps its long-standing `instanceof` filter because a
+ * definition whose `nodes` root is unreadable is already handled above it.
  */
-export function countDefinitionInstances(doc: Y.Doc, defId: string): number {
-  const aliases = definitionAliases(doc, defId);
+export function countDefinitionInstances(doc: Y.Doc, defId: string, catalog?: WidgetCatalog): number {
+  const aliases = definitionAliases(doc, defId, catalog);
   let count = 0;
-  const tally = (node: unknown): void => {
-    if (node instanceof Y.Map && aliases.has(String(node.get("type") ?? ""))) count++;
-  };
-  nodesMap(doc).forEach(tally);
+  nodesMap(doc).forEach((node, key) => {
+    if (!(node instanceof Y.Map)) {
+      throw new TypeError(
+        `countDefinitionInstances: nodes['${String(key)}'] is not a Y.Map (${typeof node}); the document is malformed and the schema §5.3 instance count cannot be trusted`,
+      );
+    }
+    if (aliases.has(String(node.get("type") ?? ""))) count++;
+  });
   definitionsMap(doc).forEach((dm) => {
     const inner = dm.get("nodes");
-    if (inner instanceof Y.Map) inner.forEach(tally);
+    if (inner instanceof Y.Map) {
+      inner.forEach((node: unknown) => {
+        if (node instanceof Y.Map && aliases.has(String(node.get("type") ?? ""))) count++;
+      });
+    }
   });
   return count;
 }
