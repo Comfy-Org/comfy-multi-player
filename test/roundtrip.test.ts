@@ -165,10 +165,17 @@ describe("migrate (schema §10)", () => {
     expect(() => migrate(doc, SCHEMA_VERSION + 1)).toThrow(/fail-closed/);
   });
 
+  // The message regexes are load-bearing, not decoration: a doc minted at v1
+  // ALSO trips the stored-vs-fromVersion comparison for these inputs, so an
+  // assertion that only checks the error TYPE stays green with the
+  // integer/lower-bound guard deleted. Pinning the message is what makes this
+  // test name the guard it is about.
   it("rejects versions below the first layout", () => {
     const doc = mint({ nodes: [], links: [] }, catalog);
     expect(() => migrate(doc, 0)).toThrow(SchemaVersionError);
+    expect(() => migrate(doc, 0)).toThrow(/no migration path from schema v0/);
     expect(() => migrate(doc, Number.NaN)).toThrow(SchemaVersionError);
+    expect(() => migrate(doc, Number.NaN)).toThrow(/no migration path from schema vNaN/);
   });
 
   // KA-11: the caller's `fromVersion` is a claim; the doc's stored version is

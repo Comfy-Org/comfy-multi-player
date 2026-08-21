@@ -20,7 +20,10 @@ import { SCHEMA_VERSION, SchemaVersionError } from "./types.js";
  * question "does this doc carry a readable meta map". Typing a root that is
  * ALREADY present (Yjs `AbstractType` → `Y.Map`) creates no struct and no new
  * share key, so the read stays byte-exact under `encodeStateAsUpdate` and
- * leaves `doc.share` unchanged.
+ * leaves the `doc.share` key set unchanged. It is a client-side
+ * REINTERPRETATION of structs the doc already holds: the share entry for a
+ * root that arrived untyped is replaced by the typed view of the same structs,
+ * which is what every reader in this package (and the read-only surface) does.
  *
  * Returns `undefined` when the schema version is unreadable — either the
  * `meta` root is absent, or it carries no `schema_version`. Both are
@@ -43,7 +46,8 @@ function storedSchemaVersion(doc: Y.Doc): unknown {
  * Validation runs on EVERY path, including the current-version one (KA-11:
  * schema-version discipline is enforced on read), and it never mutates the
  * document: a rejected call and a current-version no-op both leave
- * `encodeStateAsUpdate(doc)` byte-identical and `doc.share` untouched.
+ * `encodeStateAsUpdate(doc)` byte-identical and the `doc.share` key set
+ * unchanged — no root is materialized on any path.
  */
 export function migrate(doc: Y.Doc, fromVersion: number): void {
   if (!Number.isInteger(fromVersion) || fromVersion < 1) {
