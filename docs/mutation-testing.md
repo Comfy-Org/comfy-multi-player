@@ -1,6 +1,8 @@
 # Mutation testing
 
-Stryker measures whether the test suite detects behavioral regressions in the load-bearing CRDT code. The initial scope is deliberately limited to `src/applier.ts`, `src/stamps.ts`, and `src/project.ts`; tests and the rest of `src/` are not mutated.
+Stryker measures whether the test suite detects behavioral regressions in the load-bearing CRDT code. The scope is `src/applier.ts`, `src/stamps.ts`, `src/project.ts`, `src/doc.ts` and `src/mint.ts`; tests, `src/index.ts` (re-exports only), `src/types.ts` (declarations) and `src/migrate.ts` are not mutated.
+
+`src/doc.ts` and `src/mint.ts` were added in MUT-GLOB-KA4-1 and had never been mutated before that. Do not narrow the glob back: the two files carry the schema §1 doc layout, the §1.2 opaque-widgets routing, the §5.3 shared-definition instance count and the §9 bootstrap-snapshot path, and every one of those was unmeasured while the score read 80.53%.
 
 ## The score only means something because the run is pinned
 
@@ -25,7 +27,18 @@ The unpinned rows show what the pins are for. Unpinned and idle the number happe
 
 ## Current baseline
 
-Measured 2026-08-21 on the pinned settings, over 925 mutants: **80.00% overall** (`applier.ts` 77.79%, `stamps.ts` 89.00%, `project.ts` 83.14%), reproduced idle and under contention as above. The break threshold is **79%**, strictly under the measured score. It is deliberately not 80: the score is exactly 740/925, so a threshold equal to the measurement passes with zero margin and goes red the first time a sibling PR adds an uncovered line — reporting "mutation score regression" when it means "new code arrived". Raise the threshold whenever the score is raised; the ~1 point of headroom is for new code, not for measurement noise, which the pins have removed.
+Measured RE-DERIVE-OVERALL on the pinned settings over the five-file glob: **RE-DERIVE% overall** across RE-DERIVE mutants. The break threshold is **RE-DERIVE**, at least a point under the measured score for the reason #56 recorded when it lowered the three-file threshold from 80 to 79: a threshold equal to the measurement passes with zero margin and goes red the first time a sibling PR adds an uncovered line, reporting "mutation score regression" when it means "new code arrived". Raise the threshold whenever the score is raised; the headroom is for new code, not for measurement noise, which the pins have removed.
+
+The three-file baseline this widening replaces was **80.00%** over 925 mutants (`applier.ts` 77.79%, `stamps.ts` 89.00%, `project.ts` 83.14%), reproduced idle and under contention as in the two-by-two table above.
+
+Per-scope movement, kept because the *shape* of the change matters more than the headline:
+
+| Scope | Before | After | What moved |
+| --- | --- | --- | --- |
+| `applier.ts` + `stamps.ts` + `project.ts` | 80.00% | RE-DERIVE% | the KA-4 rejection sweep (`test/ka4-rejection-byte-identity.test.ts`) |
+| `doc.ts` + `mint.ts` | RE-DERIVE% (first ever run) | RE-DERIVE% | `test/doc-mint-mutation-survivors.test.ts` |
+
+Adding files to the glob moves the headline for two reasons at once — new mutants, and new tests — so compare per-file columns, never the single overall number, when judging whether a change helped.
 
 Earlier figures on this page do not survive. **63.70%** (once recorded here) and **74.81%** (recorded in the workspace) were produced with the knobs unpinned and are void — not low, not high, just not measurements of the test suite.
 

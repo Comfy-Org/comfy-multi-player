@@ -22,7 +22,13 @@
  */
 export default {
   testRunner: "vitest",
-  mutate: ["src/applier.ts", "src/stamps.ts", "src/project.ts"],
+  // `src/doc.ts` and `src/mint.ts` joined the glob in MUT-GLOB-KA4-1. They had
+  // never been mutation-tested, and they carry the schema §1 doc layout, the
+  // §1.2 opaque-widgets routing, the §5.3 shared-definition instance count and
+  // the §9 bootstrap-snapshot path — see reports/audit/mut-glob-ka4.md.
+  // `src/index.ts` (re-exports only), `src/types.ts` (declarations) and
+  // `src/migrate.ts` (owned by PR #30) remain out.
+  mutate: ["src/applier.ts", "src/stamps.ts", "src/project.ts", "src/doc.ts", "src/mint.ts"],
   reporters: ["clear-text", "html", "json"],
   coverageAnalysis: "all",
   // Per-mutant budget = netTime * timeoutFactor + timeoutMS. Generous on
@@ -31,22 +37,22 @@ export default {
   timeoutFactor: 1.5,
   // Fixed worker count so the measurement does not vary with core count.
   concurrency: 4,
-  // Measured 2026-08-21 on the pinned settings above, at this commit: 80.00%
-  // overall over 925 mutants, run twice — once idle and once under 20 CPU
-  // spinners (load average 8.2 vs 33.8). Same score to two decimals, and the
-  // Survived (154) and NoCoverage (31) SETS were element-for-element identical;
-  // only one non-terminating loop mutant moved between Killed and Timeout,
-  // which is score-neutral. That stability is the whole point of the pins.
+  // Measured RE-DERIVE-DATE on the pinned settings above, over the five-file
+  // glob: RE-DERIVE% overall (RE-DERIVE mutants). The three-file glob this
+  // replaces scored 80.00% over 925 mutants (reproduced idle and under 20 CPU
+  // spinners, element-for-element identical Survived/NoCoverage sets — that
+  // stability is the whole point of the pins).
   //
-  // Threshold sits strictly UNDER the measured score, not at it. 80.00% is
-  // exactly 740/925, so `break: 80` would pass with zero margin and turn red on
-  // the first uncovered line any sibling PR adds — a failure that would say
-  // "mutation score regression" while meaning "new code arrived". One point is
-  // roughly nine mutants of headroom. Raise it whenever the score is raised;
-  // the margin is for new code, NOT for measurement noise, which is now zero.
+  // Threshold sits strictly UNDER the measured score, not at it — the rule #56
+  // wrote in when it lowered the three-file threshold from 80 to 79. A
+  // threshold equal to the measurement passes with zero margin and turns red on
+  // the first uncovered line any sibling PR adds, a failure that would say
+  // "mutation score regression" while meaning "new code arrived". Raise it
+  // whenever the score is raised; the margin is for new code, NOT for
+  // measurement noise, which is now zero.
   thresholds: {
-    break: 79,
-    low: 79,
-    high: 90,
+    break: RE_DERIVE_BREAK,
+    low: RE_DERIVE_BREAK,
+    high: 95,
   },
 };
