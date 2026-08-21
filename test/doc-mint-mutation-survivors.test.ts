@@ -135,6 +135,131 @@ describe("schema §5.3 shared-definition guard counts INTERIOR instances (KA-1)"
 });
 
 // ---------------------------------------------------------------------------
+// KA-1 / schema §5.3 — the guard must count instances the RESOLVER would reach
+// ---------------------------------------------------------------------------
+
+/**
+ * `resolveDefinition` accepts a definition id OR its unique cosmetic name, so a
+ * legacy workflow can address one definition both ways. `countDefinitionInstances`
+ * used to match on the id alone, so the pair below counted as ONE instance and
+ * the §5.3 guard let an interior write mutate a definition backing two nodes —
+ * silently, with `applyOps` reporting success. The guard's input has to use the
+ * same notion of "instantiates this definition" the resolver uses.
+ */
+function aliasedInstancesWorkflow(secondInstanceType: string): WorkflowJSON {
+  return {
+    nodes: [
+      { id: 100, type: "D1", inputs: [], outputs: [] },
+      { id: 101, type: secondInstanceType, inputs: [], outputs: [] },
+    ],
+    links: [],
+    definitions: {
+      subgraphs: [
+        { id: "D1", name: "MySubgraph", nodes: [{ id: 27, type: "Inner", widgets_values: ["orig"] }], links: [] },
+      ],
+    },
+  } as unknown as WorkflowJSON;
+}
+
+const aliasWrite = (nodeId: number, value: string): SetWidgetOp =>
+  ({
+    op: "set_widget",
+    ...env(),
+    node_id: nodeId,
+    widget: "text",
+    path: [String(nodeId), "27"],
+    inner_widget: "text",
+    value,
+  }) as SetWidgetOp;
+
+describe("schema §5.3: instances addressed by the definition's NAME count too (KA-1)", () => {
+  it("both spellings resolve to the same definition", () => {
+    const doc = mint(aliasedInstancesWorkflow("MySubgraph"), catalog);
+    expect(idOf(resolveDefinition(doc, "D1"))).toBe("D1");
+    expect(idOf(resolveDefinition(doc, "MySubgraph"))).toBe("D1");
+  });
+
+  it("counts a node typed by the definition's unique name as an instance", () => {
+    expect(countDefinitionInstances(mint(aliasedInstancesWorkflow("MySubgraph"), catalog), "D1")).toBe(2);
+  });
+
+  it("rejects an interior write reached through the ID-typed instance when a NAME-typed instance also exists", () => {
+    const doc = mint(aliasedInstancesWorkflow("MySubgraph"), catalog);
+    const before = bytes(doc);
+    const res = applyOps(doc, [aliasWrite(100, "CORRUPTION")], catalog);
+    expect(res.failed?.code).toBe("shared_definition_unforked");
+    expect(res.applied).toEqual([]);
+    expect(bytes(doc).equals(before)).toBe(true);
+    expect(interiorTextOf(doc, "D1")).toBe("orig");
+  });
+
+  it("rejects the same write reached through the NAME-typed instance", () => {
+    const doc = mint(aliasedInstancesWorkflow("MySubgraph"), catalog);
+    const before = bytes(doc);
+    const res = applyOps(doc, [aliasWrite(101, "CORRUPTION")], catalog);
+    expect(res.failed?.code).toBe("shared_definition_unforked");
+    expect(bytes(doc).equals(before)).toBe(true);
+    expect(interiorTextOf(doc, "D1")).toBe("orig");
+  });
+
+  it("still applies when the second node instantiates something else entirely", () => {
+    // Non-vacuity half: the rejection must come from the aliased instance, not
+    // from "there are two nodes".
+    const doc = mint(aliasedInstancesWorkflow("SomethingElse"), catalog);
+    expect(countDefinitionInstances(doc, "D1")).toBe(1);
+    expect(applyOps(doc, [aliasWrite(100, "fine")], catalog).failed).toBeNull();
+    expect(interiorTextOf(doc, "D1")).toBe("fine");
+  });
+
+  it("does NOT treat a name as an alias when another definition owns it as an id", () => {
+    // `resolveDefinition` gives id priority, so "alpha" addresses the definition
+    // whose id is "alpha" — counting it as an instance of `gamma` (which merely
+    // carries "alpha" as its name) would over-reject.
+    const wf = {
+      nodes: [
+        { id: 10, type: "alpha", inputs: [], outputs: [] },
+        { id: 11, type: "gamma", inputs: [], outputs: [] },
+      ],
+      links: [],
+      definitions: {
+        subgraphs: [
+          { id: "alpha", name: "beta", nodes: [{ id: 27, type: "Inner", widgets_values: ["a"] }], links: [] },
+          { id: "gamma", name: "alpha", nodes: [{ id: 27, type: "Inner", widgets_values: ["g"] }], links: [] },
+        ],
+      },
+    } as unknown as WorkflowJSON;
+    const doc = mint(wf, catalog);
+    expect(countDefinitionInstances(doc, "gamma")).toBe(1);
+    expect(countDefinitionInstances(doc, "alpha")).toBe(1);
+    expect(applyOps(doc, [aliasWrite(11, "written")], catalog).failed).toBeNull();
+    expect(interiorTextOf(doc, "gamma")).toBe("written");
+    expect(interiorTextOf(doc, "alpha")).toBe("a");
+  });
+
+  it("does NOT treat an AMBIGUOUS name as an alias (it resolves to nothing)", () => {
+    const wf = {
+      nodes: [
+        { id: 10, type: "id-1", inputs: [], outputs: [] },
+        { id: 11, type: "shared", inputs: [], outputs: [] },
+      ],
+      links: [],
+      definitions: {
+        subgraphs: [
+          { id: "id-1", name: "shared", nodes: [{ id: 27, type: "Inner", widgets_values: ["one"] }], links: [] },
+          { id: "id-2", name: "shared", nodes: [{ id: 27, type: "Inner", widgets_values: ["two"] }], links: [] },
+        ],
+      },
+    } as unknown as WorkflowJSON;
+    const doc = mint(wf, catalog);
+    // Node 11 cannot be descended into at all (`not_a_subgraph`), so it is not
+    // an instance the resolver can reach and must not inflate the count.
+    expect(countDefinitionInstances(doc, "id-1")).toBe(1);
+    expect(applyOps(doc, [aliasWrite(10, "written")], catalog).failed).toBeNull();
+    expect(applyOps(doc, [aliasWrite(11, "nope")], catalog).failed?.code).toBe("not_a_subgraph");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // KA-4 / KA-1 — resolveDefinition: id first, unique name second, ambiguous never
 // ---------------------------------------------------------------------------
 

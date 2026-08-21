@@ -389,22 +389,57 @@ export function resolveDefinition(doc: Y.Doc, key: string): Y.Map<unknown> | nul
 }
 
 /**
- * How many nodes (top-level + interior across all definitions) instantiate
- * `defId` — the schema §5.3 shared-definition guard input (mirrors comfy-cli
- * `engine._count_instances`).
+ * Every node `type` that {@link resolveDefinition} maps to the definition
+ * `defId` addresses: the definition's own map key, plus its cosmetic `name`
+ * when that name is a legal alias.
+ *
+ * A name is an alias only when `resolveDefinition` would actually reach the
+ * definition through it — that is, when no definition owns it as an ID (id
+ * always wins) and no OTHER definition shares it (an ambiguous name resolves to
+ * nothing, so a node typed with it cannot be descended into at all and is not
+ * an instance anything can reach).
+ */
+function definitionAliases(doc: Y.Doc, defId: string): Set<string> {
+  const aliases = new Set<string>([defId]);
+  const target = resolveDefinition(doc, defId);
+  if (!target) return aliases;
+  const defs = definitionsMap(doc);
+  defs.forEach((dm, key) => {
+    if (dm === target) aliases.add(key);
+  });
+  const name = String(target.get("name") ?? "");
+  if (name === "" || defs.has(name)) return aliases; // unnamed, or shadowed by an id
+  let sameName = 0;
+  defs.forEach((dm) => {
+    if (String(dm.get("name") ?? "") === name) sameName++;
+  });
+  if (sameName === 1) aliases.add(name);
+  return aliases;
+}
+
+/**
+ * How many nodes (top-level + interior across all definitions) instantiate the
+ * definition `defId` addresses — the schema §5.3 shared-definition guard input
+ * (mirrors comfy-cli `engine._count_instances`).
+ *
+ * Counted by DEFINITION, not by literal type string. `resolveDefinition`
+ * accepts a definition id or its unique cosmetic name, so one definition can be
+ * instantiated under either spelling in the same workflow; matching the id
+ * alone counted such a pair as ONE and let the §5.3 guard pass, so a single
+ * interior `set_widget` mutated a definition backing two nodes while `applyOps`
+ * reported success (KA-1: an op is the replication unit — it must not fan out
+ * to N nodes).
  */
 export function countDefinitionInstances(doc: Y.Doc, defId: string): number {
+  const aliases = definitionAliases(doc, defId);
   let count = 0;
-  nodesMap(doc).forEach((node) => {
-    if (String(node.get("type") ?? "") === defId) count++;
-  });
+  const tally = (node: unknown): void => {
+    if (node instanceof Y.Map && aliases.has(String(node.get("type") ?? ""))) count++;
+  };
+  nodesMap(doc).forEach(tally);
   definitionsMap(doc).forEach((dm) => {
     const inner = dm.get("nodes");
-    if (inner instanceof Y.Map) {
-      inner.forEach((node: unknown) => {
-        if (node instanceof Y.Map && String(node.get("type") ?? "") === defId) count++;
-      });
-    }
+    if (inner instanceof Y.Map) inner.forEach(tally);
   });
   return count;
 }
