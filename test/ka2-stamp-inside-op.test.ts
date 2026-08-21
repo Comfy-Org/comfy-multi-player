@@ -8,13 +8,20 @@
  * back to the envelope, ordering would collapse onto the server-assigned scalar
  * that FC-2 forecloses.
  *
- * Every other suite in this repo mints ops with `stamp === [base_version, actor]`
- * (the shape comfy-cli's `_new_op` produces), which makes the two readings
- * indistinguishable: the whole suite passes identically whether the applier
- * honours `op.stamp` or ignores it (AUD-MUT-1 R14). Every op below deliberately
- * gives `stamp` a value the envelope does NOT imply, and picks the divergence so
- * that the two readings name DIFFERENT winners. A fallback to the envelope
- * therefore flips the expected value rather than merely failing to distinguish.
+ * Almost every other suite in this repo mints ops with `stamp === [base_version,
+ * actor]` (the shape comfy-cli's `_new_op` produces), which makes the two
+ * readings indistinguishable. That was once true of the WHOLE suite: at
+ * 5129209, the commit this work started from, neutering `stampKey` to ignore
+ * `op.stamp` left all 183 tests in 20 files green — the invariant had nothing
+ * holding it (AUD-MUT-1 R14). `test/mutation-survivors.test.ts` has since
+ * closed the top-level `set_widget` case. This file covers the property at
+ * every register that reads the key, in both arrival orders; the §8.4
+ * inputcount pseudo-op below is held by no other test in the repo.
+ *
+ * Every op here deliberately gives `stamp` a value the envelope does NOT imply,
+ * and picks the divergence so that the two readings name DIFFERENT winners. A
+ * fallback to the envelope therefore flips the expected value rather than
+ * merely failing to distinguish.
  *
  * Non-vacuity is asserted structurally as well: `envelopeWinnerDiffers` fails the
  * test if a vector is ever weakened to one where the two readings agree.

@@ -96,11 +96,12 @@ export type NodeId = string | number;
  *
  * AUTHORITATIVE, and deliberately not merely a copy of the envelope. `_new_op`
  * happens to mint it equal to `[base_version, actor]`, but the ordering key is
- * read out of THIS field (see `stampKey`), never re-derived from the envelope —
- * that is what lets any replica evaluate order offline (KA-2) instead of
- * deferring to a server-assigned scalar (FC-2). A minter may set it to
- * something the envelope does not imply; `test/ka2-stamp-inside-op.test.ts`
- * pins that it is honoured when it does.
+ * read out of THIS field whenever the op carries one (see `stampKey`); the
+ * envelope reading is a fallback for a missing or malformed stamp, never a
+ * re-derivation over one that is present. That is what lets any replica
+ * evaluate order offline (KA-2) instead of deferring to a server-assigned
+ * scalar (FC-2). A minter may set it to something the envelope does not imply;
+ * `test/ka2-stamp-inside-op.test.ts` pins that it is honoured when it does.
  */
 export type Stamp = [baseVersion: number, actor: Actor];
 

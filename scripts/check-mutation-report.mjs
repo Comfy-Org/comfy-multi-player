@@ -6,9 +6,10 @@
  * defensible for a genuinely non-terminating mutant (`while (…)` mutated to
  * `while (true)`), and indefensible for a mutant that merely ran slowly on a
  * busy machine — the two are the same symbol in the report. With `timeoutMS`
- * and `concurrency` unpinned, the score therefore RISES with host load: three
- * runs of one commit on one machine produced 84.38% / 88.01% / 74.59%
- * (reports/audit/mutation-survivors.md §2).
+ * and `concurrency` unpinned, the score therefore RISES with host load:
+ * measured on this repo, one commit, unpinned, 80.00% idle against 81.41%
+ * under 20 CPU spinners — 13 real survivors reclassified as timeouts and
+ * scored as kills (docs/mutation-testing.md).
  *
  * `stryker.config.mjs` pins those knobs so the number is a property of the
  * tests. This gate is the fail-closed half: it re-derives the score from
@@ -16,9 +17,9 @@
  * refuses to call the run conclusive when timeouts are material — because in
  * that regime the headline score is inflated by an unknown amount.
  *
- * Exit codes: 0 conclusive, 1 below the pinned break threshold,
- * 2 INCONCLUSIVE (no report, zero mutants, or too many timeouts).
- * INCONCLUSIVE is not a pass.
+ * Exit codes: 0 conclusive, 1 below the pinned break threshold, 2 INCONCLUSIVE
+ * (no report, too few mutants, too many timeouts, or no threshold to judge
+ * against). INCONCLUSIVE is not a pass.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -65,7 +66,15 @@ const score = (detected / valid) * 100;
 // score cannot fall below no matter how the timeouts are really classified.
 const floor = (counts.Killed / valid) * 100;
 const timeoutShare = detected === 0 ? 0 : counts.Timeout / detected;
-const breakAt = report.thresholds?.break ?? null;
+// `break` is NOT a required field of mutation-testing-report-schema (only
+// `high` and `low` are), so a Stryker version or config that stops emitting it
+// would leave this gate with nothing to compare against. Treat that as
+// INCONCLUSIVE rather than skipping the comparison and printing PASSED — a
+// check that did not run is never green.
+const breakAt = report.thresholds?.break;
+if (typeof breakAt !== "number") {
+  inconclusive("the report carries no numeric `thresholds.break` — there is nothing to judge the score against");
+}
 
 console.log(`mutants        ${total} (${Object.keys(files).length} files)`);
 console.log(`killed         ${counts.Killed}`);
@@ -87,7 +96,7 @@ if (timeoutShare > TIMEOUT_BUDGET) {
   );
 }
 
-if (breakAt != null && score < breakAt) {
+if (score < breakAt) {
   console.error(`\nmutation report FAILED: ${score.toFixed(2)}% is below the break threshold ${breakAt}`);
   process.exit(1);
 }
