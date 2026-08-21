@@ -10,7 +10,9 @@
  *
  * This module holds the ONE definition of "what schema version does this
  * document claim, and may this package read it", so the read path and the
- * migration path cannot drift into two conventions.
+ * migration path cannot drift into two conventions. That is literally true,
+ * not aspirational: `migrate()` calls {@link readSchemaVersion} too — there is
+ * no second copy of this read anywhere in `src/`.
  */
 
 import type * as Y from "yjs";
@@ -31,10 +33,19 @@ const META_ROOT = "meta";
  * "Unreadable" is three cases, and all three are fail-closed for a reader
  * (never a default to fill in):
  *
- *   1. the `meta` root is absent — a root type appears in `doc.share` only
- *      once it carries content, so `doc.share.has()` is precisely the question
- *      "does this document carry a readable meta map", and asking it does not
- *      create one;
+ *   1. the `meta` root is absent from `doc.share`. Read this precisely: it is
+ *      NOT true that a root appears in `doc.share` only once it carries
+ *      content — `Y.Doc#getMap` registers an EMPTY root immediately, and any
+ *      earlier reader in the process can therefore have put it there (that is
+ *      the #20 defect: an unconditional `getMap` turns an inspection into a
+ *      repair). What `doc.share.has()` actually asks is "has this root been
+ *      integrated — by an incoming update, or by a prior `getMap`", and the
+ *      point here is only that ASKING it does not create one. A root does
+ *      arrive over the WIRE only once it carries content — an empty root map
+ *      is not encoded — which is why a snapshot-forked replica legitimately
+ *      lacks roots the minting doc had. Case 1 ("absent") and case 2
+ *      ("present but empty") both yield `undefined`, and both are fail-closed,
+ *      so the distinction never has to be drawn by a caller;
  *   2. `meta` carries no `schema_version`;
  *   3. `schema_version` is not a positive integer (a string `"1"`, `null`, a
  *      float, `0`, …) — a value that is not a version cannot be compared to
@@ -43,7 +54,10 @@ const META_ROOT = "meta";
  * Typing a root that is ALREADY present (Yjs `AbstractType` → `Y.Map`, which
  * is how a replica's roots arrive from `Y.applyUpdate`) creates no struct and
  * no new share key, so this read stays byte-exact under
- * `encodeStateAsUpdate`.
+ * `encodeStateAsUpdate` and leaves the `doc.share` key set unchanged. It is a
+ * client-side REINTERPRETATION of structs the doc already holds: the share
+ * entry for a root that arrived untyped is replaced by the typed view of the
+ * same structs, which is what every reader in this package does.
  *
  * Exported from the entrypoint because a host has the same question to answer
  * BEFORE it reads: the doc host's `/project` endpoint already refuses a

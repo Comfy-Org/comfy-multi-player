@@ -176,4 +176,29 @@ describe("migrate() and project() agree on what is unreadable (KA-11)", () => {
     expect(() => migrate(doc, SCHEMA_VERSION)).not.toThrow();
     expect(() => project(doc, catalog)).not.toThrow();
   });
+
+  // Pins the SHARED DEFINITION, not merely agreement in outcome. `migrate()`
+  // held a private copy of this read while #38 was in flight; both now call
+  // `readSchemaVersion`, so "the ONE definition that cannot drift" is a fact
+  // about the code rather than a claim in a comment. This test is what makes
+  // re-splitting them visible: restore the private copy and `migrate()`
+  // reports these documents as a `fromVersion` MISMATCH again, which is the
+  // wrong diagnosis — the stored value is not a version at all.
+  it.each([
+    ["a string", "1"],
+    ["null", null],
+    ["a float", 1.5],
+    ["zero", 0],
+    ["a negative integer", -1],
+  ])("classifies meta.schema_version = %s as UNREADABLE on both entrypoints", (_label, value) => {
+    const doc = readableDoc();
+    metaMap(doc).set("schema_version", value);
+
+    expect(readSchemaVersion(doc)).toBeUndefined();
+    expect(() => migrate(doc, SCHEMA_VERSION)).toThrow(/no readable meta\.schema_version/);
+    expect(() => project(doc, catalog)).toThrow(/no readable meta\.schema_version/);
+    // Same notion of unreadable means the same document set, so neither
+    // entrypoint can be talked into the other's diagnosis.
+    expect(() => migrate(doc, SCHEMA_VERSION)).not.toThrow(/does not match fromVersion/);
+  });
 });
