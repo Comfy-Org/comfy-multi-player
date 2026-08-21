@@ -158,7 +158,7 @@ npx stryker run --timeoutMS 60000 --concurrency 4           # same commit, diffe
 ```
 
 - Ask which distinct outcomes the tool collapses into "good", and whether any is a **resource-exhaustion** outcome: `Timeout` counted as killed, a retried flake counted as a pass, an unparseable file counted as lint-clean, an unloadable module counted as covered. A score that *rises* under load is measuring contention.
-- Confirm the knobs governing that collapse are pinned in config. `stryker.config.mjs` must set `timeoutMS` and `concurrency`, or the score is a property of the runner rather than of the tests. It sets neither on this branch as of 2026-08-21 (the pin is on `task/mut-ka2-pin`), so **no mutation figure measured from this branch is quotable or comparable**, including its own history.
+- Confirm the knobs governing that collapse are pinned in config. `stryker.config.mjs` must keep `timeoutMS` and `concurrency` explicit, or the score becomes a property of the runner rather than of the tests. Compare figures only when those settings match; if either pin disappears or changes, re-establish a baseline instead of extending the old trend line.
 - Hand-verify any subsystem reported at or near 100%: apply two or three of its "killed" mutants by hand and run the full suite. **No reading of the output reveals this band** — a timeout and a kill are the same symbol in the report — so this is P1 applied to the tool that automates P1, and it is the only thing that settles it.
 - **Blocking** when a quality metric moves materially under environment change alone, or when such a metric is quoted without the configuration that produced it, or used as a gate threshold or a trend line. Report "not comparable" rather than a trend.
 
@@ -168,7 +168,7 @@ Do not ask whether the assertion is true. Ask whether it has **room to be false*
 
 **The question:** name the value the assertion reads, then answer — *what is the smallest violation of this property that leaves that value unchanged?* If you can construct one, the observable is inadequate. **Blocking** when the property is a `KA-*` invariant.
 
-In this repo the hazard has a name. `project()` is a lossy view: correct, production code, used correctly, and it does not render `__stamps` or `__applied` — `grep -n '__stamps\|__applied' src/project.ts` returns nothing, while `src/doc.ts:103` and `:108` are where they live (verified at `76d0180`, 2026-08-21). Every convergence-relevant invariant is defined over `Y.encodeStateAsUpdate`. Print both for one case and the finding is two words:
+In this repo the hazard has a name. `project()` is a lossy view: correct, production code, used correctly, and it does not render `__stamps` or `__applied` — `grep -n '__stamps\|__applied' src/project.ts` returns nothing, while `appliedMap` and `stampsMap` in `src/doc.ts` are where they live. Every convergence-relevant invariant is defined over `Y.encodeStateAsUpdate`. Print both for one case and the finding is two words:
 
 ```ts
 const before = Y.encodeStateAsUpdate(doc)
