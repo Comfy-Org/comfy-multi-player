@@ -221,7 +221,7 @@ describe("gen-coderabbit-config", () => {
     const twice = run(root);
     expect(twice.status).toBe(1);
     expect(twice.stderr).toContain('top-level "reviews:" lines: 2 (expected 1)');
-    expect(twice.stderr).toContain('key directly above the region: "reviews:"');
+    expect(twice.stderr).toContain('nearest top-level key above the region: "reviews:"');
   });
 
   it("fails (exit 1) when the region sits under the wrong key while reviews: exists elsewhere", () => {
@@ -231,7 +231,7 @@ describe("gen-coderabbit-config", () => {
     const orphan = run(root);
     expect(orphan.status).toBe(1);
     expect(orphan.stderr).toContain('top-level "reviews:" lines: 1 (expected 1)');
-    expect(orphan.stderr).toContain('key directly above the region: "chat:"');
+    expect(orphan.stderr).toContain('nearest top-level key above the region: "chat:"');
   });
 
   it("fails (exit 1) when the region is no longer nested under reviews:", () => {
