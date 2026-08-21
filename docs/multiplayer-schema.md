@@ -824,6 +824,10 @@ mutating a snapshot-forked replica (KA-10).
 
 - `migrate()` is the fail-closed READ gate. Validation runs on **every** path,
   including `fromVersion === SCHEMA_VERSION`.
+  **Superseded in part by Amendment A5:** `migrate()` is *a* fail-closed read
+  gate and remains the migration path, but it is no longer the only one, and it
+  was never the load-bearing one — nothing forces a caller through it.
+  `project()` carries the same gate as of #38, and both call one shared read.
 - `fromVersion` is a caller *claim*, made by a caller that may not have minted
   the document. It must agree with the document's own `meta.schema_version`.
 - A doc with **no readable `meta.schema_version`** — no `meta` root, or a

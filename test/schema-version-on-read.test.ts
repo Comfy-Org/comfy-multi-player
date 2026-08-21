@@ -8,9 +8,14 @@
  * read path itself, so a low-context caller cannot skip it.
  *
  * Both entrypoints are pinned here, because the point is that they agree:
- * same failure type (`SchemaVersionError`), same notion of "unreadable", and
- * the same byte-exact refusal (fail-closed never half-writes, and reading the
- * claim must not materialize a root — schema §10).
+ * same failure type (`SchemaVersionError`), same notion of "unreadable" —
+ * literally the same, since both call `readSchemaVersion` — and the same
+ * byte-exact refusal (fail-closed never half-writes, and reading the claim
+ * must not materialize a root — schema §10).
+ *
+ * The "same failure type" clause has A3's one exception, and it is asserted
+ * below rather than described: a `meta` root integrated as the wrong concrete
+ * Y type surfaces Yjs's constructor clash, not a `SchemaVersionError`.
  *
  * NON-VACUOUSNESS. Every fail-closed case below runs against a REAL fixture
  * workflow that projects cleanly one line earlier. An empty `Y.Doc` would
@@ -143,6 +148,29 @@ describe("project() enforces schema-version on read (KA-11, #38)", () => {
 
     expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
     expect([...doc.share.keys()]).toEqual(rootsBefore);
+  });
+
+  it("materializes no root on a SNAPSHOT-FORKED replica, which is where it could", () => {
+    // FIXTURE ADEQUACY, and the case above does not have it. A minted document
+    // already holds every root, so "doc.share unchanged" there is unfalsifiable
+    // — there is nothing left for a materializing gate to conjure. A replica
+    // forked from the bootstrap snapshot (schema §9) legitimately lacks `links`
+    // and `definitions` (empty roots are not encoded, A3's worked example), so
+    // this is the smallest fixture on which the assertion has room to be false.
+    const source = readableDoc();
+    metaMap(source).set("schema_version", SCHEMA_VERSION + 1);
+    const replica = new Y.Doc();
+    Y.applyUpdate(replica, Y.encodeStateAsUpdate(source));
+
+    const rootsBefore = [...replica.share.keys()].sort();
+    expect(rootsBefore).not.toContain("definitions");
+
+    expect(() => project(replica, catalog)).toThrow(SchemaVersionError);
+
+    expect([...replica.share.keys()].sort()).toEqual(rootsBefore);
+    // Stated so nobody simplifies the assertion back to the convenient form:
+    // an empty materialized root encodes to ZERO bytes, so a byte comparison
+    // alone cannot see this violation. The share-key set is load-bearing.
   });
 
   it("refuses an OLDER document and points at migrate() rather than projecting or migrating it", () => {

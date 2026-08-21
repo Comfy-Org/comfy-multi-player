@@ -156,11 +156,27 @@ document's own `meta.schema_version`. It throws when:
 - `fromVersion` is not an integer ≥ 1, or is greater than `SCHEMA_VERSION`
   (deliberately: a document newer than the code is refused, never read);
 - `meta.schema_version` disagrees with `fromVersion`;
-- **`meta.schema_version` cannot be read at all** — no `meta` root, or a `meta`
-  root without the key. Such a document is rejected, not assumed current. Every
-  document `mint()` produces carries the key, and so does every replica forked
-  from a minted snapshot, so this is a malformed document rather than a shape a
-  host can produce (schema Amendment A3).
+- **`meta.schema_version` cannot be read at all** — no `meta` root, a `meta`
+  root without the key, or a value that is not a positive integer. Such a
+  document is rejected, not assumed current. Every document `mint()` produces
+  carries the key, and so does every replica forked from a minted snapshot, so
+  this is a malformed document rather than a shape a host can produce (schema
+  Amendments A3 and A5).
+
+### `readSchemaVersion(doc): number | undefined` / `assertReadableSchema(doc, context): void`
+
+The KA-11 read gate, exported for a host that wants to refuse a mismatched
+document with its own structured error **before** it reads, rather than by
+catching a throw. `readSchemaVersion` returns the document's own claim, or
+`undefined` when there is no readable one (absent `meta` root, absent key, or a
+value that is not a positive integer); it materializes nothing.
+`assertReadableSchema` is the throw form `project()` and `migrate()` both use —
+`context` names the entrypoint in the message.
+
+One caveat on the error type, from Amendment A3 and true of every entrypoint
+here: a document whose `meta` root was integrated as a different concrete Y
+type surfaces Yjs's own constructor-clash `Error`, not a `SchemaVersionError`.
+Still fail-closed, still a throw, but match on that possibility too.
 
 Both outcomes are byte-exact: a no-op and a rejection each leave
 `encodeStateAsUpdate(doc)` unchanged and materialize no root type. It checks the

@@ -219,19 +219,33 @@ function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): Record<s
  *
  * FAIL-CLOSED ON SCHEMA (KA-11, #38). The very first thing this does is refuse
  * a document whose `meta.schema_version` is missing, unreadable, or not this
- * package's `SCHEMA_VERSION` — `SchemaVersionError`, before a single key is
- * read. `migrate()` was the only fail-closed read gate before, and nothing
- * forced a caller through it, so a document minted by a NEWER package was
- * best-effort projected by an OLDER reader as though it were current: the
- * silent mis-projection KA-11 exists to prevent.
+ * package's `SCHEMA_VERSION` — `SchemaVersionError`, before it reads any
+ * workflow CONTENT. (Not "before it reads any key": reading the version claim
+ * is itself a key read. The distinction matters because the claim has to be
+ * read from somewhere.) `migrate()` was the only fail-closed read gate before,
+ * and nothing forced a caller through it, so a document minted by a NEWER
+ * package was best-effort projected by an OLDER reader as though it were
+ * current: the silent mis-projection KA-11 exists to prevent.
+ *
+ * One documented exception to the error TYPE, carried from Amendment A3: a
+ * document whose `meta` root was integrated as a different concrete Y type
+ * surfaces Yjs's own constructor-clash `Error`, not a `SchemaVersionError`.
+ * Still fail-closed, still a throw, but a consumer matching on the type must
+ * expect it.
  *
  * This is a WHOLE-DOCUMENT refusal, and it is deliberately not the same
- * policy as `tryProjectNode`'s per-node skip above. A structurally invalid
- * node is one corrupt entry in an otherwise readable document, and dropping it
- * keeps the other nodes readable. A wrong schema version says the reader
- * cannot interpret the layout AT ALL — every node it went on to project would
- * be a guess, so there is nothing left to salvage and skipping is not
- * available as an option.
+ * policy as `tryProjectNode`'s per-node skip above. Take the wording from §7
+ * rule 6 exactly: what gets skipped is an entry that cannot be READ — not a
+ * `Y.Map`, or a `widgets` slot that is not a `Y.Map`, and EXACTLY those two.
+ * An "invalid" node in the looser sense (a mistyped `flags`, a blank `type`,
+ * an `id` disagreeing with its key) is odd but readable and projects verbatim;
+ * Amendment A4 narrowed the rule to that precisely because the wider version
+ * silently deleted nodes the write path had accepted. Salvageability is the
+ * axis, not severity: an unreadable entry is one bad entry in a document the
+ * reader otherwise understands completely, so per-entry recovery exists. A
+ * wrong schema version says the reader cannot interpret the layout AT ALL —
+ * every node it went on to project would be a guess — so there is no readable
+ * remainder to salvage and a skip is not even available as an option.
  */
 export function project(doc: Y.Doc, catalog: WidgetCatalog): WorkflowJSON {
   assertReadableSchema(doc, "project");

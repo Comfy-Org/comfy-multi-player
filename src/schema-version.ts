@@ -57,7 +57,8 @@ const META_ROOT = "meta";
  * `encodeStateAsUpdate` and leaves the `doc.share` key set unchanged. It is a
  * client-side REINTERPRETATION of structs the doc already holds: the share
  * entry for a root that arrived untyped is replaced by the typed view of the
- * same structs, which is what every reader in this package does.
+ * same structs, which is what every reader in this package (and the read-only
+ * surface) does.
  *
  * Exported from the entrypoint because a host has the same question to answer
  * BEFORE it reads: the doc host's `/project` endpoint already refuses a
@@ -121,11 +122,20 @@ export function assertSchemaVersionAgainst(doc: Y.Doc, context: string, expected
  * an older layout as-is is not an option either — that IS the mis-projection
  * KA-11 names.
  *
- * Consistent with `migrate()` by construction: same failure type
- * (`SchemaVersionError`), same notion of unreadable, same wording for a
- * too-new document, and the same refusal to materialize a root on the failure
- * path — a rejected read leaves `encodeStateAsUpdate(doc)` byte-identical and
- * `doc.share` untouched.
+ * Consistent with `migrate()` by construction, and by construction is meant
+ * literally — both call {@link readSchemaVersion}, so there is no second
+ * definition of "unreadable" to drift. Same failure type
+ * (`SchemaVersionError`), same wording for a too-new document, and the same
+ * refusal to materialize a root on the failure path — a rejected read leaves
+ * `encodeStateAsUpdate(doc)` byte-identical and `doc.share` untouched.
+ *
+ * ONE EXCEPTION to "same failure type", recorded by Amendment A3 for
+ * `migrate()` and true here for the same reason: a document whose `meta` root
+ * was integrated as a different concrete Y type surfaces Yjs's own
+ * constructor-clash `Error` from the `getMap` inside `readSchemaVersion`, not
+ * a `SchemaVersionError`. It is still fail-closed and still a throw, but a
+ * consumer matching on the error TYPE must expect it. Pinned by
+ * `test/schema-version-on-read.test.ts`.
  */
 export function assertReadableSchema(doc: Y.Doc, context: string): void {
   assertSchemaVersionAgainst(doc, context, SCHEMA_VERSION);
