@@ -783,8 +783,9 @@ function requireOutputSlot(src: Y.Map<unknown>, op: ConnectOp): Y.Array<unknown>
  * op-only PROPERTY is checked. `link_type` is still copied into the document
  * with no validation at all.
  *
- * `link_id` WAS in that list until #59 added its storability check. That check
- * reads nothing but the op, yet a `connect` it rejects STILL resolves
+ * `link_id` WAS in that list until #59 added its write-site check, now expressed
+ * by A10's `arrayItemRefusal`/`mapValueRefusal` encodability predicates. That
+ * check reads nothing but the op, yet a `connect` it rejects STILL resolves
  * differently by arrival order, because it sits below the destination
  * delete-wins return — measured. It is the cleanest demonstration that this
  * function is about POSITION, not about what a check reads: moving that check
