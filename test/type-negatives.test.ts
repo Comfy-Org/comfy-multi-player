@@ -37,18 +37,32 @@ const tsc = join(root, "node_modules", "typescript", "bin", "tsc");
 const project = join(root, "test", "types", "tsconfig.json");
 const negatives = join(root, "test", "types", "invalid-states.negative.ts");
 
-/** Every invalid state the file is required to still be asserting. */
+/**
+ * Every invalid state the file is required to still be asserting.
+ *
+ * Matched with an ANCHORED pattern and compared with `toBe`, not
+ * `toBeGreaterThanOrEqual` over a bare `/@ts-expect-error/g`. The loose
+ * version had three assertions of slack, because the file's own docblock says
+ * the words "@ts-expect-error" three times — so three real directives could be
+ * deleted while the census stayed happy. Demonstrated: removing
+ * `topLevelWithPath`'s two directives and `unprovenInteriorPath`'s left both
+ * tests green. An exact count also means ADDING a state without updating this
+ * constant fails, which is the reminder you want.
+ */
 const EXPECTED_DIRECTIVES = 13;
+const DIRECTIVE = /^[ \t]*\/\/ @ts-expect-error\b/gm;
 
 describe("invalid op states are unrepresentable (issue #17)", () => {
   it("still asserts every invalid state — the census that keeps the tsc run non-vacuous", () => {
     const source = readFileSync(negatives, "utf8");
-    const directives = source.match(/@ts-expect-error/g) ?? [];
+    const directives = source.match(DIRECTIVE) ?? [];
     expect(
       directives.length,
-      "test/types/invalid-states.negative.ts lost @ts-expect-error directives; a `tsc` " +
-        "exit 0 over a file with no assertions is a vacuous green, not a passing gate",
-    ).toBeGreaterThanOrEqual(EXPECTED_DIRECTIVES);
+      "test/types/invalid-states.negative.ts no longer carries exactly " +
+        `${EXPECTED_DIRECTIVES} @ts-expect-error directives. Fewer means an invalid state ` +
+        "stopped being asserted and a `tsc` exit 0 over it is a vacuous green; more means a " +
+        "state was added — update EXPECTED_DIRECTIVES in the same commit.",
+    ).toBe(EXPECTED_DIRECTIVES);
     // The positive controls are the other half: without them a change that
     // broke EVERY op literal would still leave the directives "used".
     expect(source).toContain("Positive controls");

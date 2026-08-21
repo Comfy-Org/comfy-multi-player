@@ -89,6 +89,16 @@ const wireOp = (shape: Record<string, unknown>): Op => shape as unknown as Op;
 
 // ---------------------------------------------------------------------------
 // Group 1 — REJECTED at runtime, with a named code, doc untouched
+//
+// "Doc untouched" is asserted per case here and holds for all three, but it is
+// NOT a general property of rejection in this package and must not be read as
+// one. A neighbouring path already violates it: an autogrow `connect` carrying
+// `grow.inputcount` appends the grown slot BEFORE `applyInputcountBump` can
+// throw `malformed_op` or `unknown_widget`, and a throwing `doc.transact` body
+// does not roll back — so that rejection leaves an orphaned slot behind and
+// records no `op_id`. That is issue #10 (reject-without-mutation), tracked in
+// `docs/ROADMAP.md`, pre-existing and out of scope here. Named so this file's
+// three green byte-identity assertions are not mistaken for a survey.
 // ---------------------------------------------------------------------------
 
 describe("#17 group 1: invalid states the runtime already rejects", () => {
