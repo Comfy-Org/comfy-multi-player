@@ -69,6 +69,20 @@ describe("check-profile-claims staleness gate", () => {
     expect(run.stderr).toContain("does not exist");
   });
 
+  it("fails when the claim target escapes the repo root", () => {
+    writeFileSync(join(checks, "a.md"), "<!-- claim: root: :: ../../../../etc/passwd -->\n");
+    const run = runAgainst(root);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("escapes the repo root");
+  });
+
+  it("fails when the claim target is a directory, not a file", () => {
+    writeFileSync(join(checks, "a.md"), "<!-- claim: anything :: src -->\n");
+    const run = runAgainst(root);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("not a regular file");
+  });
+
   it("fails on a malformed marker missing the separator", () => {
     writeFileSync(join(checks, "a.md"), "<!-- claim: no separator here -->\n");
     const run = runAgainst(root);

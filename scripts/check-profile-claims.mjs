@@ -28,8 +28,8 @@
  *      to the profiles that restate code facts, starting with api-contract.md)
  */
 
-import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
+import { dirname, join, resolve, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // PROFILE_CLAIMS_ROOT overrides the repo root used to resolve claim targets, and
@@ -71,10 +71,26 @@ for (const name of profiles) {
       stale.push(`${name}: empty claim needle for target ${target}`);
       continue;
     }
-    const targetPath = join(root, target);
+    // A claim target is a repo-relative path to a committed source file. Reject
+    // anything that escapes the root (traversal) or is not a regular file before
+    // reading it, so a marker cannot point the gate at /etc/passwd or a directory.
+    const rootResolved = resolve(root);
+    const targetPath = resolve(rootResolved, target);
+    if (targetPath !== rootResolved && !targetPath.startsWith(rootResolved + pathSep)) {
+      stale.push(
+        `${name}: claim target escapes the repo root: ${target}\n      claim: ${needle}`,
+      );
+      continue;
+    }
     if (!existsSync(targetPath)) {
       stale.push(
         `${name}: claim target does not exist: ${target}\n      claim: ${needle}`,
+      );
+      continue;
+    }
+    if (!statSync(targetPath).isFile()) {
+      stale.push(
+        `${name}: claim target is not a regular file: ${target}\n      claim: ${needle}`,
       );
       continue;
     }
