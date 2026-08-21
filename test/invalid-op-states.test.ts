@@ -108,9 +108,12 @@ const wireOp = (shape: Record<string, unknown>): Op => shape as unknown as Op;
 //     cannot store (`Map`, `Set`, `RegExp`, `ArrayBuffer`, `Error`);
 //   - and a reference cycle is accepted outright, then makes
 //     `encodeStateAsUpdate` throw permanently.
+// A third, outside this handler: `applyDeleteNode` reads `op.removed_links` —
+// an op-only value — only after `mdel(nodes, key)`, so a non-array deletes the
+// node and then throws.
 // Tracked by #59, #61 and #68. `src/applier.ts`'s module JSDoc and
-// `docs/INVARIANTS.md` KA-4 list the same two holes; if you change one, change
-// all three.
+// `docs/INVARIANTS.md` KA-4 list the same three holes; if you change one,
+// change all three.
 //
 // A `Symbol` or throwing-`valueOf` `base_version` used to be a third trigger
 // here. Hoisting `stampKey` into `requireOpOnlyValid` closed it on every

@@ -391,10 +391,15 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
     //   2. op-only `to_slot` domain     -> input_slot_missing
     //   3. state-dependent `from_slot`  -> output_slot_missing
     //   4. state-dependent `to_slot`    -> input_slot_missing
-    // On `main` every one of these was state-dependent and the `to_slot` range
-    // check ran first, so ALL nine combinations below returned
-    // `input_slot_missing`. Only the rows where an op-only `from_slot` failure
-    // outranks a `to_slot` failure actually change.
+    // On `main` the `to_slot` range check ran before `requireOutputSlot`, so
+    // most of these returned `input_slot_missing` there — but NOT all of them,
+    // and an earlier version of this comment claimed otherwise. `[9, 0]`
+    // returned `output_slot_missing` on `main` too (only `from_slot` is
+    // invalid, nothing for the `to_slot` check to catch), and `[-1, 0]`
+    // returned the raw-TypeError `apply_failed` — the headline case this PR
+    // exists to fix, and the only combination whose CLASS of outcome changed.
+    // Both are in the table below so the claim is checkable rather than
+    // asserted.
     // README tells integrators to "Match on `code`, never on `message`", so the
     // code is contractual and this precedence should not drift again unnoticed.
     for (const [fromSlot, toSlot, expected] of [
@@ -404,8 +409,10 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
       [-1, 9, "output_slot_missing"],  // from_slot fails op-only first (CHANGED)
       [-1, -1, "output_slot_missing"], // from_slot op-only outranks to_slot op-only (CHANGED)
       [0.5, 0.5, "output_slot_missing"], // same (CHANGED)
-      [9, 0, "output_slot_missing"],   // only from_slot invalid (unchanged)
-      [0, 9, "input_slot_missing"],    // only to_slot invalid (unchanged)
+      [9, 0, "output_slot_missing"],   // only from_slot invalid (unchanged on main)
+      [0, 9, "input_slot_missing"],    // only to_slot invalid (unchanged on main)
+      [-1, 0, "output_slot_missing"],  // main: apply_failed (raw TypeError) — CLASS CHANGED
+      [0.5, 0, "output_slot_missing"], // same (CLASS CHANGED)
     ] as [number, number, string][]) {
       const doc = mint(workflow, catalog);
       const result = applyOps(doc, [{
@@ -475,6 +482,40 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
       } as unknown as Op], countingCatalog);
       expect(result.failed).not.toBeNull();
       expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
+    },
+  );
+
+  it.each([
+    ["a number", 5],
+    ["an object", {}],
+    ["a boolean", true],
+  ])(
+    "KNOWN HOLE: delete_node with %s removed_links deletes the node, THEN throws",
+    (_label, removedLinks) => {
+      // Asserting the BUG, in the discipline #58 established: a prose list stays
+      // true-looking after a fix, an assertion goes red. `op.removed_links` is
+      // read from the OP ALONE but evaluated after `mdel(nodes, key)`, so the
+      // node is gone before the throw and `__applied` is unwritten, which makes
+      // the "rejection" both destructive and non-idempotent on retry.
+      //
+      // NOT fixed here: hoisting it is a one-liner, but it would newly reject
+      // payloads `main` accepts on a handler this PR does not otherwise touch,
+      // which needs its own G8 vocabulary analysis. Identical on `main`.
+      // Enumerated as the third open hole in `src/applier.ts`,
+      // `docs/INVARIANTS.md` KA-4, `README.md`, contract D4 and
+      // `test/invalid-op-states.test.ts`. When it is fixed, this goes red —
+      // move it to an assertion of byte-identity and drop it from those five.
+      const doc = mint(workflow, catalog);
+      const before = Buffer.from(Y.encodeStateAsUpdate(doc));
+      const result = applyOps(doc, [{
+        op: "delete_node", op_id: opId("delrl"), actor: "human:z", base_version: 9,
+        stamp: [9, "human:z"], node_id: 700, removed_links: removedLinks,
+      } as unknown as Op], catalog);
+      expect(result.failed?.code).toBe("apply_failed");
+      expect(
+        Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before),
+        "delete_node/removed_links is fixed: move this into the byte-identity set and drop it from the three-hole enumerations",
+      ).toBe(false);
     },
   );
 

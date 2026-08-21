@@ -95,13 +95,15 @@ incumbent link. **All four now hold**, and #34 additionally makes every op-only
 `connect`/`set_widget` precondition run before the delete-wins returns, so those
 rejections are order-independent too (schema Amendment A6).
 
-Two residual paths remain, and they are not rejection-ordering defects: a value
-`structuredClone` accepts but Yjs cannot store (`Map`, `Set`, `RegExp`,
-`ArrayBuffer`, `Error`) still mutates before throwing, and a REFERENCE CYCLE is
-accepted outright and then makes `encodeStateAsUpdate` throw permanently.
-Tracked by #59, #61 and #68; `docs/INVARIANTS.md` KA-4 and `README.md` carry the
-same two. Until they land, "resending the whole batch is always safe" is true
-for every rejection code the applier raises deliberately, and not for those two.
+Three residual paths remain: a value `structuredClone` accepts but Yjs cannot
+store (`Map`, `Set`, `RegExp`, `ArrayBuffer`, `Error`) still mutates before
+throwing; a REFERENCE CYCLE is accepted outright and then makes
+`encodeStateAsUpdate` throw permanently; and `delete_node` with a non-array
+`removed_links` deletes the node before it throws, because that value is read
+from the op but evaluated after the deletion. Tracked by #59, #61 and #68;
+`docs/INVARIANTS.md` KA-4 and `README.md` carry the same three. Until they land,
+"resending the whole batch is always safe" is true for every rejection code the
+applier raises deliberately, and not for those three.
 
 **Why.** The alternative, rejecting the whole batch, throws away work the
 writer already considers accepted. The alternative to *that*, skipping the

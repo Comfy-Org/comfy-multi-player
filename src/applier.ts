@@ -33,7 +33,7 @@
  * grow payload shape, and opaque destinations.
  *
  * NOT "every precondition that can throw" — that claim was false when this
- * file first made it, and stating it accurately is the point. TWO holes are
+ * file first made it, and stating it accurately is the point. THREE holes are
  * known and open:
  *  - a value `structuredClone` ACCEPTS but Yjs cannot store (`Map`, `Set`,
  *    `RegExp`, `ArrayBuffer`, `Error`) still mutates and then throws
@@ -43,7 +43,11 @@
  *    permanently — the document is unrecoverable (#68). Entry points MEASURED
  *    so far: `set_widget.value`, `grow.inputcount.value`, `add_node`'s
  *    `widgets_values`, `connect.link_type`, `connect.link_id`, and
- *    `connect.grow.widget` (the one `grow` field nothing type-checks). Treat
+ *    `connect.grow.widget` (the one `grow` field nothing type-checks);
+ *  - and `applyDeleteNode` reads `op.removed_links` — an OP-ONLY value — only
+ *    AFTER `mdel(nodes, key)`, so a non-array (`5`, `{}`, `true`) deletes the
+ *    node and then throws, and a string is accepted and iterated character by
+ *    character. Identical on `main`. Treat
  *    this as a lower bound, not a closed set: every op field copied into the
  *    doc without a storability check is a candidate, and #68's gate must be
  *    written against the WRITE sites rather than against this list.
@@ -652,8 +656,10 @@ function requireOutputSlot(src: Y.Map<unknown>, op: ConnectOp): Y.Array<unknown>
  * returns for that reason. `applyAddNode` has the same shape behind a DIFFERENT
  * early return — `if (nodes.has(key)) return`, structural idempotency, which
  * also consumes the `op_id` — so an `add_node` whose payload fails the
- * catalogue check is `invalid_node_payload` on a replica that has not yet seen
- * a rival same-id `add_node` and an applied no-op on one that has. Measured,
+ * catalogue check is `catalog_required` / `uncatalogued_widget_write` on a
+ * replica that has not yet seen a rival same-id `add_node`, and an applied
+ * no-op on one that has (`invalid_node_payload`, from the `createNodeMap`
+ * try/catch, diverges the same way). Measured,
  * and identical on `main`. Left alone deliberately: hoisting the check above
  * that return would make a duplicate `add_node` with a bad payload REJECT where
  * it currently no-ops, which is a new rejection needing its own vocabulary

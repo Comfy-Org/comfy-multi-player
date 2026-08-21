@@ -399,10 +399,13 @@ const CASES: Row[] = [
 ];
 
 /**
- * Rejections that violate KA-4 on this branch. Each is reproduced in
- * the `KA-4 known violations (issue #10) are still violations` block below,
- * which asserts that each one still breaks byte-identity TODAY.
- * Move these into `CASES` when PR #34 (issue #10) is an ancestor.
+ * Rejections known to violate KA-4. EMPTY since #34 (issue #10) landed: the
+ * four `connect` rows it held are ordinary `CASES` rows now.
+ *
+ * Kept rather than deleted so a future regression has somewhere to be recorded
+ * deliberately, with the same discipline #58 used — assert the bug, name the
+ * fix, and let the assertion go red when it lands. If you add a row here, add
+ * a matching block that asserts it STILL breaks byte-identity today.
  */
 const KNOWN_KA4_VIOLATIONS: readonly string[] = [];
 
@@ -429,7 +432,7 @@ describe("KA-4: a rejected op leaves the doc byte-identical and does not consume
     expect(res.applied_count).toBe(0);
   });
 
-  it("covers every kind the follow-up named, and records the ones issue #10 still breaks", () => {
+  it("covers every kind the follow-up named, and records that issue #10 leaves none of them broken", () => {
     // Guards against the table quietly losing a kind in a future edit.
     const kinds = new Set(CASES.map((c) => c.kind));
     for (const k of ["envelope", "reset_doc", "clear", "delete_node", "add_node", "set_widget", "connect", "connect+grow"]) {
@@ -584,13 +587,6 @@ describe("KA-4 sweep completeness", () => {
     }
   });
 });
-
-/**
- * The four issue #10 violations, asserted rather than merely listed. Each MUST
- * still break byte-identity today; when PR #34 lands, these go red and the rows
- * move into `CASES`. A prose list cannot do that — it stays true-looking after
- * the bug is fixed.
- */
 
 describe("KA-4 abort-remainder: a rejection mid-batch leaves exactly the applied prefix (vocabulary §4)", () => {
   const goodDelete = () => ({ op: "delete_node", ...env(), node_id: 1, removed_links: [] }) as unknown as Op;

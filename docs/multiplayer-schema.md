@@ -1249,8 +1249,10 @@ WHERE an existing check runs rather than which properties are checked.
 `add_node` has the same shape behind a different early return: `if
 (nodes.has(key)) return` (structural idempotency, which also consumes the
 `op_id`) sits above the catalogue checks, so an `add_node` with a bad payload
-racing a rival same-`node_id` `add_node` is `invalid_node_payload` in one
-arrival order and an applied no-op in the other. Measured, identical on `main`,
+racing a rival same-`node_id` `add_node` is rejected in one arrival order
+(`catalog_required` / `uncatalogued_widget_write` from the catalogue check, or
+`invalid_node_payload` from the `createNodeMap` try/catch) and an applied no-op
+in the other. Measured, identical on `main`,
 and NOT closed here — hoisting that check would make a duplicate `add_node`
 with a bad payload reject where it now no-ops, a new rejection needing its own
 analysis. It is adjacent to carve-out 3, which already says same-`node_id`

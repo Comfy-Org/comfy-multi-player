@@ -357,17 +357,20 @@ wrong:
 | **Delete-wins no-op** — the target node is gone | `applied` | no | yes |
 | **Malformed on its face, whatever the document state** — `connect` with a `from_slot` or `to_slot` outside the non-negative integers, a non-numeric `to_slot` without `grow`, a non-string `grow.name`/`grow.type`/`grow.inputcount.widget`, a non-cloneable widget value, or a `base_version` that throws on conversion | `failed` | no (byte-identical for this op; a valid prefix earlier in the batch is still applied — §4) | **no** |
 | Duplicate — already applied to this document | `skipped` | no | already was |
-| Rejected | `failed` | no (byte-identical) — **with two known exceptions, below** | **no** |
+| Rejected | `failed` | no (byte-identical) — **with three known exceptions, below** | **no** |
 
-**The two exceptions, stated because the row above would otherwise overclaim
-(`docs/INVARIANTS.md` KA-4 and contract D4 record the same two).** Issue #10's
+**The three exceptions, stated because the row above would otherwise overclaim
+(`docs/INVARIANTS.md` KA-4 and contract D4 record the same three).** Issue #10's
 class is not fully closed. A rejection still mutates before it throws when the
 op carries a value `structuredClone` accepts but Yjs cannot store (`Map`, `Set`,
-`RegExp`, `ArrayBuffer`, `Error`). And a REFERENCE CYCLE is not rejected at all
+`RegExp`, `ArrayBuffer`, `Error`). A REFERENCE CYCLE is not rejected at all
 — it is accepted, after which `encodeStateAsUpdate` throws permanently and the
-document cannot be encoded or projected again. Tracked by #59, #61 and #68;
+document cannot be encoded or projected again. And `delete_node` with a
+non-array `removed_links` (`5`, `{}`, `true`) DELETES THE NODE and only then
+throws, leaving the document changed by a "rejected" op; a string is accepted
+outright and iterated character by character. Tracked by #59, #61 and #68;
 until those land, "byte-identical on rejection" holds for every rejection code
-the applier raises deliberately, and not for these two.
+the applier raises deliberately, and not for these three.
 
 The four `connect` paths this row used to except — the two `output_slot_missing`
 cases and the two `connect`+`inputcount` grow rejections, swept by
@@ -388,17 +391,19 @@ ops *k*..*n* are not applied at all. Fix the failing op and resend the whole
 batch with the **same** `op_id`s: the prefix comes back in `skipped`, the
 remainder applies. Rejected ops consume no `op_id`, so a batch is retryable.
 
-**One exception, and it is not yet fixed.** Four `connect` rejections write
-before they validate, so the document is *not* byte-identical after them and a
-retry is not safe on its own: `output_slot_missing` with an empty destination
-slot (the concrete-input register claim is already written); `output_slot_missing`
-with an occupied destination slot (**the incumbent link has already been
-severed**); and the two `connect`+`inputcount` grow rejections
-(`unknown_widget`, `malformed_op`), which have already appended the grown slot.
-Yjs does not roll a `transact` body back on throw, so this is a property of
-write order inside each handler, not something the transaction provides. Issue
-#10; fix in flight on PR #34. Enumerated and held in
-`test/ka4-rejection-byte-identity.test.ts`.
+**The four `connect` rejections that used to break this are fixed (#34).**
+`output_slot_missing` with an empty destination slot, `output_slot_missing` with
+an occupied one (which used to sever the incumbent link before rejecting), and
+the two `connect`+`inputcount` grow rejections all leave the document
+byte-identical now, and are swept as ordinary rows in
+`test/ka4-rejection-byte-identity.test.ts`. Yjs does not roll a `transact` body
+back on throw, so this is a property of write order inside each handler, not
+something the transaction provides — which is why it had to be fixed by moving
+checks rather than by wrapping them.
+
+**Three exceptions remain**, listed under the outcome table above: a value Yjs
+cannot store, a reference cycle, and `delete_node` with a non-array
+`removed_links`. For those three a retry is still not safe on its own.
 
 Rejection codes: `malformed_op`, `unknown_op`, `op_deferred`,
 `catalog_required`, `invalid_node_payload`, `unknown_widget`,
@@ -486,7 +491,6 @@ is closed.
 4. Two writes to the same target **inside one batch** share a `base_version`,
    so they resolve by `op_id`, not by position in the batch. "Last spec wins"
    is not true.
-
 5. An interior write into a subgraph definition that more than one node
    instantiates is **rejected** (`shared_definition_unforked`), where comfy-cli
    forks the definition instead. Schema §5.3 keeps forking OPEN and requires the
