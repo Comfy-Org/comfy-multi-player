@@ -43,6 +43,8 @@ import {
   isStorableMapValue,
   mint,
   project,
+  referenceCyclePath,
+  survivesMapEncoding,
   type Op,
   type WidgetCatalog,
   type WorkflowJSON,
@@ -335,6 +337,27 @@ describe("a reference cycle is refused before it can brick the document (#14)", 
     ).toEqual({ a: { v: 1 }, b: { v: 1 } });
   });
 
+  it("`referenceCyclePath` reports where the back-edge is, and agrees with `encodingLosses`", () => {
+    expect(referenceCyclePath({ a: directCycle() })).toBe(".a.self");
+    expect(referenceCyclePath(indirectCycle())).toBe("[0].back");
+    expect(referenceCyclePath({ a: 1, b: [1, { c: "d" }] })).toBeNull();
+    const shared = { v: 1 };
+    expect(referenceCyclePath({ a: shared, b: shared })).toBeNull();
+    // A cycle the encoder cannot see is not a cycle: `writeAny` walks
+    // `Object.keys`, so a Map's ENTRIES are invisible to it and terminate.
+    const m = new Map<string, unknown>();
+    m.set("self", m);
+    expect(referenceCyclePath({ a: m })).toBeNull();
+    // …but a cycle through an own enumerable key of a non-plain object IS
+    // followed, because `writeAny` follows exactly those.
+    const err = new Error("boom") as Error & { self?: unknown };
+    err.self = err;
+    expect(referenceCyclePath({ a: err })).toBe(".a.self");
+    // The detector shipped in #61 sees the same back-edges.
+    for (const v of [{ a: directCycle() }, indirectCycle(), { a: err }]) {
+      expect(encodingLosses(v).some((l) => l.detail.includes("reference cycle"))).toBe(true);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -435,6 +458,35 @@ describe("the gate asks whether a value survives encoding, not whether yjs accep
     expect(() => mint({ ...workflow, extra: 10n as unknown as object }, catalog)).not.toThrow();
   });
 
+  it("`survivesMapEncoding` is re-derived from a real encode → decode, not from a remembered table", () => {
+    // Same technique as the storability pin next door: if a lib0 upgrade widens
+    // or narrows what the wire preserves, this fails instead of letting the
+    // gate drift.
+    const disagreements: string[] = [];
+    let lossy = 0;
+    let clean = 0;
+    for (const [label, make] of SHALLOW_SAMPLES) {
+      const value = make();
+      if (!isStorableMapValue(value)) continue; // yjs refuses it; a different question
+      const a = new Y.Doc();
+      a.getMap("m").set("k", value);
+      const b = new Y.Doc();
+      Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
+      const survived = identicalShallow(value, b.getMap("m").get("k"));
+      if (survived !== survivesMapEncoding(value)) {
+        disagreements.push(
+          `${label}: round trip survived=${String(survived)}, predicate=${String(survivesMapEncoding(value))}`,
+        );
+      }
+      if (survived) clean++;
+      else lossy++;
+    }
+    expect(disagreements).toEqual([]);
+    // Non-vacuity: a predicate that agreed with an all-clean sample space would
+    // prove nothing.
+    expect(lossy).toBeGreaterThan(4);
+    expect(clean).toBeGreaterThan(8);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -497,4 +549,71 @@ describe("the correction stops at the boundary of the pending decision", () => {
     ).toBeNull();
   });
 
+  it("`isStorableMapValue` still answers its own question — the two predicates are not merged", () => {
+    // The storability mirror is unchanged: it still says what yjs ACCEPTS, so
+    // the yjs-drift pin next door keeps measuring yjs. What changed is which
+    // predicate the GATE consults.
+    expect(isStorableMapValue(new Date(0))).toBe(true);
+    expect(isStorableMapValue(2n ** 70n)).toBe(true);
+    expect(survivesMapEncoding(new Date(0))).toBe(false);
+    expect(survivesMapEncoding(2n ** 70n)).toBe(false);
+    expect(survivesMapEncoding(10n)).toBe(true);
+    expect(survivesMapEncoding({ a: new Map() })).toBe(true); // SHALLOW, by design
+  });
 });
+
+// ---------------------------------------------------------------------------
+// sample space + helpers used above
+// ---------------------------------------------------------------------------
+
+class Instance {
+  x = 1;
+}
+
+const SHALLOW_SAMPLES: Array<[string, () => unknown]> = [
+  ["null", () => null],
+  ["undefined", () => undefined],
+  ["number", () => 1],
+  ["NaN", () => Number.NaN],
+  ["-0", () => -0],
+  ["Infinity", () => Infinity],
+  ["float64", () => 1.5e300],
+  ["string", () => "s"],
+  ["boolean", () => true],
+  ["plain object", () => ({ a: 1 })],
+  ["array", () => [1, "two"]],
+  ["Uint8Array", () => new Uint8Array([1, 2])],
+  ["Date", () => new Date(0)],
+  ["BigInt 0", () => 0n],
+  ["BigInt 10", () => 10n],
+  ["BigInt 2^63-1", () => 2n ** 63n - 1n],
+  ["BigInt -2^63", () => -(2n ** 63n)],
+  ["BigInt 2^63", () => 2n ** 63n],
+  ["BigInt 2^70", () => 2n ** 70n],
+  ["BigInt -2^63-1", () => -(2n ** 63n) - 1n],
+  ["boxed Number", () => new Number(1)],
+  ["boxed String", () => new String("ab")],
+  ["boxed Boolean", () => new Boolean(true)],
+  ["class instance", () => new Instance()],
+  ["null-prototype object", () => Object.assign(Object.create(null), { a: 1 })],
+];
+
+/**
+ * Structural identity at the TOP level only — a `Map` and a `{}` must compare
+ * unequal (that indistinguishability is why `JSON.stringify` cannot be the
+ * oracle here), but interior differences are the pending decision's business,
+ * not this predicate's.
+ */
+function identicalShallow(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== typeof b) return false;
+  if (a === null || b === null || typeof a !== "object") return false;
+  if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b as object)) return false;
+  if (a instanceof Uint8Array) {
+    const other = b as Uint8Array;
+    return a.length === other.length && a.every((x, i) => x === other[i]);
+  }
+  const ka = Object.keys(a);
+  const kb = Object.keys(b as object);
+  return ka.length === kb.length && ka.every((k) => kb.includes(k));
+}
