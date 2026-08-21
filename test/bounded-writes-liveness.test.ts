@@ -19,9 +19,15 @@
  *     input pushes the count past a fixed ceiling. (7 is schema §11's spike
  *     figure and the number `test/applier.test.ts` quotes; this counter is one
  *     higher per op because it also charges the §4 `__applied` set.) The tests
- *     below show the count is UNBOUNDED in the size of the op's blast radius —
- *     `delete_node` costs `2·degree + 2` Y-writes — so any fixed ceiling K is
- *     exceeded at degree > K/2. That is a proof rather than a second copy of
+ *     below show the count grows without limit in the size of the op's blast
+ *     radius — `delete_node` costs `2·degree + 2` Y-writes — so a fixed ceiling K
+ *     is exceeded at degree > K/2, for every K this gate could plausibly take.
+ *     (Not literally EVERY K: issue #14's payload bounds, in flight, cap
+ *     `removed_links` at a maximum collection size, which caps the cost at
+ *     `2·MAX + 2`. The argument survives — that cap is orders of magnitude above
+ *     any ceiling `test/applier.test.ts` would set — but read "any fixed
+ *     ceiling" as "any ceiling in the range this gate uses".) That is a proof
+ *     rather than a second copy of
  *     the constant, which is why no ceiling value appears here: the ceiling
  *     lives in `test/applier.test.ts` and is deliberately NOT touched by this
  *     file, which several open PRs also edit.
@@ -153,7 +159,7 @@ describe("schema §11: the bounded-writes count grows with the op's blast radius
     expect(costs).toEqual(degrees.map((d) => 2 * d + 2));
   });
 
-  it("exceeds ANY fixed ceiling at a large enough degree, so the §11 gate can fire", () => {
+  it("exceeds any ceiling in this gate's range at a large enough degree, so the §11 gate can fire", () => {
     // The gate in `test/applier.test.ts` asserts `count <= LIMIT` for a fixed
     // LIMIT. This does not restate LIMIT — it shows the quantity is unbounded,
     // which is what makes that assertion a bound rather than a formality.
