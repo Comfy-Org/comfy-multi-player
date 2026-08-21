@@ -339,19 +339,20 @@ describe("KA-4 / D4: a rejected op leaves the document byte-identical (the whole
     );
 
     it.each([
-      ["undefined", undefined],
-      ["a Date", new Date(0)],
-      ["a BigInt", 10n],
-    ])("%s link_id is refused before the register is claimed", (_label, linkId) => {
-      // Accepted at a Y.Map set but NOT at the `Y.Array` insert into the source
-      // port's `links` — so these three reached the very last write of the
-      // handler and threw with the link tuple, the register claim and the
-      // destination slot already committed.
+      ["undefined", undefined, "malformed_op"],
+      ["a Date", new Date(0), "malformed_op"],
+      // The whole-envelope digest gate runs before destination storability;
+      // BigInt cannot be canonicalized, so it is reported as apply_failed.
+      ["a BigInt", 10n, "apply_failed"],
+    ])("%s link_id is refused before the register is claimed", (_label, linkId, code) => {
+      // Undefined and Date are accepted at a Y.Map set but NOT at the
+      // `Y.Array` insert into the source port's `links`. BigInt is refused
+      // earlier by whole-envelope canonicalization.
       assertRejectedWithoutMutation(workflow, {
         op: "connect", op_id: opId(`unstorable-link2-${String(linkId)}`), actor: "human:z",
         base_version: 9, stamp: [9, "human:z"], link_id: linkId as unknown as number,
         from_node: 300, from_slot: 0, to_node: 700, to_slot: 1, link_type: "IMAGE",
-      }, "malformed_op");
+      }, code);
     });
   });
 

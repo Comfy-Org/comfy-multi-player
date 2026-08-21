@@ -34,9 +34,13 @@
  * merely `< length`), the inputcount widget name and its cloneability, the
  * grow payload shape, and opaque destinations.
  *
- * A value must also be storable by Yjs, not merely structured-cloneable
- * ({@link isStorableMapValue} / {@link isStorableArrayItem}), and
- * `delete_node`'s `removed_links` must be iterable before the node is deleted.
+ * The digest canonicalizer first bounds the depth and shape of the WHOLE op
+ * envelope before the idempotency gate. Separately, a value that reaches a
+ * write must be storable by its destination Yjs type, not merely
+ * structured-cloneable ({@link isStorableMapValue} /
+ * {@link isStorableArrayItem}), and `delete_node`'s `removed_links` must be
+ * iterable before the node is deleted. The first gate protects canonical op
+ * identity; the latter gates define what may enter Yjs maps and arrays.
  *
  * One related hole remains: a REFERENCE CYCLE passes `structuredClone` (which preserves cycles by
  *    design) and `Y.Map.set` alike, then makes `encodeStateAsUpdate` throw
