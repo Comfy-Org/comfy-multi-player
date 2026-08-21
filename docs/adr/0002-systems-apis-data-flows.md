@@ -2,9 +2,11 @@
 
 - Status: Draft (for review)
 - Date: 2026-08-20
-- Verified against: `Comfy-Org/cloud` @ `8d062714` — `services/agent/ARCHITECTURE.md`,
-  `common/websocket/messages/crdt.go`, `.github/workflows/multiplayer-contract.yml`,
-  `services/agent/dochost/`
+- Verified against: `Comfy-Org/cloud` @ `070dce96` (`origin/main`, 2026-08-21) —
+  `services/agent/ARCHITECTURE.md`, `common/websocket/messages/crdt.go`,
+  `.github/workflows/multiplayer-contract.yml`, `services/agent/dochost/`.
+  (Originally verified at branch ref `8d062714`, which is **not an ancestor of `main`**;
+  the CRDT surfaces merged to `main` on 2026-08-20 and `main` is a superset of that ref.)
 - Related: ADR 0001 (op-based CRDT for graph state), `docs/multiplayer-schema.md`,
   `docs/api-contract-proposal.md`
 
@@ -203,19 +205,31 @@ Only `internal/target` (`Runtime`) and `internal/boundary` (`Policy`) differ.
   ComfyUI_frontend monorepo later is a dependency-source swap, not a protocol change.)
 - **The binary Yjs struct stream** is opaque bytes; nothing to typegen.
 
-## Verification note (V1-042 §7, corrected 2026-08-20 against the actual charts)
+## Verification note (V1-042 §7, re-corrected 2026-08-21 after the CRDT surfaces merged to `main`)
 
-A green preview/ephemeral built from **main/V0** proves nothing about the CRDT path — main has
-no doc-host, and agent smoke scenarios self-skip without `SMOKE_TARGET_CAPABILITIES=agent`. But
-the PR-ephemeral appset (`appsets/ephemeral-env-template.yaml`) **does include comfy-agent**,
-and the CRDT integration branch's ephemeral overlay enables the sidecar
-(`docHost.sidecar.enabled: true`, `AGENT_CRDT_MODE: "on"`, `DOC_HOST_ENDPOINT`) — so a
-**provisioned** #6711 preview or staging exercises the real CRDT write path. The env that
-genuinely excludes comfy-agent is the fixed shared `comfy-cloud-test-v2`; V1-042 §7 conflated
-it with PR ephemerals. Getting a preview is operational (re-apply the `preview-*` label and get
-the image build green), not a chart change. Real evidence = local stack
-(`SMOKE_TARGET_CAPABILITIES=agent` + `SMOKE_DOC_HOST_ENDPOINT` + `SMOKE_WIDGET_CATALOG_PATH`) +
-`agenteval` + a provisioned CRDT preview/staging + `crdt-shadow-diff`.
+**Superseded framing (2026-08-20):** an earlier version of this note reasoned about a "CRDT
+integration branch" (`8d062714`, PR #6711) versus a `main` that "has no doc-host". That split no
+longer exists — the server-side CRDT surfaces merged to `cloud` `main` on 2026-08-20, and any
+argument that leans on "#6711 is do-not-merge" as containment is void.
+
+Current state at `main@070dce96`:
+
+- The doc-host ships on `main` (`services/agent/dochost/`, chart template
+  `charts/comfy-agent/base/templates/deployment.yaml`). The base chart disables the sidecar
+  (`base/values.yaml:58-60`), but the **prod-v2, stg-v2, and ephemeral overlays all enable it**
+  with `AGENT_CRDT_MODE: "on"` — the CRDT write path runs in production, not just previews.
+- `preview-provision.yml` advertises the `agent` smoke capability unconditionally
+  (`smoke_target_capabilities=…,agent`, lines 89-100), so a **provisioned** `main` preview runs
+  the agent scenarios including `agent_crdt_shadow_diff` — the old self-skip caveat is gone for
+  previews. A green CI run that never provisions a preview still proves nothing.
+- The env that genuinely excludes comfy-agent remains the fixed shared `comfy-cloud-test-v2`
+  (no comfy-agent overlay exists for it); V1-042 §7 conflated it with PR ephemerals.
+- What "pre-ship" still accurately describes is the **client**: no frontend subscriber exists on
+  any released branch (see "Not yet built"), so the shipped server path has no consumer yet.
+
+Real evidence = local stack (`SMOKE_TARGET_CAPABILITIES=agent` + `SMOKE_DOC_HOST_ENDPOINT` +
+`SMOKE_WIDGET_CATALOG_PATH`) + `agenteval` + any provisioned `main` preview/staging +
+`crdt-shadow-diff`.
 
 ## Not yet built (do not describe as shipped)
 

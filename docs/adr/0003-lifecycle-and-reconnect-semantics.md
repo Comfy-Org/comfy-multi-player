@@ -12,7 +12,8 @@ each component invents its own recovery story and clients cannot reason about wh
 
 Grounding: the Lifecycle & Reconnect Semantics TDD subpage
 (https://www.notion.so/3c26d73d365081948262e2470878eb38, bundle `reports/lifecycle/`), the verified
-CRDT source `cloud@8d062714` (`services/agent/internal/docstore/docstore.go`,
+CRDT source `cloud@8d062714` — since merged to `main` (superset; re-pointed 2026-08-21 to
+`main@070dce96`) — (`services/agent/internal/docstore/docstore.go`,
 `services/agent/internal/loop/crdt.go`), and `research/architecture/kishore-crdt-architecture.md`.
 
 ## Decision
@@ -67,6 +68,7 @@ CRDT source `cloud@8d062714` (`services/agent/internal/docstore/docstore.go`,
 
 - Lifecycle & Reconnect Semantics subpage: https://www.notion.so/3c26d73d365081948262e2470878eb38
 - `reports/lifecycle/*.mmd` (diagram sources), especially `01-three-lifetimes.mmd`, `02-agent-turn.mmd`, `04-reconnect-catchup.mmd`
-- `cloud@8d062714`: `services/agent/internal/docstore/docstore.go:101-131` (CAS), `services/agent/internal/loop/crdt.go:401-455` (lost-CAS re-derivation)
+- `cloud@8d062714`: `services/agent/internal/docstore/docstore.go:101-131` (CAS), `services/agent/internal/loop/crdt.go:401-455` (lost-CAS re-derivation).
+  On `main@070dce96` (2026-08-21) these live at `docstore.go:109-129` (`Advance` CAS, `ErrSeqConflict`) and `crdt.go:416-457`.
 - ADR-004 (state authority & sync), ADR-007 (op-based CRDT V1), ADR-008 (local persistence)
 - Persistence & Data Model subpage: https://www.notion.so/3c36d73d365081759641d9b80600f9cc
