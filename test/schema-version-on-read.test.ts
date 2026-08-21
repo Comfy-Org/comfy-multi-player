@@ -11,7 +11,10 @@
  * same failure type (`SchemaVersionError`), same notion of "unreadable" —
  * literally the same, since both call `readSchemaVersion` — and the same
  * byte-exact refusal (fail-closed never half-writes, and reading the claim
- * must not materialize a root — schema §10).
+ * must not materialize a root — schema §10). The no-materialization assertions
+ * read `[...doc.share.keys()]`, never `encodeStateAsUpdate` alone: an empty
+ * materialized root encodes to ZERO bytes, so the byte comparison is blind to
+ * exactly the violation those assertions exist to catch (A3 "Guarded by").
  *
  * The "same failure type" clause has A3's one exception, and it is asserted
  * below rather than described: a `meta` root integrated as the wrong concrete
@@ -150,27 +153,56 @@ describe("project() enforces schema-version on read (KA-11, #38)", () => {
     expect([...doc.share.keys()]).toEqual(rootsBefore);
   });
 
-  it("materializes no root on a SNAPSHOT-FORKED replica, which is where it could", () => {
-    // FIXTURE ADEQUACY, and the case above does not have it. A minted document
-    // already holds every root, so "doc.share unchanged" there is unfalsifiable
-    // — there is nothing left for a materializing gate to conjure. A replica
-    // forked from the bootstrap snapshot (schema §9) legitimately lacks `links`
-    // and `definitions` (empty roots are not encoded, A3's worked example), so
-    // this is the smallest fixture on which the assertion has room to be false.
+  it("refuses without materializing on a forked replica, while the ACCEPT path materializes a root", () => {
+    // FIXTURE ADEQUACY (P11), and the two cases above do not have it. A minted
+    // document already holds every root, so "doc.share unchanged" there cannot
+    // be false — there is nothing left for a materializing gate to conjure. A
+    // replica forked from the bootstrap snapshot (schema §9) legitimately lacks
+    // `links` and `definitions` (an empty root is not encoded — A3's worked
+    // example), so it is the production shape on which the claim has room to
+    // fail. (This fixture workflow HAS links, so `links` is encoded and only
+    // `definitions` is absent — one root is enough for the assertion to have
+    // room to be false, and using the real fixture keeps the shape honest.)
+    //
+    // WHAT THIS TEST IS FOR, stated so it is not mistaken for a second guard on
+    // the refusal: every mutant that reddens the assertion below ALSO reddens
+    // the hand-built "no meta root" case, so as a guard it is redundant. It
+    // earns its place by pinning the CONTRAST, which nothing else pins and
+    // which the docs now depend on: the refusal path materializes nothing, and
+    // the accept path materializes `definitions`. That asymmetry is
+    // the reason `project()` may be called a pure read only with a qualifier
+    // (see README) — it is the #20 defect one function over, it is identical on
+    // `main`, and it is NOT closed by this change. If a later PR fixes the
+    // accept path, the second half of this test is what tells you.
     const source = readableDoc();
     metaMap(source).set("schema_version", SCHEMA_VERSION + 1);
-    const replica = new Y.Doc();
-    Y.applyUpdate(replica, Y.encodeStateAsUpdate(source));
+    const refused = new Y.Doc();
+    Y.applyUpdate(refused, Y.encodeStateAsUpdate(source));
 
-    const rootsBefore = [...replica.share.keys()].sort();
+    const rootsBefore = [...refused.share.keys()].sort();
     expect(rootsBefore).not.toContain("definitions");
 
-    expect(() => project(replica, catalog)).toThrow(SchemaVersionError);
+    expect(() => project(refused, catalog)).toThrow(SchemaVersionError);
+    // The refusal leaves the share key set alone. Note that asserting on
+    // `encodeStateAsUpdate` INSTEAD would be vacuous here: an empty
+    // materialized root encodes to zero bytes, so the byte comparison cannot
+    // see this violation at all. The share-key set is the load-bearing
+    // observable (A3 "Guarded by").
+    expect([...refused.share.keys()].sort()).toEqual(rootsBefore);
 
-    expect([...replica.share.keys()].sort()).toEqual(rootsBefore);
-    // Stated so nobody simplifies the assertion back to the convenient form:
-    // an empty materialized root encodes to ZERO bytes, so a byte comparison
-    // alone cannot see this violation. The share-key set is load-bearing.
+    // …and the same replica shape on the ACCEPT path does materialize.
+    const accepted = new Y.Doc();
+    Y.applyUpdate(accepted, Y.encodeStateAsUpdate(readableDoc()));
+    const acceptedBefore = [...accepted.share.keys()].sort();
+    const acceptedBytes = Y.encodeStateAsUpdate(accepted);
+    expect(() => project(accepted, catalog)).not.toThrow();
+    expect([...accepted.share.keys()].sort()).not.toEqual(acceptedBefore);
+    expect([...accepted.share.keys()].sort()).toEqual(
+      [...new Set([...acceptedBefore, "definitions"])].sort(),
+    );
+    // Harmless on the wire, which is why it is a qualifier and not a bug here:
+    // nothing was encoded.
+    expect(Y.encodeStateAsUpdate(accepted)).toEqual(acceptedBytes);
   });
 
   it("refuses an OLDER document and points at migrate() rather than projecting or migrating it", () => {
