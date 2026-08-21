@@ -594,6 +594,13 @@ edits to decided sections are not valid. The OPEN items eligible for
 amendment: shared-definition forking (§5.3), group ops (§6), multi-writer
 topology (§2.2), watermark implementation status (§4).
 
+**Allocating a letter:** the number is claimed **when the amendment lands on
+`main`**, not when the branch is written — take the next one after the last
+amendment on `main`. Three in-flight branches each grabbed "the next number"
+independently once, and two of them collided. If your branch is not the one
+merging, renumber on rebase; an amendment letter is a citation, and the cost of
+moving one is why it is assigned at the point it becomes real.
+
 ---
 
 ## Amendment A1 — 2026-08-12 — concrete-input contention; id-type identity
