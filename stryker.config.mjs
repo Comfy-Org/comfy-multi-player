@@ -51,8 +51,8 @@ export default {
   // whenever the score is raised; the margin is for new code, NOT for
   // measurement noise, which is now zero.
   thresholds: {
-    break: RE_DERIVE_BREAK,
-    low: RE_DERIVE_BREAK,
+    break: 84,
+    low: 84,
     high: 95,
   },
 };

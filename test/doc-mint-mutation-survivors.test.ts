@@ -156,6 +156,12 @@ function aliasedInstancesWorkflow(secondInstanceType: string): WorkflowJSON {
     definitions: {
       subgraphs: [
         { id: "D1", name: "MySubgraph", nodes: [{ id: 27, type: "Inner", widgets_values: ["orig"] }], links: [] },
+        // TWO unrelated definitions, so "is this name unique?" is a real
+        // question. One is not enough: with a single other definition, counting
+        // the names that MATCH and counting the names that DIFFER both give 1,
+        // and the uniqueness test cannot be told from its own negation.
+        { id: "D2", name: "Other", nodes: [{ id: 27, type: "Inner", widgets_values: ["other"] }], links: [] },
+        { id: "D3", name: "Third", nodes: [{ id: 27, type: "Inner", widgets_values: ["third"] }], links: [] },
       ],
     },
   } as unknown as WorkflowJSON;
@@ -234,6 +240,45 @@ describe("schema §5.3: instances addressed by the definition's NAME count too (
     expect(applyOps(doc, [aliasWrite(11, "written")], catalog).failed).toBeNull();
     expect(interiorTextOf(doc, "gamma")).toBe("written");
     expect(interiorTextOf(doc, "alpha")).toBe("a");
+  });
+
+  it("gives the same count whichever spelling it is asked with", () => {
+    // The count is a property of the DEFINITION, not of the string used to
+    // address it. Asking by id and by name must agree, or the guard's answer
+    // depends on how the caller happened to spell the lookup.
+    const doc = mint(aliasedInstancesWorkflow("MySubgraph"), catalog);
+    expect(countDefinitionInstances(doc, "D1")).toBe(2);
+    expect(countDefinitionInstances(doc, "MySubgraph")).toBe(2);
+  });
+
+  it("counts nodes claiming a type no definition resolves", () => {
+    // `countDefinitionInstances` is exported, so it must answer for an id that
+    // resolves to nothing rather than assuming the applier already resolved it.
+    const wf = {
+      nodes: [{ id: 1, type: "ghost", inputs: [], outputs: [] }],
+      links: [],
+    } as unknown as WorkflowJSON;
+    expect(countDefinitionInstances(mint(wf, catalog), "ghost")).toBe(1);
+    expect(countDefinitionInstances(mint(wf, catalog), "absent")).toBe(0);
+  });
+
+  it("gives an UNNAMED definition no name alias, so a type-less node is not an instance", () => {
+    // A node with no `type` key reads as "", and an unnamed definition's name
+    // also reads as "" — they must not be treated as the same thing.
+    const wf = {
+      nodes: [
+        { id: 1, type: "D1", inputs: [], outputs: [] },
+        { id: 2, inputs: [], outputs: [] },
+      ],
+      links: [],
+      definitions: {
+        subgraphs: [{ id: "D1", nodes: [{ id: 27, type: "Inner", widgets_values: ["orig"] }], links: [] }],
+      },
+    } as unknown as WorkflowJSON;
+    const doc = mint(wf, catalog);
+    expect(countDefinitionInstances(doc, "D1")).toBe(1);
+    expect(applyOps(doc, [aliasWrite(1, "written")], catalog).failed).toBeNull();
+    expect(interiorTextOf(doc, "D1")).toBe("written");
   });
 
   it("does NOT treat an AMBIGUOUS name as an alias (it resolves to nothing)", () => {
