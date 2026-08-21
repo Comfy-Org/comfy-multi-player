@@ -156,7 +156,23 @@ describe("migrate (schema §10)", () => {
     // A `meta` root that exists but carries no version is equally unreadable.
     const versionless = new Y.Doc();
     versionless.getMap("meta").set("catalog_version", "deadbeef");
+    const versionlessBefore = Y.encodeStateAsUpdate(versionless);
     expect(() => migrate(versionless, SCHEMA_VERSION)).toThrow(SchemaVersionError);
+    expect(() => migrate(versionless, SCHEMA_VERSION)).toThrow(/no readable meta\.schema_version/);
+    expect(Y.encodeStateAsUpdate(versionless)).toEqual(versionlessBefore);
+    expect([...versionless.share.keys()]).toEqual(["meta"]);
+
+    // And the case the helper's own reasoning turns on: a `meta` root that is
+    // REGISTERED in doc.share but carries nothing, which is what a caller who
+    // merely touched `metaMap(doc)` leaves behind. `share.has("meta")` is true
+    // here, so the guard falls through to the key read and must still reject.
+    const registeredEmpty = new Y.Doc();
+    registeredEmpty.getMap("meta");
+    expect([...registeredEmpty.share.keys()]).toEqual(["meta"]);
+    expect(() => migrate(registeredEmpty, SCHEMA_VERSION)).toThrow(SchemaVersionError);
+    expect(() => migrate(registeredEmpty, SCHEMA_VERSION)).toThrow(
+      /no readable meta\.schema_version/,
+    );
   });
 
   it("fails closed on a doc newer than this package", () => {

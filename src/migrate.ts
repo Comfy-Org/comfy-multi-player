@@ -15,9 +15,14 @@ import { SCHEMA_VERSION, SchemaVersionError } from "./types.js";
  *
  * `Y.Doc#getMap` lazily CREATES an absent root type and registers it in
  * `doc.share`, so calling it unconditionally turns an inspection into a
- * repair — the exact defect in #20. A root type appears in `doc.share` only
- * once it carries content, so `doc.share.has("meta")` is precisely the
- * question "does this doc carry a readable meta map". Typing a root that is
+ * repair — the exact defect in #20. `doc.share.has("meta")` asks the safe
+ * question instead: has this root been INTEGRATED, either by an incoming
+ * update or by a prior `getMap`? Note that a root arrives over the wire only
+ * once it carries content — an empty root map is not encoded — which is why a
+ * snapshot-forked replica legitimately lacks roots the minting doc had. Both
+ * "absent" and "present but empty" yield `undefined` here, and both are
+ * fail-closed for the caller, so the distinction never has to be drawn.
+ * Typing a root that is
  * ALREADY present (Yjs `AbstractType` → `Y.Map`) creates no struct and no new
  * share key, so the read stays byte-exact under `encodeStateAsUpdate` and
  * leaves the `doc.share` key set unchanged. It is a client-side
