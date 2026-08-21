@@ -124,22 +124,26 @@ classify, so a future export cannot widen the surface unreviewed.
   (`node scripts/bench-read.mjs <nodes>`): **1.90-2.24x, +0.055 to +0.066 ms
   per frame at 200 nodes**, and **1.91-1.97x, +0.285 to +0.300 ms at 1000
   nodes**, against a 16.6 ms frame budget — so ~0.4% of the budget at 200
-  nodes. The rejected full-node copy measures **3.94-4.51x**, about twice
+  nodes. The rejected full-node copy measures **3.85-4.74x**, about twice
   `readGraph` again, in the same runs. (An earlier figure of +0.32 ms at 1000
-  nodes is withdrawn: it does not reproduce at this base, and +0.29 is the
-  median here.)
+  nodes is withdrawn: it does not reproduce at this base across eight runs
+  spanning load average 1.8 to 8.1, and +0.29 is the median here.)
 - The schema gate is free on `readGraph` — 0.1195 ms/call without it against
   0.1219 with it at 200 nodes, inside run-to-run spread. On the doc-host's
   per-op probes (`docCatalogPin`, `hasNode`, `hasAppliedOp`) it is not free but
-  it is nanoseconds: 0.029-0.063 µs/call before the gate, 0.035-0.075 µs after
-  — about 1.4x — and still O(1). It is O(1) for two separate reasons, and both
-  were found by measuring rather than by a test. The gate short-circuits on a
-  readable document, and the content probe behind it stops at the first live
-  key rather than asking `Y.Map#size`, which walks the whole entry map
-  filtering tombstones. Removing the short-circuit costs 7x (0.048 -> 0.35
-  µs/call); removing it AND keying on `size` costs 90x (-> 3.15 µs/call at 200
-  nodes, and growing with the document) on a path whose whole point is being
-  O(1).
+  it is nanoseconds: 0.029-0.063 µs/call before the gate, 0.037-0.078 µs after
+  — about 1.4x — and still O(1) in the document, because the content question
+  is answered against the struct store (O(clients), and there are one or two)
+  rather than by walking roots.
+  **The cost is a reason the vocabulary-free probe is also the cheap one**, and
+  that was not obvious in advance. The intermediate implementation asked each
+  named root for a live key, which is O(1) only if you avoid `Y.Map#size` —
+  `size` filters tombstones across the whole entry map, and keying on it cost
+  3.15 µs/call at 200 nodes and grew with the document, on a path whose point
+  is being O(1). Reading the struct store has no such cliff and needs no
+  short-circuit in front of it (one was tried and measured at 0.046 vs 0.047
+  µs/call — noise — so it was deleted rather than shipped as a line no test
+  could hold).
 - `readGraph` returns a fixed subset of node fields. A consumer that needs
   another field needs a one-line package change and a pin bump. That friction is
   deliberate: it keeps each widening reviewable.
