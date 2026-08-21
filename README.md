@@ -208,8 +208,9 @@ building conflict UI or your own bookkeeping — `applyOps` uses them internally
 The entrypoint exports the op layer (`mint`, `applyOps`, `project`, `migrate`),
 the KA-11 read gate, the stamp machinery above, the ADR-004 follower read
 surface (`nodesMap`, `linksMap`, `OPAQUE_WIDGETS_KEY`), KA-1's `encodingLosses`
-diagnostic, the safer snapshot surface below, and the types. That is the whole
-public surface.
+diagnostic, the payload bounds (`MAX_OPS_PER_BATCH`, `MAX_PAYLOAD_DEPTH`,
+`MAX_COLLECTION_ENTRIES`, `MAX_OP_COST`, `opBoundsRefusal`), the safer snapshot
+surface below, and the types. That is the whole public surface.
 
 The three layout exports are a deliberate exception for the frontend follower
 documented by ADR-004. They are read-only by contract: that follower consumes
@@ -273,10 +274,20 @@ checks `doc.share` first.
 And this is not a way around the KA-11 read gate. `project()` refuses a document
 whose `meta.schema_version` this package cannot read; these functions read the
 same layout by the same key names, so they refuse it too — same
-`SchemaVersionError` — **when the document carries content**. A document that
-carries *nothing* still reads as empty, because that is the follower's
-pre-first-frame document and there is nothing there to mis-key. Pre-check with
-`readSchemaVersion(doc)` if you want a structured error instead of a throw.
+`SchemaVersionError`, same predicate — **when the document carries content**. A
+document that carries *nothing* still reads as empty, because that is the
+follower's pre-first-frame document and there is nothing there to mis-key.
+
+That last clause is the one place the two paths differ, and it differs in
+disposition, not in predicate: for a content-free document `project()` refuses
+where these functions return empty (Amendment A12).
+
+If you want a structured error rather than a throw, **catch
+`SchemaVersionError`** — that is the supported pre-check and it is exact.
+`readSchemaVersion(doc) === SCHEMA_VERSION` is a usable approximation but it is
+*stricter* than the gate: it is `undefined` for the pre-first-frame document
+too, so a host gating on it alone refuses precisely the document the empty
+clause exists to allow.
 
 `readGraph` deliberately returns a **subset** of each node's fields — the ones a
 follower renders — not the whole node. Copying every field costs about twice as

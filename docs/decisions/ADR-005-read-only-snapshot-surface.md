@@ -69,7 +69,19 @@ proved by attempting the violation in `test/readonly-surface.test.ts`:
    and the surface already reads it as empty on `main` with two tests pinning
    that. (`migrate()` *does* refuse that document — #30 — but that is a role
    split: migrating a document that says nothing about its own version is an
-   incoherent WRITE request, while reading nothing out of it is not.) The comparison itself is not re-implemented; it delegates
+   incoherent WRITE request, while reading nothing out of it is not.)
+   **This is the one place the disposition differs from `project()`'s**, and
+   Amendment A5's consumer-impact note recorded the opposite disposition as a
+   defect — a doc-host request whose snapshot folds to a root-less document
+   moved from HTTP 200 with an empty graph to HTTP 400. The two paths share a
+   PREDICATE and differ in what they do about one document class. Amendment
+   A12 carries the normative version.
+   The content question is deliberately **not** asked by enumerating the §1
+   root names: those are v1's names, and §10/KA-11 make renaming them the
+   canonical reason to bump `SCHEMA_VERSION`, so a name-keyed probe is blind to
+   exactly the document the gate exists to refuse. It reads the struct store,
+   which is vocabulary-free. A12 states this as a constraint on any second
+   implementation. The comparison itself is not re-implemented; it delegates
    to `schema-version.ts`, so this surface, `project()` and `migrate()` share
    one definition of "readable".
 
@@ -146,9 +158,13 @@ classify, so a future export cannot widen the surface unreviewed.
   never builds a document (it holds doc bytes opaquely and mints over HTTP),
   the frontend follower never writes `meta` at all, and comfy-cli — the
   normative op-vocabulary source — has no CRDT dependency and produces ops, not
-  documents. A host that wants a structured error rather than a throw should
-  pre-check with the exported `readSchemaVersion(doc)`, exactly as the doc-host
-  sidecar already pre-checks `catalog_version`.
+  documents. A host that wants a structured error rather than a throw
+  should **catch `SchemaVersionError`**, which is exact. `readSchemaVersion`
+  alone is *stricter* than the gate — it is `undefined` for the pre-first-frame
+  document too — so a host pre-checking on it refuses the document the empty
+  clause exists to allow. Worth revisiting if a consumer ever needs to ask the
+  gate's question without calling it: `carriesContent` is module-private
+  today, deliberately, because an unread export is future reachability.
 - **A producer survey is not the whole question, and one reachable state does
   hit the refusing clause.** The doc-host sidecar is stateless — a fresh
   `Y.Doc` and so a fresh clientID per request — and the deltas it returns are
@@ -160,6 +176,9 @@ classify, so a future export cannot widen the surface unreviewed.
   `schemaGuard` already refuses that state today, more strictly than this gate
   does (it has no empty-document escape at all). What the empty-document clause
   covers is "no frame has arrived yet", not "a frame arrived out of order".
+- **`readGraph` can throw where `nodesMap` could not**, so ADR-004's
+  description of it as a migration target for the frontend follower now comes
+  with that caveat; see the migration note below.
 - **Migration note for the consumer that adopts this surface.** The frontend
   runs its schema guard at the bridge seam and that seam rethrows anything that
   is not its own error type. A consumer swapping a hand-rolled read for

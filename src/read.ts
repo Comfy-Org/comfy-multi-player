@@ -60,14 +60,12 @@ import * as Y from "yjs";
 import {
   OPAQUE_WIDGETS_KEY,
   ROOT_APPLIED,
-  ROOT_DEFINITIONS,
   ROOT_LINKS,
   ROOT_META,
   ROOT_NODES,
   ROOT_STAMPS,
 } from "./doc.js";
-import { assertReadableSchema, readSchemaVersion } from "./schema-version.js";
-import { SCHEMA_VERSION } from "./types.js";
+import { assertReadableSchema } from "./schema-version.js";
 
 /**
  * The reserved per-node key holding a whole `widgets_values` array verbatim for
@@ -166,66 +164,51 @@ function snapshotRoot(doc: Y.Doc, name: string): Readonly<Record<string, unknown
 // ---------------------------------------------------------------------------
 
 /**
- * The schema §1 roots this package knows how to name.
+ * Whether this document has ever integrated a struct.
  *
- * "Does the document carry content" is asked over ALL of them, not just the one
- * a given accessor reads: a document whose `definitions` root is populated is
- * carrying content even when `readGraph` would return an empty graph, and the
- * question the gate asks is about the DOCUMENT, not about one accessor's
- * return value.
- */
-const SCHEMA_ROOTS: readonly string[] = [
-  ROOT_NODES,
-  ROOT_LINKS,
-  ROOT_DEFINITIONS,
-  ROOT_META,
-  ROOT_APPLIED,
-  ROOT_STAMPS,
-];
-
-/**
- * Whether any schema root holds an entry.
+ * DELIBERATELY VOCABULARY-FREE, and that is the whole point. The obvious
+ * implementation asks whether any of the schema §1 roots — `nodes`, `links`,
+ * `definitions`, `meta`, `__applied`, `__stamps` — holds an entry. It is also
+ * WRONG, in exactly the direction KA-11 cares about: those six names are v1's
+ * names, and KA-11 says the layout whose change REQUIRES a version bump is
+ * precisely the root-map names (`fixtures/golden-vectors/wire-layout.json`
+ * spells this out: "Renaming any of them is a layout break"). So a v2 document
+ * that renamed its roots — the repo's own worked example of what a v2 IS — is
+ * the one document a name-keyed probe cannot see. Measured: such a document
+ * carries 47 bytes and two structs, `project()` refuses it, and a name-keyed
+ * probe called it EMPTY and handed back `{nodes:{},links:{}}`. On a follower
+ * that diffs snapshots, an empty graph does not mean "nothing to draw"; it
+ * means "delete every node".
  *
- * Deliberately content, not root PRESENCE. A root can be present-but-empty
- * without the document carrying anything: `Y.Doc#getMap` registers an empty
- * root immediately, so any earlier reader in the same process can have put one
- * there (that is the #20 defect). Keying the gate on presence would let an
- * unrelated `metaMap(doc)` call elsewhere in the process flip a legitimately
- * empty document from "readable and empty" to "refused".
+ * `doc.store.clients` is the set of integrated structs, keyed by client. It is
+ * empty for a document that has never received anything, and non-empty the
+ * moment one has been integrated under ANY root name — so it answers "does
+ * this document carry something" without needing to know what v2 will call it.
  *
- * `doc.getMap` on a root that is ALREADY in `doc.share` types structs that
- * already exist — it adds no bytes to `encodeStateAsUpdate` and no share key
- * (see {@link rootMap}).
+ * Three consequences worth being explicit about:
  *
- * A root integrated as a DIFFERENT concrete Y type makes that `getMap` throw
- * Yjs's own constructor-clash `Error`, and it is caught here rather than
- * allowed to escape. Not to soften the failure — the document is malformed and
- * still fails closed — but to keep the failure's TYPE right. `project()`
- * reaches `assertReadableSchema` first, so a v2 document with a malformed
- * `nodes` root refuses it with a `SchemaVersionError`; letting the clash
- * escape from here would make this surface report Yjs's generic `Error` for
- * the same document, and a host that lifts `SchemaVersionError` as a typed
- * sentinel (the reason `assertReadableSchema` is exported at all) would lose
- * the signal. A root this package cannot even type is treated as CONTENT, so
- * the call falls through to the gate and gets the same refusal `project()`
- * gives. Amendment A3's exception still applies where it always did: if the
- * clash is on `meta` ITSELF, `readSchemaVersion` throws the clash `Error`
- * from inside the gate, exactly as it does for `project()` and `migrate()`.
+ *   - a root REGISTERED but never written adds no struct, so `metaMap(doc)`
+ *     called by an unrelated reader (the #20 defect, and something the
+ *     frontend's own schema guard does on every frame) still leaves the
+ *     document "carrying nothing". That was the reason the earlier probe keyed
+ *     on content rather than root presence, and it survives here for free;
+ *   - a document whose entries were all DELETED still carries structs, so it
+ *     refuses rather than reading as empty. That is the fail-closed direction
+ *     and it matches `project()`;
+ *   - it touches no root, so there is no `Y.Doc#getMap` to throw a
+ *     constructor clash and no `catch` to decide what a clash means. A
+ *     previous version treated a clash as content, which made two 2-byte,
+ *     zero-struct documents disagree on whether they were empty depending on
+ *     which concrete Y type an unrelated caller had registered.
+ *
+ * Structs buffered as `store.pendingStructs` — an update whose dependencies
+ * have not arrived — are deliberately NOT counted. They are not part of the
+ * document: `encodeStateAsUpdate` does not emit them and no reader can see
+ * them. A replica holding only pending structs really is carrying nothing yet.
  */
 function carriesContent(doc: Y.Doc): boolean {
-  for (const name of SCHEMA_ROOTS) {
-    if (!doc.share.has(name)) continue;
-    try {
-      // `keys()` rather than `size`: `Y.Map#size` walks the whole entry map
-      // filtering tombstones, so a size-keyed probe is O(nodes). Measured at
-      // 200 nodes with the short-circuit above removed, so that the probe is
-      // what is being timed: 3.15 µs/call by `size`, 0.35 µs by first-key.
-      // The first live key is all the question needs.
-      if (!doc.getMap<unknown>(name).keys().next().done) return true;
-    } catch {
-      // A root whose concrete type this package cannot name is not "nothing".
-      return true;
-    }
+  for (const structs of doc.store.clients.values()) {
+    if (structs.length > 0) return true;
   }
   return false;
 }
@@ -272,22 +255,21 @@ function carriesContent(doc: Y.Doc): boolean {
  * document that carries content and does not say which schema it is in is
  * refused, exactly as `project()` refuses it.
  *
+ * ONE DISPOSITION DIVERGENCE FROM `project()`, and it is the whole content of
+ * clause 2: the two share a PREDICATE (`readSchemaVersion`) and differ on what
+ * they do about a document that carries nothing. `project()` refuses it —
+ * Amendment A5 records that the doc host answers 400 for exactly that
+ * document, where it used to answer 200 with an empty graph. This surface
+ * returns empty. That is not parity lost by accident; it is the difference
+ * between a projection, which promises a workflow, and a snapshot read, which
+ * promises whatever is there.
+ *
  * The version comparison itself is NOT redefined here. `readSchemaVersion` and
  * `assertReadableSchema` are `schema-version.ts`'s, so this surface, the
  * projection, and `migrate()` share one definition of "readable" and cannot
  * drift into three.
  */
 function assertSnapshotReadable(doc: Y.Doc, context: string): void {
-  // Clause 0, and it is a COST decision, not a correctness one: for a document
-  // this package can read, `carriesContent` is guaranteed to be true (`meta`
-  // holds at least the version it just read), so asking it would be a second
-  // root walk for an answer already known. Deleting this line changes no
-  // result — no test in the suite reddens — but it costs ~7x on the host's
-  // O(1) per-op probes: 0.048 µs/call with it, 0.35 µs without, against
-  // 0.035 µs for the same call before the gate existed. It is held by the
-  // getMap-call-count assertion in `test/readonly-surface.test.ts`, not by any
-  // behavioural test.
-  if (readSchemaVersion(doc) === SCHEMA_VERSION) return;
   if (!carriesContent(doc)) return;
   assertReadableSchema(doc, context);
 }
@@ -301,8 +283,11 @@ function assertSnapshotReadable(doc: Y.Doc, context: string): void {
  *
  * Deliberately a SUBSET, not the whole node. A node also holds `inputs`,
  * `outputs`, `flags`, `properties`, `size`, `order`, `mode`, … and copying all
- * of them costs ~5x more per frame than copying these four (see the PR's cost
- * analysis) for data no current consumer reads. Adding a key here is a one-line,
+ * of them costs about TWICE as much per frame as copying these four — 4.0x a
+ * raw live-handle read against `readGraph`'s 2.0x, re-measured at this commit
+ * with `node scripts/bench-read.mjs` — for data no current consumer reads.
+ * (An earlier "~5x" here was against a different baseline and is withdrawn;
+ * README and ADR-005 both say "twice", and now so does this.) Adding a key here is a one-line,
  * reviewable change; handing back the whole node forever is not.
  *
  * `project(doc, catalog)` remains the full-fidelity read for a caller that has
