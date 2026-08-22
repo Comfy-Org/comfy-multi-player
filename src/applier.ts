@@ -212,24 +212,35 @@ export function canonicalOp(op: Op): string {
     );
   }
 
-  const normalize = (value: unknown, depth: number): unknown => {
+  const normalize = (value: unknown, depth: number, path: string): unknown => {
     if (depth > MAX_PAYLOAD_DEPTH) {
       throw new OpRejectedError(
         "payload_too_deep",
         `op payload nests deeper than ${MAX_PAYLOAD_DEPTH} levels`,
       );
     }
-    if (Array.isArray(value)) return value.map((child) => normalize(child, depth + 1));
+    // BigInt is not part of the JSON op envelope: JSON.stringify throws on it.
+    // Classify that caller error here, in the whole-op precondition walk, so it
+    // cannot fall through applyOps' unexpected-error boundary as apply_failed.
+    if (typeof value === "bigint") {
+      throw new OpRejectedError(
+        "malformed_op",
+        `op payload at ${path} is a BigInt and cannot be encoded as JSON`,
+      );
+    }
+    if (Array.isArray(value)) {
+      return value.map((child, index) => normalize(child, depth + 1, `${path}[${index}]`));
+    }
     if (typeof value === "object" && value !== null) {
       return Object.fromEntries(
         Object.entries(value)
           .sort(([a], [b]) => codePointCompare(a, b))
-          .map(([key, child]) => [key, normalize(child, depth + 1)]),
+          .map(([key, child]) => [key, normalize(child, depth + 1, `${path}.${key}`)]),
       );
     }
     return value;
   };
-  return JSON.stringify(normalize(op, 0));
+  return JSON.stringify(normalize(op, 0, "$"));
 }
 
 /**
