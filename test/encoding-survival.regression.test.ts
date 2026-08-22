@@ -452,6 +452,28 @@ describe("the gate asks whether a value survives encoding, not whether yjs accep
     expect(appliedMap(doc).has(remainder.op_id)).toBe(false);
   });
 
+  it("BigInt classification wins beyond the depth limit and preserves its exact path", () => {
+    let value: unknown = 10n;
+    for (let depth = 0; depth <= 64; depth++) value = { nested: value };
+    const op = setWidget(value, "deep-bigint");
+    const doc = mint(workflow, catalog);
+    const before = bytes(doc);
+    const result = applyOps(doc, [op], catalog);
+
+    expect(result.failed).toMatchObject({ code: "malformed_op" });
+    expect(result.failed?.message).toContain("$.value.nested.nested");
+    expect(bytes(doc).equals(before)).toBe(true);
+    expect(appliedMap(doc).has(op.op_id)).toBe(false);
+  });
+
+  it("escapes special object keys in a BigInt payload path", () => {
+    const op = setWidget({ 'a.b[0]"quoted': 10n }, "escaped-bigint-path");
+    const result = applyOps(mint(workflow, catalog), [op], catalog);
+
+    expect(result.failed).toMatchObject({ code: "malformed_op" });
+    expect(result.failed?.message).toContain('$.value["a.b[0]\\"quoted"]');
+  });
+
   it.each([
     ["2^63 (the first value that truncates)", 2n ** 63n],
     ["-2^63 - 1 (the first negative that truncates)", -(2n ** 63n) - 1n],

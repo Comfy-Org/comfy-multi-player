@@ -98,7 +98,12 @@ import {
   widgetStorageOf,
 } from "./doc.js";
 import { sha256Hex } from "./digest.js";
-import { MAX_OPS_PER_BATCH, MAX_PAYLOAD_DEPTH, opBoundsRefusal } from "./limits.js";
+import {
+  MAX_OP_COST,
+  MAX_OPS_PER_BATCH,
+  MAX_PAYLOAD_DEPTH,
+  opBoundsRefusal,
+} from "./limits.js";
 import { codePointCompare, compareStampKeys, stampKey, stampTargetKey } from "./stamps.js";
 import {
   DEFERRED_OPS,
@@ -201,6 +206,41 @@ export function applyOps(doc: Y.Doc, ops: Op[], catalog?: WidgetCatalog): ApplyR
  * what the digest is taken over.
  */
 export function canonicalOp(op: Op): string {
+  // BigInt classification takes precedence over the generic depth/cost gates.
+  // Keep this walk iterative and bounded so even a hostile envelope cannot
+  // turn the diagnostic into unbounded work.
+  const bigintStack: Array<{ value: unknown; path: string }> = [{ value: op, path: "$" }];
+  const bigintVisited = new Set<object>();
+  let bigintVisits = 0;
+  while (bigintStack.length > 0 && bigintVisits++ <= MAX_OP_COST) {
+    const { value, path } = bigintStack.pop()!;
+    if (typeof value === "bigint") {
+      throw new OpRejectedError(
+        "malformed_op",
+        `op payload at ${path} is a BigInt and cannot be encoded as JSON`,
+      );
+    }
+    if (typeof value !== "object" || value === null || bigintVisited.has(value)) continue;
+    bigintVisited.add(value);
+    if (Array.isArray(value)) {
+      const firstIndex = Math.max(0, value.length - (MAX_OP_COST - bigintVisits));
+      for (let index = value.length - 1; index >= firstIndex; index--) {
+        bigintStack.push({ value: value[index], path: `${path}[${index}]` });
+      }
+    } else {
+      const keys = Object.keys(value);
+      const firstIndex = Math.max(0, keys.length - (MAX_OP_COST - bigintVisits));
+      for (let index = keys.length - 1; index >= firstIndex; index--) {
+        const key = keys[index]!;
+        const segment = /^[A-Za-z_$][\w$]*$/.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`;
+        bigintStack.push({
+          value: (value as Record<string, unknown>)[key],
+          path: `${path}${segment}`,
+        });
+      }
+    }
+  }
+
   // Amendment A11 extends A8's whole-envelope, pre-idempotency gate with a
   // breadth/size budget. Its iterative depth check keeps A8's
   // `payload_too_deep` vocabulary while avoiding hostile recursion.
@@ -219,15 +259,6 @@ export function canonicalOp(op: Op): string {
         `op payload nests deeper than ${MAX_PAYLOAD_DEPTH} levels`,
       );
     }
-    // BigInt is not part of the JSON op envelope: JSON.stringify throws on it.
-    // Classify that caller error here, in the whole-op precondition walk, so it
-    // cannot fall through applyOps' unexpected-error boundary as apply_failed.
-    if (typeof value === "bigint") {
-      throw new OpRejectedError(
-        "malformed_op",
-        `op payload at ${path} is a BigInt and cannot be encoded as JSON`,
-      );
-    }
     if (Array.isArray(value)) {
       return value.map((child, index) => normalize(child, depth + 1, `${path}[${index}]`));
     }
@@ -235,7 +266,12 @@ export function canonicalOp(op: Op): string {
       return Object.fromEntries(
         Object.entries(value)
           .sort(([a], [b]) => codePointCompare(a, b))
-          .map(([key, child]) => [key, normalize(child, depth + 1, `${path}.${key}`)]),
+          .map(([key, child]) => {
+            const segment = /^[A-Za-z_$][\w$]*$/.test(key)
+              ? `.${key}`
+              : `[${JSON.stringify(key)}]`;
+            return [key, normalize(child, depth + 1, `${path}${segment}`)];
+          }),
       );
     }
     return value;
