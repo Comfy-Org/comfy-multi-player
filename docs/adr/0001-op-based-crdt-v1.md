@@ -47,6 +47,11 @@ authority" is therefore not a design axis; the axes that matter are (a) applier 
 6. **Applier stays a pure, portable package** with no client-idiosyncratic local state and no
    DOM/framework/server-only deps, so it runs identically in browser and host (and a future peer).
    Assert yjs-only as a runtime dependency directly (not merely a denylist).
+
+   > **STALENESS FLAG (2026-08-22):** The package now also exports a constrained read-only snapshot
+   > surface from `src/read.ts`; it returns deep-frozen plain data and applies the KA-11 schema read
+   > gate rather than exposing mutable Yjs handles. See PR #55 (ADR-005) and the A12 schema-guard
+   > correction in PR #76.
 7. **Conflict UX disabled for V1** (conflicts are now node-level, not full-doc); re-derive later.
 
 ## Topology
@@ -102,6 +107,12 @@ flowchart LR
   invalid op onward) is returned to the caller for correction/retry. Fan-out reflects only committed
   ops. Test with an invalid op at the first, middle, and last positions.
 
+  > **STALENESS FLAG (2026-08-22):** The package now rejects additional malformed/untrusted input
+  > before mutation, including changed-payload reuse of an `op_id` (`op_id_reuse`), unencodable or
+  > cyclic values, excessive nesting, and bounded batch/collection/payload cost. Current ceilings are
+  > `MAX_OPS_PER_BATCH = 1024`, `MAX_COLLECTION_ENTRIES = 4096`, and `MAX_OP_COST = 262144`. See
+  > PR #33 and schema Amendments A8-A11 (PRs #59, #61, #68, and #71).
+
 ## Invariants (a low-context contributor must not break these silently)
 
 **KEEP-ALIVE — guard these (preserve decentralization / offline / P2P / multiplayer):**
@@ -112,6 +123,10 @@ flowchart LR
    replica can evaluate offline. `op_id` is minted once by the creator, never regenerated.
 3. The op layer is pure and portable (assert yjs-only; no DOM/framework/litegraph/server-only deps).
 4. The applier is deterministic and idempotent (a duplicate `op_id` is a byte-identical no-op).
+
+   > **STALENESS FLAG (2026-08-22):** This is true only for an identical canonical payload. Reusing
+   > an `op_id` with a different payload is now an `op_id_reuse` rejection that leaves the document
+   > byte-identical and does not consume the retry. See PR #33 (Amendment A8).
 5. IDs are collision-free without coordination.
 6. Raw Yjs struct updates flow host -> follower one-way only; followers never write the shared doc.
 7. Presence/awareness is ephemeral (never persisted into the doc).
