@@ -7,6 +7,10 @@
   `.github/workflows/multiplayer-contract.yml`, `services/agent/dochost/`.
   (Originally verified at branch ref `8d062714`, which is **not an ancestor of `main`**;
   the CRDT surfaces merged to `main` on 2026-08-20 and `main` is a superset of that ref.)
+
+  > **STALENESS FLAG (2026-08-22):** Cloud `main` has advanced to `84890f9a`; spot checks at that
+  > revision still confirm the listed REST routes, CRDT frame types/caps, event schema, and doc-host,
+  > but this document has not been exhaustively re-verified against every intervening cloud change.
 - Related: ADR 0001 (op-based CRDT for graph state), `docs/multiplayer-schema.md`,
   `docs/api-contract-proposal.md`
 
@@ -31,6 +35,12 @@ The applier is one shared package — `@comfyorg/comfy-multi-player`, pinned by 
 browser imports it, and the cloud backend runs the **same** package inside a small Node sidecar
 (`services/agent/dochost`) rather than reimplementing op semantics in Go. There is deliberately
 **no Go applier**.
+
+> **STALENESS FLAG (2026-08-22):** The dependency-source claim is obsolete. The package is now
+> published publicly as `@comfyorg/comfy-multi-player@0.1.0`; cloud `main` consumes version `0.1.0`
+> from `services/agent/dochost/package.json`, and the frontend integration branch consumes the
+> published package as well. ADR-004's “git SHA; no registry publish yet” policy is pending separate
+> supersession under `CMP-ADR004-SUPERSEDE`.
 
 ## Cloud topology (verified)
 
@@ -176,6 +186,11 @@ loopback. Because ops are the replication unit, LAN / self-hosted **peer-to-peer
 stays possible. Offline product mode (a lightweight SQLite-backed durable runner) is later work;
 Temporal is not required on every local machine.
 
+> **UNVERIFIED-2026-08-22:** This local deployment topology is directional prose. This grooming pass
+> did not find a cheap authoritative cloud-main source that proves the in-process local doc host,
+> loopback channel set, BYOM wiring, or optional LAN peer path end to end; re-check the local
+> ComfyUI/desktop implementation before treating these elements as shipped.
+
 ## What is shared vs different across cloud and local
 
 | Concern | Cloud | Local |
@@ -227,6 +242,10 @@ Current state at `main@070dce96`:
 - What "pre-ship" still accurately describes is the **client**: no frontend subscriber exists on
   any released branch (see "Not yet built"), so the shipped server path has no consumer yet.
 
+  > **STALENESS FLAG (2026-08-22):** A frontend integration branch now consumes the published
+  > package, so “no consumer yet” is no longer true without the narrower “released frontend”
+  > qualifier. The released-branch status itself was not changed by this flag.
+
 Real evidence = local stack (`SMOKE_TARGET_CAPABILITIES=agent` + `SMOKE_DOC_HOST_ENDPOINT` +
 `SMOKE_WIDGET_CATALOG_PATH`) + `agenteval` + any provisioned `main` preview/staging +
 `crdt-shadow-diff`.
@@ -236,6 +255,10 @@ Real evidence = local stack (`SMOKE_TARGET_CAPABILITIES=agent` + `SMOKE_DOC_HOST
 - The frontend has **no** CRDT doc-frame client (`doc_ops`/`doc_update`/`doc_subscribe`), no
   follower Y.Doc/applier consumer, and no `comfy-multi-player` dependency — only the V0
   `draft_patch` apply path. This is the FE-1330 work.
+
+  > **STALENESS FLAG (2026-08-22):** This remains a statement about released frontend branches,
+  > not all active development: the FE integration branch now depends on
+  > `@comfyorg/comfy-multi-player@0.1.0`. Its complete doc-frame behavior was not re-verified here.
 - Typed E2E clients are not wired (the FE generates JSON schemas, not an openapi client).
 
 ## Glossary
