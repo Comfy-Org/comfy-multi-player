@@ -1,11 +1,8 @@
 /**
- * No-mock CRDT POC — drives the REAL doc-host sidecar (cloud PR #6711,
- * services/agent/dochost/src/server.ts) running against the REAL
- * @comfyorg/comfy-multi-player applier in this repo.
- *
- * This branch is based on main; the applier (src/) is byte-identical to the
- * proposal pin 6793d754 (the only commits since that pin are docs-only), so the
- * op semantics exercised here match the contract proposal exactly.
+ * No-mock CRDT POC — drives the REAL doc-host sidecar from cloud main
+ * (services/agent/dochost/src/server.ts). The sidecar consumes the published
+ * @comfyorg/comfy-multi-player@0.1.0 package; this driver exercises that applier
+ * through the sidecar's HTTP contract.
  *
  * Nothing here is stubbed: mint, apply, and project all execute inside the real
  * server over loopback HTTP; the follower is a real Y.Doc integrating only the

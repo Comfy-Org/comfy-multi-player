@@ -5,15 +5,15 @@ A small **no-mock** harness that drives the **real** doc-host sidecar (from
 so you can watch a workflow document converge from ops + deltas without standing up the whole
 cloud. It is a backend/protocol proof, **not** a live multiplayer demo.
 
-> DRAFT / POC. This is exploratory: a shareable way to exercise and reason about the V1
-> document-semantics path. It is not wired into CI and is not meant to merge as-is.
+> This example is a shareable way to exercise and reason about the V1 document-semantics path.
+> It is not wired into CI.
 
 ## What is real vs. absent
 
 | Piece | Here | Notes |
 | --- | --- | --- |
 | Applier / merge / projection / mint | **REAL** | this package (`@comfyorg/comfy-multi-player`) |
-| doc-host sidecar server | **REAL** | `services/agent/dochost/src/server.ts` from cloud PR #6711 |
+| doc-host sidecar server | **REAL** | `services/agent/dochost/src/server.ts` from cloud main |
 | HTTP transport (mint/apply/project) | **REAL** | loopback `127.0.0.1:8095`, same as in-pod |
 | Follower integration | **REAL** | a real `Y.Doc` fold of `snapshot + host deltas` (raw-struct fan-out) |
 | Widget catalog / base graph / ops | **REAL fixtures + frozen op shapes** | `fixtures/catalog.json`, `fixtures/session-edit-heavy.session.jsonl` |
@@ -33,17 +33,18 @@ simply not part of this slice. Nothing is stubbed.
 
 ## Run it
 
-You need a checkout of `Comfy-Org/cloud` (PR #6711) for the doc-host sidecar source at
+You need a checkout of `Comfy-Org/cloud` main for the doc-host sidecar source at
 `services/agent/dochost`. Then one command builds both halves, starts the sidecar, and drives it:
 
 ```bash
-DOCHOST_SRC=/path/to/cloud/services/agent/dochost ./examples/dochost-poc/run.sh
+DOCHOST_SRC=/path/to/cloud-main/services/agent/dochost ./examples/dochost-poc/run.sh
 # -> ALL GREEN: 7 passed, 0 failed
 ```
 
-`services/agent/dochost/package.json` already depends on this package at the proposal pin
-(`github:Comfy-Org/comfy-multi-player#6793d754...`), so its `npm ci` pulls the same applier this
-example is built from — no private-registry or file-link juggling.
+`services/agent/dochost/package.json` depends on the published npm-registry package
+`@comfyorg/comfy-multi-player@0.1.0`, so its `npm ci` pulls the published applier. This harness's
+fixtures come from the local build of this repo; `0.1.0` matches this repo at the publish point,
+so the projection-equality check covers that local-build/published-package boundary.
 
 Manual equivalent, if you'd rather not use the script:
 

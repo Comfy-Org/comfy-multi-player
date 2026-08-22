@@ -3,17 +3,15 @@
 # start the sidecar on :8095, and run the no-mock POC driver. No mocks, no /tmp state.
 #
 # Usage:
-#   DOCHOST_SRC=/path/to/cloud/services/agent/dochost ./examples/dochost-poc/run.sh
+#   DOCHOST_SRC=/path/to/cloud-main/services/agent/dochost ./examples/dochost-poc/run.sh
 #
-# DOCHOST_SRC must point at services/agent/dochost from Comfy-Org/cloud PR #6711.
-# Its package.json already depends on this package at the proposal pin
-# (github:Comfy-Org/comfy-multi-player#6793d754...), so `npm ci` there pulls the
-# same applier this example is built from.
+# DOCHOST_SRC must point at services/agent/dochost from Comfy-Org/cloud main.
+# Its `npm ci` pulls the published @comfyorg/comfy-multi-player@0.1.0 applier.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PORT="${PORT:-8095}"
-: "${DOCHOST_SRC:?set DOCHOST_SRC to cloud services/agent/dochost}"
+DOCHOST_SRC="${DOCHOST_SRC:-$REPO_ROOT/../cloud/services/agent/dochost}"
 
 echo "== 1/4 build applier ($REPO_ROOT) =="
 ( cd "$REPO_ROOT" && npm ci && npm run build )
