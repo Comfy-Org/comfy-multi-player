@@ -84,8 +84,8 @@ function bothOrders(base: WorkflowJSON, ops: Op[]): [WorkflowJSON, WorkflowJSON]
   };
   const forward = fork();
   const reverse = fork();
-  expect(applyOps(forward, ops, catalog).failed).toBeNull();
-  expect(applyOps(reverse, [...ops].reverse(), catalog).failed).toBeNull();
+  expect(applyOps(forward, ops, catalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
+  expect(applyOps(reverse, [...ops].reverse(), catalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
   return [project(forward, catalog), project(reverse, catalog)];
 }
 
