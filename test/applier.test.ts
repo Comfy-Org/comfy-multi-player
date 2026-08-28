@@ -47,26 +47,41 @@ function envelope(actor: string, baseVersion: number) {
   return { op_id: testOpId(), actor, base_version: baseVersion, stamp: [baseVersion, actor] as [number, string] };
 }
 
+function rejectedOutcome(result: ReturnType<typeof applyOps>) {
+  return result.outcomes.find(
+    (outcome): outcome is Extract<(typeof result.outcomes)[number], { outcome: "rejected" }> =>
+      outcome.outcome === "rejected" && outcome.reason.code !== "batch_aborted",
+  );
+}
+
+function processedOpIds(result: ReturnType<typeof applyOps>): string[] {
+  return result.outcomes.filter((outcome) => outcome.outcome !== "rejected").map((outcome) => outcome.op_id);
+}
+
+function noOpIds(result: ReturnType<typeof applyOps>): string[] {
+  return result.outcomes.filter((outcome) => outcome.outcome === "no-op").map((outcome) => outcome.op_id);
+}
+
 describe("idempotency (byte-identical re-apply)", () => {
   for (const file of sessionFiles()) {
     it(`${file}: full stream twice + every op re-applied → byte-identical state`, () => {
       const { header, ops } = loadSession(file);
       const doc = mint(header.base_workflow, catalog);
-      expect(applyOps(doc, ops, catalog).failed).toBeNull();
+      expect(rejectedOutcome(applyOps(doc, ops, catalog))).toBeUndefined();
       const bytes = Buffer.from(Y.encodeStateAsUpdate(doc));
 
       // Whole stream again: every op an idempotent duplicate.
       const again = applyOps(doc, ops, catalog);
-      expect(again.failed).toBeNull();
-      expect(again.applied).toEqual([]);
-      expect(again.skipped.length).toBe(ops.length);
+      expect(rejectedOutcome(again)).toBeUndefined();
+      expect(again.outcomes.every((outcome) => outcome.outcome === "no-op")).toBe(true);
+      expect(noOpIds(again)).toHaveLength(ops.length);
       expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(bytes)).toBe(true);
 
       // Each op individually re-applied.
       for (const op of ops) {
         const res = applyOps(doc, [op], catalog);
-        expect(res.applied).toEqual([]);
-        expect(res.skipped).toEqual([op.op_id]);
+        expect(res.outcomes).toEqual([{ op_id: op.op_id, outcome: "no-op" }]);
+        expect(noOpIds(res)).toEqual([op.op_id]);
       }
       expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(bytes)).toBe(true);
     });
@@ -84,10 +99,10 @@ describe("abort-remainder (vocabulary §4)", () => {
     const good2: SetWidgetOp = { op: "set_widget", ...envelope("alice", 3), node_id: ksampler, widget: "cfg", value: 3.5 };
 
     const res = applyOps(doc, [good1, bad, good2], catalog);
-    expect(res.applied).toEqual([good1.op_id]);
-    expect(res.applied_count).toBe(1);
-    expect(res.failed).toMatchObject({ index: 1, code: "unknown_widget" });
-    expect(res.failed!.op).toBe(bad);
+    expect(processedOpIds(res)).toEqual([good1.op_id]);
+    expect(res.outcomes.filter((outcome) => outcome.outcome !== "rejected")).toHaveLength(1);
+    expect(res.outcomes[1]).toMatchObject({ op_id: bad.op_id, outcome: "rejected", reason: { code: "unknown_widget" } });
+    expect(res.outcomes[1]!.op_id).toBe(bad.op_id);
     // The prefix landed; the remainder did not.
     const node = project(doc, catalog).nodes.find((n) => n.id === ksampler)!;
     const order = catalog.types["KSampler"]!.widget_order;
@@ -100,22 +115,25 @@ describe("abort-remainder (vocabulary §4)", () => {
     // Retry with the failing op fixed: prefix dedupes, remainder applies.
     const fixed: SetWidgetOp = { ...bad, widget: "sampler_name", value: "euler_ancestral" };
     const retry = applyOps(doc, [good1, fixed, good2], catalog);
-    expect(retry.failed).toBeNull();
-    expect(retry.skipped).toEqual([good1.op_id]);
-    expect(retry.applied).toEqual([fixed.op_id, good2.op_id]);
+    expect(rejectedOutcome(retry)).toBeUndefined();
+    expect(retry.outcomes).toEqual([
+      { op_id: good1.op_id, outcome: "no-op" },
+      { op_id: fixed.op_id, outcome: "applied" },
+      { op_id: good2.op_id, outcome: "applied" },
+    ]);
   });
 
   it("rejects an unknown kind loudly", () => {
     const doc = mint(base, catalog);
     const res = applyOps(doc, [{ op: "move_node", ...envelope("alice", 1) } as unknown as Op], catalog);
-    expect(res.failed).toMatchObject({ index: 0, code: "unknown_op" });
+    expect(res.outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "unknown_op" } });
   });
 
   it("a rejected op leaves the doc byte-identical (validation precedes mutation)", () => {
     const doc = mint(base, catalog);
     const bytes = Buffer.from(Y.encodeStateAsUpdate(doc));
     const bad: SetWidgetOp = { op: "set_widget", ...envelope("alice", 1), node_id: ksampler, widget: "nope", value: 1 };
-    expect(applyOps(doc, [bad], catalog).failed).toMatchObject({ code: "unknown_widget" });
+    expect(rejectedOutcome(applyOps(doc, [bad], catalog))).toMatchObject({ reason: { code: "unknown_widget" } });
     expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(bytes)).toBe(true);
   });
 });
@@ -134,9 +152,9 @@ describe("reset_doc stays deferred (vocabulary §1.6)", () => {
     // only as wire data from a peer, which is what this cast models; the
     // runtime rejection below is unchanged.
     const res = applyOps(doc, [reset] as unknown as Op[], catalog);
-    expect(res.failed).toMatchObject({ index: 0, code: "op_deferred" });
-    expect(res.failed!.message).toMatch(/reset_doc/);
-    expect(res.applied).toEqual([]);
+    expect(res.outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "op_deferred" } });
+    expect(rejectedOutcome(res)?.reason.message).toMatch(/reset_doc/);
+    expect(processedOpIds(res)).toEqual([]);
     expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(bytes)).toBe(true);
   });
 });
@@ -149,8 +167,8 @@ describe("delete-wins (silent no-ops that consume the op_id)", () => {
     const del: DeleteNodeOp = { op: "delete_node", ...envelope("alice", 1), node_id: clipId, removed_links: [] };
     const write: SetWidgetOp = { op: "set_widget", ...envelope("bob", 2), node_id: clipId, widget: "text", value: "late" };
     const res = applyOps(doc, [del, write], catalog);
-    expect(res.failed).toBeNull();
-    expect(res.applied).toEqual([del.op_id, write.op_id]);
+    expect(rejectedOutcome(res)).toBeUndefined();
+    expect(processedOpIds(res)).toEqual([del.op_id, write.op_id]);
     expect(project(doc, catalog).nodes.some((n) => n.id === clipId)).toBe(false);
     // Replaying the write stays a duplicate — never a late resurrection.
     expect(applyOps(doc, [write], catalog).skipped).toEqual([write.op_id]);
