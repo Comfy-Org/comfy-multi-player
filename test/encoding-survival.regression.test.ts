@@ -147,21 +147,21 @@ function assertRejectedAndRecoverable(
   Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc)); // KA-10: fork, never re-seed
   const before = bytes(doc);
 
-  expect(applyOps(doc, [op], withCatalog).failed).toMatchObject({ code });
+  expect(applyOps(doc, [op], withCatalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toMatchObject({ reason: { code } });
 
   // The document survives: it can still be encoded, projected and compared.
   expect(bytes(doc).equals(before)).toBe(true);
   expect(() => project(doc, withCatalog)).not.toThrow();
   // …and the op is retryable, because it never burned its op_id.
   expect(appliedMap(doc).has(op.op_id)).toBe(false);
-  expect(applyOps(doc, [op], withCatalog).failed).toMatchObject({ code });
+  expect(applyOps(doc, [op], withCatalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toMatchObject({ reason: { code } });
   expect(bytes(doc).equals(before)).toBe(true);
 
   // …and the document still accepts, encodes and replicates real work
   // afterwards, which is the whole point: a rejection is recoverable, a bricked
   // document is not.
   const later = setWidget("after.png", `later-${op.op_id.slice(0, 6)}`);
-  expect(applyOps(doc, [later], withCatalog).failed).toBeNull();
+  expect(applyOps(doc, [later], withCatalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
   Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
   expect(bytes(peer).equals(bytes(doc))).toBe(true);
   expect(JSON.stringify(project(peer, withCatalog))).toBe(
@@ -379,7 +379,7 @@ describe("a reference cycle is refused before it can brick the document (#14)", 
     const doc = mint(workflow, catalog);
     const peer = new Y.Doc();
     Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
-    expect(applyOps(doc, [setWidget({ a: shared, b: shared }, "dag")], catalog).failed).toBeNull();
+    expect(applyOps(doc, [setWidget({ a: shared, b: shared }, "dag")], catalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
     Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
     expect(bytes(peer).equals(bytes(doc))).toBe(true);
     expect(
@@ -427,12 +427,12 @@ describe("the gate asks whether a value survives encoding, not whether yjs accep
     const before = bytes(doc);
     const result = applyOps(doc, [op], catalog);
 
-    expect(result.failed).toMatchObject({
-      index: 0,
-      op,
-      code: "malformed_op",
+    const rejected = result.outcomes.find((outcome) => outcome.outcome === "rejected");
+    expect(rejected).toMatchObject({
+      op_id: op.op_id,
+      reason: { code: "malformed_op" },
     });
-    expect(result.failed?.message).toContain("$.value");
+    expect(rejected?.reason.message).toContain("$.value");
     expect(bytes(doc).equals(before)).toBe(true);
     expect(appliedMap(doc).has(op.op_id)).toBe(false);
   });
@@ -444,9 +444,10 @@ describe("the gate asks whether a value survives encoding, not whether yjs accep
     const before = bytes(doc);
     const result = applyOps(doc, [bad, remainder], catalog);
 
-    expect(result.failed).toMatchObject({ index: 0, op: bad, code: "malformed_op" });
-    expect(result.failed?.message).toContain("$.value.nested[0]");
-    expect(result.applied).toEqual([]);
+    const rejected = result.outcomes.find((outcome) => outcome.outcome === "rejected");
+    expect(rejected).toMatchObject({ op_id: bad.op_id, reason: { code: "malformed_op" } });
+    expect(rejected?.reason.message).toContain("$.value.nested[0]");
+    expect(result.outcomes.filter((outcome) => outcome.outcome === "applied")).toEqual([]);
     expect(bytes(doc).equals(before)).toBe(true);
     expect(appliedMap(doc).has(bad.op_id)).toBe(false);
     expect(appliedMap(doc).has(remainder.op_id)).toBe(false);
@@ -460,8 +461,9 @@ describe("the gate asks whether a value survives encoding, not whether yjs accep
     const before = bytes(doc);
     const result = applyOps(doc, [op], catalog);
 
-    expect(result.failed).toMatchObject({ code: "malformed_op" });
-    expect(result.failed?.message).toContain("$.value.nested.nested");
+    const rejected = result.outcomes.find((outcome) => outcome.outcome === "rejected");
+    expect(rejected).toMatchObject({ reason: { code: "malformed_op" } });
+    expect(rejected?.reason.message).toContain("$.value.nested.nested");
     expect(bytes(doc).equals(before)).toBe(true);
     expect(appliedMap(doc).has(op.op_id)).toBe(false);
   });
@@ -470,8 +472,9 @@ describe("the gate asks whether a value survives encoding, not whether yjs accep
     const op = setWidget({ 'a.b[0]"quoted': 10n }, "escaped-bigint-path");
     const result = applyOps(mint(workflow, catalog), [op], catalog);
 
-    expect(result.failed).toMatchObject({ code: "malformed_op" });
-    expect(result.failed?.message).toContain('$.value["a.b[0]\\"quoted"]');
+    const rejected = result.outcomes.find((outcome) => outcome.outcome === "rejected");
+    expect(rejected).toMatchObject({ reason: { code: "malformed_op" } });
+    expect(rejected?.reason.message).toContain('$.value["a.b[0]\\"quoted"]');
   });
 
   it.each([
@@ -490,7 +493,7 @@ describe("the gate asks whether a value survives encoding, not whether yjs accep
     // A13's JSON canonicalizer rejects every BigInt op as `malformed_op`, but
     // mint reaches this predicate directly and must preserve fitting values.
     expect(survivesMapEncoding(value)).toBe(true);
-    expect(() => mint({ ...workflow, extra: value as unknown as object }, catalog)).not.toThrow();
+    expect(() => mint({ ...workflow, extra: value as unknown as Record<string, unknown> }, catalog)).not.toThrow();
   });
 
   it("a Date in an add_node payload is refused before the node map is integrated", () => {
@@ -540,14 +543,14 @@ describe("the gate asks whether a value survives encoding, not whether yjs accep
   });
 
   it("mint refuses a Date and an oversized BigInt at the writes it owns", () => {
-    expect(() => mint({ ...workflow, extra: new Date(0) as unknown as object }, catalog)).toThrow(
+    expect(() => mint({ ...workflow, extra: new Date(0) as unknown as Record<string, unknown> }, catalog)).toThrow(
       /workflow\.extra: a Date does not survive encoding/,
     );
     expect(() =>
-      mint({ ...workflow, extra: (2n ** 70n) as unknown as object }, catalog),
+      mint({ ...workflow, extra: (2n ** 70n) as unknown as Record<string, unknown> }, catalog),
     ).toThrow(/workflow\.extra: BigInt /);
     // A value that DOES survive still mints.
-    expect(() => mint({ ...workflow, extra: 10n as unknown as object }, catalog)).not.toThrow();
+    expect(() => mint({ ...workflow, extra: 10n as unknown as Record<string, unknown> }, catalog)).not.toThrow();
   });
 
   it("`survivesMapEncoding` is re-derived from a real encode → decode, not from a remembered table", () => {
@@ -600,7 +603,7 @@ describe("the correction stops at the boundary of the pending decision", () => {
     "%s is still ACCEPTED — narrowing it further is decision D4, not this fix",
     (label, value) => {
       const doc = mint(workflow, catalog);
-      expect(applyOps(doc, [setWidget(value, `keep-${label.length}`)], catalog).failed).toBeNull();
+      expect(applyOps(doc, [setWidget(value, `keep-${label.length}`)], catalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
       // Still lossy, and still reported by the detector — accepted, not blessed.
       expect(encodingLosses(structuredClone(value)).length).toBeGreaterThan(0);
       // And the document is not bricked by any of them, which is the line
@@ -612,8 +615,8 @@ describe("the correction stops at the boundary of the pending decision", () => {
   it("A8 rejects a nested BigInt op as malformed before D4's shallow boundary is reached", () => {
     const doc = mint(workflow, catalog);
     const value = { a: 2n ** 70n };
-    expect(applyOps(doc, [setWidget(value, "nested-bigint")], catalog).failed).toMatchObject({
-      code: "malformed_op",
+    expect(applyOps(doc, [setWidget(value, "nested-bigint")], catalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toMatchObject({
+      reason: { code: "malformed_op" },
     });
     expect(encodingLosses(structuredClone(value)).length).toBeGreaterThan(0);
     expect(() => Y.encodeStateAsUpdate(doc)).not.toThrow();
@@ -646,8 +649,8 @@ describe("the correction stops at the boundary of the pending decision", () => {
           } as unknown as Op,
         ],
         catalog,
-      ).failed,
-    ).toBeNull();
+      ).outcomes.find((outcome) => outcome.outcome === "rejected"),
+    ).toBeUndefined();
   });
 
   it("`isStorableMapValue` still answers its own question — the two predicates are not merged", () => {
