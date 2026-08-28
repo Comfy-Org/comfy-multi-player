@@ -155,6 +155,35 @@
       },
       "former_branch_citation": null,
       "branch_status": "NEVER BRANCH-CITED. Registered directly at the PR head SHA; the PR's branch name is recorded only in the drift note as provenance, never as the citation."
+    },
+    "comfy-cli/op-vocabulary-v1@amendment-v1.5": {
+      "repo": "https://github.com/Comfy-Org/comfy-cli.git",
+      "path": "docs/op-vocabulary-v1.md",
+      "commit": "8f83af6da0e36de374991764bac7e8e8262e1eec",
+      "blob_sha1": "7b299d97698321aa2c6a079cab1eef9996e432ea",
+      "content_sha256": "a606cf579f6c78a6738986bd5437b0d5a64c5f6bcade3ba6182b74c8708eaffa",
+      "sections_cited": [
+        "14",
+        "14.1",
+        "14.2",
+        "14.3"
+      ],
+      "established_by": "Registered when comfy-multi-player PR #104 (schema Amendment A15) adopted comfy-cli's follow-up to PR #815: PR #818 `fix(ops): gate promoted connect grows as one register; positional payload for PrimitiveNode writes (amendment v1.5)`, head observed via `gh pr view 818` on 2026-08-28 and fetched as refs/pull/818/head. Read directly: §14.2 spells the promoted-grow register as (\"input\", str(to_node), \"grow\", str(grow[\"name\"])) — the FULL declared name, because subgraph input names may contain dots — and gates it with _lww_gate, moving grow_id to the winner; §14.3 gives the legacy_primitive PrimitiveNode write a positional payload (promoted.value_index + host_widgets_values). comfy_cli/workflow_ops.py at the same commit is blob 872aba56c341125cf200d83b4e3f9455dcab19dc (sha256 924a0740610b0b697fd7ad40cc9adc8d27880da21f70c53fdc1b82e2dba962b7). src/stamps.ts writeTarget was changed to match in the same comfy-multi-player change.",
+      "cited_by": [
+        "src/stamps.ts",
+        "src/types.ts",
+        "docs/multiplayer-schema.md",
+        "docs/decisions/EXCEPTIONS.md"
+      ],
+      "upstream_head_observed": {
+        "date": "2026-08-28",
+        "ref": "refs/pull/818/head",
+        "commit": "8f83af6da0e36de374991764bac7e8e8262e1eec",
+        "content_sha256": "a606cf579f6c78a6738986bd5437b0d5a64c5f6bcade3ba6182b74c8708eaffa",
+        "drift": "None: the pin IS the observed PR head. OPEN against base branch kishore/print-dynamic-subgraph (not main) when pinned; when it merges, re-observe and record the merge commit. Ahead of comfy-cli/workflow_ops@promoted-host-writes (PR #815) by design: v1.5 is the vocabulary amendment that ratifies the #815 shapes and the full-name register."
+      },
+      "former_branch_citation": null,
+      "branch_status": "NEVER BRANCH-CITED. Registered directly at the PR head SHA; the PR's branch name is recorded only in the drift note as provenance, never as the citation."
     }
   }
 }

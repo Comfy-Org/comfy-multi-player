@@ -440,7 +440,7 @@ so a raw key gave `7` and `"7"` two registers for one node.
 | `set_widget` (promoted host write, A15) | `("widget", String(node_id), widget_name)` — `node_id` is the instance id, or the joined `instance_path` (`"57/61"`) for a nested host; the SAME register a top-level named write on that node claims (comfy-cli `_write_target`) | yes |
 | `connect` (concrete slot) | `("input", String(to_node), to_slot)` | **yes (A1)** |
 | `connect` (autogrow) | `("input", String(to_node), "grow", base_name)` | no — identity only, canonicalized by stamp (A7) |
-| `connect` (promoted input, A15) | `("input", String(to_node), "grow", name)` — the autogrow key shape, which is comfy-cli's `_write_target` for ANY grow | **yes (A15)** — one register named by the definition |
+| `connect` (promoted input, A15) | `("input", String(to_node), "grow", name)` with the FULL declared name (names may contain dots — `images.image0`), matching comfy-cli `_write_target` at amendment v1.5 (`8f83af6da0e36de374991764bac7e8e8262e1eec`); only an ordinary autogrow keys by base name | **yes (A15)** — one register named by the definition |
 | `add_node` / `delete_node` (presence) | `("node", String(node_id))` | **yes (A7)** |
 | `clear` (one row per entry in `removed_nodes`) | `("node", String(node_id))` | **yes (A7)** |
 | `delete_node` (severance of the link ids in `removed_links`) | none | no — monotonic, ungated (A7) |
@@ -1792,8 +1792,11 @@ refused the named form with `uncatalogued_widget_write`.
 
 **Host write.** After the op-only checks (`promotedHostWrite`: `value_index`
 a non-negative integer, `host_widgets_values` an array covering it,
-`instance_path` a non-empty array when present, the array storable; a host
-write that also carries `path` is `malformed_op`) and the ordinary LWW gate on
+`instance_path` a non-empty array when present AND joining with `/` to
+`String(node_id)` — the register is named by `node_id`, the mutated node by
+`instance_path`, and nothing else ties them, so a disagreement is refused
+rather than left to claim two registers for one node; the array storable; a
+host write that also carries `path` is `malformed_op`) and the ordinary LWW gate on
 `("widget", String(node_id), widget)` — the SAME register a top-level named
 write on that node claims, which is what comfy-cli's `_write_target` produces
 for these ops — the instance is resolved through `resolveInteriorNode` over
@@ -1822,8 +1825,13 @@ argument). `project()` hands the array back verbatim.
 
 **Promoted connect.** ONE register named by the definition, so — unlike an
 autogrow, and exactly like a concrete input (A1) — it is stamp-gated on
-`("input", String(to_node), "grow", name)`, the key `writeTarget` already
-produced for any grow and comfy-cli's `_write_target` produces for this one.
+`("input", String(to_node), "grow", name)` with the FULL declared name. Not
+the autogrow base-name key: a declared subgraph input name may contain a dot
+(`images.image0`), and truncating at the first dot made `foo.bar` and
+`foo.baz` contend for one slot. comfy-cli spells it the same way since
+amendment v1.5 (PR #818, `8f83af6da0e36de374991764bac7e8e8262e1eec`), which
+also gates the register and moves `grow_id` to the winner — closing the
+deviation recorded below.
 Once the gate passes the register is claimed unconditionally, then: reuse the
 `inputs[]` entry whose `name` is `grow.name` (or whose `grow_id` is this
 `link_id`, on replay) — retiring its prior occupant whole, and moving a
@@ -1861,24 +1869,22 @@ re-derive the promotion table from the definition on every write. Recorded,
 pinned (`an interior path write … is a different register`), and left for a
 vocabulary amendment.
 
-### Deviation from comfy-cli, pinned
+### Deviation from comfy-cli — RESOLVED by comfy-cli amendment v1.5
 
-comfy-cli's `_apply_connect` does not `_lww_gate` a promoted grow (its apply
-surface is single-writer, and its own reuse path leaves `grow_id` on the first
-arrival). This applier is the document's authority and must converge under
-either arrival order, so it gates and it moves `grow_id` to the winner.
-Catalogue-carrying hosts applying comfy-cli's sequential streams behave
-identically under both implementations (the corpus session replays green);
-the difference is observable only under concurrency comfy-cli's apply never
-sees. Logged in `docs/decisions/EXCEPTIONS.md`; the sunset is comfy-cli gating
-the same register.
+At PR #815 comfy-cli's `_apply_connect` did not `_lww_gate` a promoted grow
+and left `grow_id` on the first arrival; this applier gated and moved
+`grow_id` to the winner, and the divergence was logged in
+`docs/decisions/EXCEPTIONS.md`. comfy-cli PR #818 (amendment v1.5,
+`8f83af6da0e36de374991764bac7e8e8262e1eec`) now gates the same register under
+the same full-name spelling and moves `grow_id` identically, pinned in both
+arrival orders; the EXCEPTIONS row is struck.
 
-Not covered by this amendment, and stated so it is not mistaken for covered:
-comfy-cli PR #815 also mints a third shape, a `set_widget` with
-`legacy_primitive: true` addressed at a frontend-only `PrimitiveNode`
-(`widgets_values[0]`). `PrimitiveNode` is stored opaquely here and the op
-carries no positional payload, so it is rejected `opaque_widgets` — loudly,
-per §3 pin 4 — until a follow-up gives it one.
+`legacy_primitive` writes: at PR #815 the `set_widget` addressed at a
+frontend-only `PrimitiveNode` carried no positional payload and was rejected
+`opaque_widgets` here (the class is opaque). Amendment v1.5 (§14.3) makes it
+carry `promoted.value_index` + `host_widgets_values` with a one-segment
+`instance_path`, i.e. exactly a host write; the `legacy_primitive` flag itself
+is informational and unread.
 
 ### A mint defect this fixture exposed, fixed alongside
 
@@ -1930,7 +1936,6 @@ applier by `test/replay.test.ts`.
 comfy-cli separately; a doc host at the old pin rejects every host write with
 `uncatalogued_widget_write` and every promoted connect… applies it as an
 ungated autogrow. **Both pins move in the same change — the applier first,
-then the CLI**, as A1 already requires. comfy-cli is asked, in the PR that
-lands this: to `_lww_gate` promoted grows on the register both sides already
-spell the same way; and to decide whether a `legacy_primitive` write should
-carry a positional payload of its own.
+then the CLI**, as A1 already requires. comfy-cli's side is PR #818 (amendment v1.5): the promoted-grow gate, the
+full-name register, and the positional `legacy_primitive` payload; the two
+PRs move together.

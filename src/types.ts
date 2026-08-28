@@ -158,7 +158,9 @@ export interface GrowSpec {
    * widget?}` is appended VERBATIM — never a numbered collision rename, never a
    * family template. `widget` is present exactly when the declared input backs
    * an interior widget; absent for a socket-only input. Unlike an autogrow,
-   * the register IS stamp-gated (`("input", to_node, "grow", name)`), because
+   * the register IS stamp-gated — `("input", to_node, "grow", name)` with the
+   * FULL declared name, since names may contain dots (comfy-cli amendment
+   * v1.5, PR #818 at `8f83af6da0e36de374991764bac7e8e8262e1eec`) — because
    * two connects into one declared input contend for one slot the way two
    * concrete connects do.
    */
@@ -187,7 +189,9 @@ export interface PromotedHostWrite {
    * interior to another definition (comfy-cli then mints `node_id` as the
    * joined path, `"57/61"`). Resolved exactly like an interior `path`
    * (`resolveInteriorNode`), including the schema §5.3 shared-definition rule.
-   * Defaults to `[String(node_id)]` when absent.
+   * Defaults to `[String(node_id)]` when absent, and when present MUST join
+   * (with `/`) to `String(node_id)` — the register is named by `node_id`, so a
+   * disagreement is `malformed_op`, never two registers for one node.
    */
   instance_path?: Array<string | number>;
   /**

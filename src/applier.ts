@@ -672,9 +672,11 @@ function assertWritableValue(value: unknown, what: string): void {
  *
  * The payload shape is comfy-cli's (`_set_widget_impl`, PR #815): a
  * non-negative integer `value_index`, an optional non-empty `instance_path`
- * (defaulting to `[String(node_id)]`), and `host_widgets_values` — the FULL
- * materialized array — which must be an array covering `value_index`, because
- * it is what a stored array shorter than the index is extended FROM.
+ * (defaulting to `[String(node_id)]`, and REQUIRED to spell the node
+ * `node_id` names — joined with `/` — so the register and the mutated node
+ * cannot diverge), and `host_widgets_values` — the FULL materialized array —
+ * which must be an array covering `value_index`, because it is what a stored
+ * array shorter than the index is extended FROM.
  */
 function promotedHostWrite(op: SetWidgetOp): { valueIndex: number; instancePath: string[]; hostValues: unknown[] } | null {
   const promoted = (op as { promoted?: unknown }).promoted;
@@ -702,11 +704,20 @@ function promotedHostWrite(op: SetWidgetOp): { valueIndex: number; instancePath:
     throw new OpRejectedError("malformed_op", "set_widget: promoted.instance_path must be a non-empty array when present");
   }
   assertWritableValue(host_widgets_values, "set_widget: promoted.host_widgets_values");
-  return {
-    valueIndex: value_index as number,
-    instancePath: (instance_path as unknown[] | undefined)?.map(String) ?? [String(op.node_id)],
-    hostValues: host_widgets_values,
-  };
+  const instancePath = (instance_path as unknown[] | undefined)?.map(String) ?? [String(op.node_id)];
+  // The LWW register comes from `node_id` (`stampTargetKey`) and the mutated
+  // node from `instance_path`; nothing else ties them together, and two ops
+  // naming one instance under two `node_id`s would claim two registers and
+  // both write it. comfy-cli mints `node_id` as the instance id for a
+  // top-level host and as the joined path (`"57/61"`) for a nested one, so the
+  // two must agree under that spelling. Op-only, hence above the gate (A6).
+  if (instancePath.join("/") !== String(op.node_id)) {
+    throw new OpRejectedError(
+      "malformed_op",
+      `set_widget: promoted.instance_path [${instancePath.join(", ")}] does not name node_id ${String(op.node_id)} (expected node_id "${instancePath.join("/")}")`,
+    );
+  }
+  return { valueIndex: value_index as number, instancePath, hostValues: host_widgets_values };
 }
 
 /** How a promoted host write must land on the instance it resolved to (Amendment A15). */
@@ -1242,11 +1253,11 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
  *
  * ONE register, gated. Two connects into one declared input contend for one
  * slot exactly as two concrete connects do, so the register
- * `("input", to_node, "grow", name)` — comfy-cli's `_write_target` for any
- * grow — is claimed under the `[base_version, actor, op_id]` order, the prior
- * occupant retired whole, and the loser dropped. comfy-cli does not gate this
- * register today (its apply is single-writer); this applier is the document's
- * authority and must converge under either arrival order.
+ * `("input", to_node, "grow", <full declared name>)` — comfy-cli's
+ * `_write_target` for a promoted grow since amendment v1.5 (PR #818), which
+ * also gates it — is claimed under the `[base_version, actor, op_id]` order,
+ * the prior occupant retired whole, and the loser dropped. The FULL name, not
+ * the autogrow base: declared names may contain dots.
  *
  * The slot is materialized ONCE THE GATE PASSES, whether or not the source
  * still exists: `[connect, delete src]` and `[delete src, connect]` then both

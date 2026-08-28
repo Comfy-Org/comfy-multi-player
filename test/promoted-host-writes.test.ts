@@ -480,10 +480,13 @@ describe("promoted host write: nested instance_path resolves like an interior `p
     expect(appliedMap(doc).has(op.op_id)).toBe(false);
   });
 
-  it("rejects a path segment that is not an interior node", () => {
+  it("rejects a path segment that is not an interior node, byte-identical and without consuming the op_id", () => {
     const doc = mint(nested(), catalog);
+    const before = bytes(doc);
     const op = hostWrite({ node_id: "57/99", value: 1, value_index: 0, instance_path: ["57", "99"], host_widgets_values: [1] });
     expect(outcome(applyOps(doc, [op], catalog))).toMatchObject({ outcome: "rejected", reason: { code: "interior_node_not_found" } });
+    expect(bytes(doc).equals(before)).toBe(true);
+    expect(appliedMap(doc).has(op.op_id)).toBe(false);
   });
 });
 
@@ -513,6 +516,61 @@ describe("promoted host write: rejections are loud, op-only, and leave the doc b
     expect(appliedMap(doc).has(op.op_id)).toBe(false);
   });
 
+  it("malformed_op: instance_path must name the node `node_id` names, so the register and the mutated node cannot diverge", () => {
+    const wf = zImage();
+    wf.nodes.push(instance(58));
+    const doc = mint(wf, catalog);
+    const before = bytes(doc);
+    // node_id 57 claims ("widget","57","width") while instance_path would mutate 58.
+    const op = hostWrite({ node_id: 57, value: 768, value_index: 1, instance_path: ["58"] });
+    const res = applyOps(doc, [op], catalog);
+    expect(outcome(res)).toMatchObject({ outcome: "rejected", reason: { code: "malformed_op" } });
+    expect(bytes(doc).equals(before)).toBe(true);
+    expect(appliedMap(doc).has(op.op_id)).toBe(false);
+    // The nested spelling: node_id is the joined path.
+    const nestedOk = hostWrite({ node_id: "57/61", value: 1, value_index: 0, instance_path: ["57", "61"], host_widgets_values: [1] });
+    const nestedBad = hostWrite({ node_id: 57, value: 1, value_index: 0, instance_path: ["57", "61"], host_widgets_values: [1] });
+    const nestedDoc = mint(nested(), catalog);
+    expect(outcome(applyOps(nestedDoc, [nestedOk], catalog)).outcome).toBe("applied");
+    expect(outcome(applyOps(nestedDoc, [nestedBad], catalog))).toMatchObject({ outcome: "rejected", reason: { code: "malformed_op" } });
+    // Numeric segments spell the same node as their string form.
+    const numeric = hostWrite({ node_id: 58, value: 640, value_index: 1, instance_path: [58 as unknown as string] });
+    expect(outcome(applyOps(doc, [numeric], catalog)).outcome).toBe("applied");
+  });
+
+  it("the instance_path/node_id check is op-only: rejected identically whether or not either node exists", () => {
+    const op = hostWrite({ node_id: 57, value: 768, value_index: 1, instance_path: ["58"] });
+    const alive = mint(zImage(), catalog);
+    const gone = mint(zImage(), catalog);
+    applyOps(gone, [del(57, [62])], catalog);
+    for (const doc of [alive, gone]) {
+      const before = bytes(doc);
+      const res = applyOps(doc, [op], catalog);
+      expect(outcome(res)).toMatchObject({ outcome: "rejected", reason: { code: "malformed_op" } });
+      expect(bytes(doc).equals(before)).toBe(true);
+      expect(appliedMap(doc).has(op.op_id)).toBe(false);
+    }
+  });
+
+  it("abort-remainder: a valid host write after a rejected one is batch_aborted and the doc is byte-identical", () => {
+    const doc = mint(zImage(), catalog);
+    const before = bytes(doc);
+    const bad = widthWrite(768);
+    (bad.promoted as { value_index: unknown }).value_index = -1;
+    const good = heightWrite(512);
+    const res = applyOps(doc, [bad, good], catalog);
+    expect(res.outcomes.map((o) => o.outcome)).toEqual(["rejected", "rejected"]);
+    expect(outcome(res, 1)).toMatchObject({ op_id: good.op_id, reason: { code: "batch_aborted" } });
+    expect(bytes(doc).equals(before)).toBe(true);
+    expect(appliedMap(doc).has(bad.op_id)).toBe(false);
+    expect(appliedMap(doc).has(good.op_id)).toBe(false);
+    expect(node(project(doc, catalog), 57).widgets_values).toEqual([]);
+    // The retried batch, fixed, applies both.
+    const fixed = widthWrite(768);
+    const retry = applyOps(doc, [fixed, good], catalog);
+    expect(retry.outcomes.map((o) => o.outcome)).toEqual(["applied", "applied"]);
+  });
+
   it("malformed_op is decided from the op alone: rejected identically whether or not the instance still exists", () => {
     const op = widthWrite(768);
     (op.promoted as { value_index: unknown }).value_index = -1;
@@ -530,6 +588,7 @@ describe("promoted host write: rejections are loud, op-only, and leave the doc b
     const res = applyOps(doc, [op]);
     expect(outcome(res)).toMatchObject({ outcome: "rejected", reason: { code: "catalog_required" } });
     expect(bytes(doc).equals(before)).toBe(true);
+    expect(appliedMap(doc).has(op.op_id)).toBe(false);
   });
 
   it("…but an instance the doc ALREADY stores opaquely needs no catalog to take a positional write", () => {
@@ -547,9 +606,11 @@ describe("promoted host write: rejections are loud, op-only, and leave the doc b
     node(wf, 57).widgets_values = { text: "named" } as unknown as unknown[];
     const doc = mint(wf, catalog);
     const before = bytes(doc);
-    const res = applyOps(doc, [widthWrite(768)], catalog);
+    const op = widthWrite(768);
+    const res = applyOps(doc, [op], catalog);
     expect(outcome(res)).toMatchObject({ outcome: "rejected", reason: { code: "uncatalogued_widget_write" } });
     expect(bytes(doc).equals(before)).toBe(true);
+    expect(appliedMap(doc).has(op.op_id)).toBe(false);
   });
 
   it("falls back to the named path when the target has a catalog entry (defined, if never minted by comfy-cli)", () => {
@@ -679,6 +740,42 @@ describe("promoted connect: `grow.promoted` materializes the declared input on t
     const res = applyOps(doc, [bad], catalog);
     expect(outcome(res)).toMatchObject({ outcome: "rejected", reason: { code: "malformed_op" } });
     expect(bytes(doc).equals(before)).toBe(true);
+    expect(appliedMap(doc).has(bad.op_id)).toBe(false);
+  });
+
+  it("abort-remainder: a valid promoted connect after a rejected one is batch_aborted and the doc is byte-identical", () => {
+    const doc = mint(zImage(), catalog);
+    applyOps(doc, [primitive(PRIM)], catalog);
+    const before = bytes(doc);
+    const bad = promotedConnect(9001, PRIM);
+    delete (bad.grow as { type?: unknown }).type;
+    const good = promotedConnect(9002, PRIM, "height");
+    const res = applyOps(doc, [bad, good], catalog);
+    expect(res.outcomes.map((o) => o.outcome)).toEqual(["rejected", "rejected"]);
+    expect(outcome(res, 1)).toMatchObject({ op_id: good.op_id, reason: { code: "batch_aborted" } });
+    expect(bytes(doc).equals(before)).toBe(true);
+    expect(appliedMap(doc).has(good.op_id)).toBe(false);
+    expect(inputs(node(project(doc, catalog), 57)).map((i) => i["name"])).toEqual(["text"]);
+  });
+
+  // (1) The register is the FULL declared name (comfy-cli #818 amendment v1.5):
+  // subgraph input names may contain dots, and two of them must not share one slot.
+  it("registers a promoted input under its FULL declared name: `foo.bar` and `foo.baz` are two registers, autogrow still keys by base", () => {
+    const bar = promotedConnect(9001, PRIM, "foo.bar");
+    const baz = promotedConnect(9002, PRIM, "foo.baz");
+    expect(stampTargetKey(bar)).toBe(JSON.stringify(["input", "57", "grow", "foo.bar"]));
+    expect(stampTargetKey(baz)).toBe(JSON.stringify(["input", "57", "grow", "foo.baz"]));
+    expect(stampTargetKey(promotedConnect(9003, PRIM, "width"))).toBe(JSON.stringify(["input", "57", "grow", "width"]));
+    const autogrow: ConnectOp = { ...promotedConnect(9004, PRIM, "images.image0"), grow: { name: "images.image0", type: "IMAGE" } } as ConnectOp;
+    expect(stampTargetKey(autogrow)).toBe(JSON.stringify(["input", "57", "grow", "images"]));
+
+    const doc = mint(zImage(), catalog);
+    applyOps(doc, [primitive(PRIM), bar, baz], catalog);
+    const host = node(project(doc, catalog), 57);
+    expect(inputs(host).map((i) => i["name"])).toEqual(["text", "foo.bar", "foo.baz"]);
+    expect(inputNamed(host, "foo.bar")!["link"]).toBe(9001);
+    expect(inputNamed(host, "foo.baz")!["link"]).toBe(9002);
+    expect(project(doc, catalog).links.map((l) => (l as unknown[])[0])).toEqual([62, 9001, 9002]);
   });
 
   it("a later host write and the wired input coexist (comfy-cli redirects the write to the primitive; the doc host applies what it is sent)", () => {
