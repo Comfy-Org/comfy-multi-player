@@ -1,0 +1,44 @@
+name: Stale PRs
+
+# Thin caller for the shared stale-PR sweeper in Comfy-Org/github-workflows
+# (actions/stale under the hood, plus an optional Slack digest of what it
+# touched). PR-only — issues are left untouched.
+#
+# The Slack digest is intentionally NOT wired up here: the reusable's
+# `slack_channel` input defaults to an internal Comfy-Org channel id
+# (#proj-cloud), so passing a SLACK_BOT_TOKEN secret through without also
+# setting `slack_channel` to a channel this repo actually owns would post
+# comfy-multi-player's stale-PR digest into cloud's channel instead. No
+# `secrets:` block is passed below, so the digest step no-ops (per the
+# reusable's own doc: SLACK_BOT_TOKEN is optional and its absence only skips
+# the Slack heads-up — the label/close sweep itself is unaffected). If a Slack
+# digest is wanted later, add `with: { slack_channel: <this repo's channel
+# id> }` and a `secrets: { SLACK_BOT_TOKEN: ... }` at the same time, not
+# separately.
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # daily 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Preview without applying"
+        type: boolean
+        default: false
+
+permissions:
+  pull-requests: write
+  issues: write # required by actions/stale even for PR-only runs
+
+concurrency:
+  # stale.yml declares no group of its own, so a caller-level group is safe.
+  group: stale
+  cancel-in-progress: false
+
+jobs:
+  stale:
+    # SHA-pinned per zizmor `unpinned-uses: hash-pin`, matching the pin already
+    # used by ci-cursor-review.yml and ci-pr-risk.yml in this repo.
+    uses: Comfy-Org/github-workflows/.github/workflows/stale.yml@ffcc3f5b4dfc568e846e769c4f4df4f749c7887b # github-workflows main (ffcc3f5)
+    with:
+      dry_run: ${{ inputs.dry-run || false }}

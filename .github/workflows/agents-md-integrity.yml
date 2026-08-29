@@ -1,0 +1,30 @@
+name: AGENTS.md Integrity
+
+# Thin caller for the shared reusable AGENTS.md integrity check in
+# Comfy-Org/github-workflows. The checker lives there (single source of
+# truth), loaded from the pinned workflows_ref — never from this repo's
+# checkout, so a PR can't rewrite the checker.
+#
+# NOTE (flagged in the PR that added this file): this repo has a root
+# AGENTS.md but no root CLAUDE.md shim yet. With the default
+# `require_shim: true` below, this check will FAIL on the PR that adds it and
+# on every PR after, until a two-line CLAUDE.md shim
+# (`@AGENTS.md`) is added in a follow-up. Deliberately left off `pull_request`
+# as a required status check for that reason — land the shim first, per the
+# reusable's own documented gotcha ("adopt on pull_request before adding it as
+# a required check").
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  agents-md:
+    permissions:
+      contents: read
+    # SHA-pinned per zizmor `unpinned-uses: hash-pin`, matching the pin already
+    # used by ci-cursor-review.yml and ci-pr-risk.yml in this repo.
+    uses: Comfy-Org/github-workflows/.github/workflows/agents-md-integrity.yml@ffcc3f5b4dfc568e846e769c4f4df4f749c7887b # github-workflows main (ffcc3f5)
+    with:
+      workflows_ref: ffcc3f5b4dfc568e846e769c4f4df4f749c7887b

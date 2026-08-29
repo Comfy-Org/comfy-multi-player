@@ -1,0 +1,40 @@
+name: Cursor Review Auto-Label
+
+# Thin caller for the shared reusable auto-labeler in Comfy-Org/github-workflows.
+# Companion to ci-cursor-review.yml: applies the `cursor-review` label (which
+# that workflow triggers on) the moment an opted-in person becomes responsible
+# for a PR, so people can opt in without clicking a label by hand.
+#
+# The opt-in roster lives in THIS repo's vars.CURSOR_REVIEW_OPTED_IN_LOGINS
+# (whitespace-separated GitHub logins, repo Settings -> Variables). Empty means
+# nobody gets auto-labeled — cursor-review.yml still works via the manual label.
+#
+# The label MUST be applied with a GitHub App token, not GITHUB_TOKEN: a label
+# applied by GITHUB_TOKEN does not fire new workflow runs, so a GITHUB_TOKEN
+# auto-label would silently never trigger the review. Hence vars.APP_ID (the
+# CLOUD_CODE_BOT app id) + secrets.CLOUD_CODE_BOT_PRIVATE_KEY below — see the
+# "Needs from repo owner" note in PR description; these are not yet configured
+# on this repo.
+
+on:
+  pull_request:
+    # `assigned` is the core behavior; `opened`/`ready_for_review` also label at
+    # PR creation/un-drafting time.
+    types: [assigned, opened, ready_for_review]
+
+jobs:
+  auto-label:
+    # Same-repo, human-authored PRs only. Both fork PRs and Dependabot PRs run
+    # without Actions secrets, so the App-token mint would fail on either —
+    # and cursor-review.yml skips fork PRs anyway, so there'd be nothing for
+    # the label to trigger.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+    # SHA-pinned per zizmor `unpinned-uses: hash-pin`, matching the pin already
+    # used by ci-cursor-review.yml and ci-pr-risk.yml in this repo.
+    uses: Comfy-Org/github-workflows/.github/workflows/cursor-review-auto-label.yml@ffcc3f5b4dfc568e846e769c4f4df4f749c7887b # github-workflows main (ffcc3f5)
+    secrets:
+      CLOUD_CODE_BOT_PRIVATE_KEY: ${{ secrets.CLOUD_CODE_BOT_PRIVATE_KEY }}

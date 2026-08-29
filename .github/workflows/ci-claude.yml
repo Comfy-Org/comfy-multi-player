@@ -1,0 +1,48 @@
+name: CI - Claude
+
+# @claude mention responder, modeled on Comfy-Org/cloud's ci-claude.yml (no
+# reusable workflow exists for this in Comfy-Org/github-workflows — it's
+# bespoke glue around anthropics/claude-code-action). Anyone who can comment
+# on an issue/PR can trigger a run; the action itself is what limits what
+# Claude can do once triggered (granted permissions below).
+#
+# Needs from repo owner (see PR description): secrets.ANTHROPIC_API_KEY.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          # persist-credentials intentionally left at its default (true): the
+          # job grants contents: write so Claude can push commits back to the
+          # PR branch, which needs the checked-out credential to remain live.
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@239e3a730883eeb5c53db12b0fc9573b3024b126 # v1.0.191
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

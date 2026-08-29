@@ -1,0 +1,108 @@
+# Canonical `area:*` label taxonomy — single source of truth for this repo.
+#
+# Consumed by .github/workflows/pr-area-label.yml:
+#   * sync-labels create-or-updates each label from `name`/`color`/`description`
+#     so the set stays standardized (edit HERE, never in the GitHub UI);
+#   * label-pr feeds `name` + `guidance` to the classifier as the closed
+#     vocabulary and routing rules it reasons over.
+#
+# `description` is what GitHub stores — GitHub caps it at 100 characters, so
+# keep it short. `guidance` is the longer routing rule the classifier reads;
+# GitHub never sees it.
+#
+# STARTER TAXONOMY (flagged in the PR that added this file): seeded from this
+# repo's actual src/ layout at the time of writing, not from lived routing
+# history — the repo has had one primary author so far. Expect to retune the
+# buckets (and repo_context below) as real PRs land and cut across them
+# differently than guessed here.
+
+repo_context: |
+  Comfy-Org/comfy-multi-player is a small TypeScript/CRDT library: a shared
+  workflow-document op applier + JSON projection used identically by the
+  browser and the server doc host. There is no service split like a backend
+  monorepo — classify by which part of the CRDT pipeline a change is FOR
+  (op application vs. Lamport/clock ordering vs. the read-only projection
+  surface vs. wire schema/migration), not just by which file happens to hold
+  the diff, since a bug fix often touches multiple files for one conceptual
+  area.
+
+labels:
+  - name: "area:applier"
+    color: "5319E7"
+    description: "Op application: applier.ts, exhaustiveness guards, apply outcomes"
+    guidance: >-
+      The core op applier (src/applier.ts) and its exhaustiveness guards
+      (src/exhaustive.ts) — how an op is validated and applied to the doc,
+      and the discriminated ApplyResult/outcome shapes it returns.
+
+  - name: "area:ordering"
+    color: "1D76DB"
+    description: "Lamport clock, incarnation stamps, op minting"
+    guidance: >-
+      CRDT ordering and identity: the Lamport clock (src/clock.ts),
+      incarnation-namespaced LWW stamps (src/stamps.ts), and op minting
+      (src/mint.ts). Convergence/idempotency-under-reordering questions
+      belong here even when the reproduction lives in a test file.
+
+  - name: "area:schema"
+    color: "0E8A16"
+    description: "Wire schema, versioning, migration, digests"
+    guidance: >-
+      The document's on-the-wire schema and its evolution: schema-version
+      enforcement (src/schema-version.ts), migrations between versions
+      (src/migrate.ts), and content digests (src/digest.ts). Also
+      src/types.ts when the change is about the wire shape itself rather
+      than a downstream consumer of it.
+
+  - name: "area:projection"
+    color: "FBCA04"
+    description: "Read-only projection/snapshot surface: project.ts, read.ts"
+    guidance: >-
+      The read-only consumer-facing surface: JSON projection (src/project.ts)
+      and the snapshot read surface (src/read.ts) — how a doc's current state
+      is exposed to callers without letting them mutate it.
+
+  - name: "area:limits"
+    color: "D93F0B"
+    description: "Payload/batch bounds: size, depth, batch-length limits"
+    guidance: >-
+      Bounding untrusted input before it is cloned or applied — payload size,
+      nesting depth, batch length (src/limits.ts) and the malformed-op
+      rejection paths that enforce them.
+
+  - name: "area:tests"
+    color: "C2E0C6"
+    description: "Test suites, fixtures, conformance corpus, fuzz"
+    guidance: >-
+      test/** (including test/clock-matrix, test/fixtures, test/fixtures/fuzz),
+      fixtures/golden-vectors, and examples/** when the change is primarily
+      about test coverage, fixtures, or the conformance corpus rather than the
+      library behavior itself. A PR that changes both src/ behavior and its
+      tests should get the src-side area label instead — this label is for
+      test-only or fixture-only changes.
+
+  - name: "area:docs"
+    color: "BFD4F2"
+    description: "README, docs/, ADRs, decision records"
+    guidance: >-
+      README.md, docs/** (including docs/adr and docs/decisions), and
+      CONTRIBUTING.md — documentation and architecture-decision-record changes
+      with no accompanying src/ behavior change.
+
+  - name: "area:ci"
+    color: "5A5A5A"
+    description: "CI/CD workflows, bot config, repo checks under .agents/"
+    guidance: >-
+      .github/workflows/**, .github/dependabot.yml, .coderabbit.yaml, and the
+      generated-check profiles under .agents/checks/** — the repo's own CI
+      pipeline and review-bot configuration, as opposed to the library it
+      builds and tests.
+
+  - name: "area:build"
+    color: "E4E669"
+    description: "Build/tooling config: package.json, tsconfig, stryker, scripts"
+    guidance: >-
+      Build and tooling configuration: package.json / package-lock.json,
+      tsconfig*.json, vitest.config.ts, stryker.config.mjs,
+      .dependency-cruiser.cjs, and scripts/** — how the package is built,
+      typechecked, and released, as opposed to the library's own behavior.

@@ -1,0 +1,36 @@
+# Expertise map for the reviewer auto-assignment workflow
+# (.github/workflows/assign-reviewers.yml -> Comfy-Org/github-workflows
+# assign-reviewers.yml).
+#
+# Schema (consumed by the reusable workflow):
+#   default_pool: fallback reviewers when no rule's paths match the PR.
+#   rules: ordered list of { paths: [globs], reviewers: [logins] }; the
+#          selected pool is the UNION of every matching rule's reviewers.
+# Globs support *, **, and ?. The PR author and vars.REVIEWER_EXCLUDE are
+# dropped, then candidates are load-balanced before 1-2 are requested.
+#
+# STARTER / PLACEHOLDER MAPPING — flagged in the PR that added this file.
+# This repo's git history has essentially one human author (christian-byrne,
+# the repo owner) plus one PR from skishore23, so there is no real
+# "who reviews what" signal to seed path-specific buckets from (unlike, e.g.,
+# cloud's reviewers.yml, which was seeded from 12 months of per-subsystem
+# authorship). The names below are drawn from the repo's actual GitHub
+# collaborator list (admin/write access) rather than invented, but Christian
+# should replace them with whoever is actually available/expected to review —
+# per the assign-reviewers gotchas: default_pool must never be one person (a
+# matched author gets dropped, so a single-person pool can end up with nobody
+# to assign), and it should not be the repo's usual PR author.
+default_pool: [skishore23, robinjhuang, guill]
+
+# No subsystem-specific buckets yet — every PR currently routes through
+# default_pool above (an empty `rules:` list is valid; the reusable falls
+# back to default_pool when nothing matches). If/when this repo grows
+# reviewers with distinct expertise (e.g. someone who mostly reviews the CRDT
+# ordering code vs. someone who mostly reviews the wire schema/migration
+# code), split rules out here by path, mirroring src/'s layout:
+#   src/applier.ts, src/exhaustive.ts        -> op application
+#   src/clock.ts, src/stamps.ts, src/mint.ts -> Lamport ordering
+#   src/schema-version.ts, src/migrate.ts,
+#     src/digest.ts, src/types.ts            -> wire schema
+#   src/project.ts, src/read.ts              -> read/projection surface
+rules: []
