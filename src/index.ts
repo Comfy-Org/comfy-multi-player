@@ -46,6 +46,7 @@
 export * from "./types.js";
 export * from "./stamps.js";
 export * from "./limits.js";
+export * from "./clock.js";
 /**
  * ADR-004 follower read-surface. These helpers expose the established wire
  * layout only so the frontend follower can consume host updates. They are
@@ -60,7 +61,8 @@ export {
   type EncodingLoss,
 } from "./doc.js";
 export { applyOps } from "./applier.js";
-export { project } from "./project.js";
+export { applyLamportOps, mintLamport } from "./lamport.js";
+export { project, projectLamport } from "./project.js";
 export { mint } from "./mint.js";
 export { migrate } from "./migrate.js";
 export { assertReadableSchema, readSchemaVersion } from "./schema-version.js";

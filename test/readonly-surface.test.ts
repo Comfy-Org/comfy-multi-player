@@ -714,6 +714,17 @@ describe("read-only surface — classification", () => {
     "NODE_INCARNATION_KEY",
     "LEGACY_NODE_INCARNATION",
     "widgetTargetKey",
+    "applyLamportOps",
+    "mintLamport",
+    "projectLamport",
+    "LAMPORT_SCHEMA_VERSION",
+    "LAMPORT_ORDERING_VERSION",
+    "MAX_LAMPORT_COUNTER",
+    "validateLamportCounter",
+    "observeLamport",
+    "tickLamport",
+    "persistLamportTick",
+    "freezeLamportEnvelope",
   ];
   const READ_SURFACE: readonly string[] = [
     "readGraph",

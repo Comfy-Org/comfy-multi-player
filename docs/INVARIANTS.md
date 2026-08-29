@@ -93,6 +93,20 @@ defeat a valid life-2 write (DQ-11, KEEP-ALIVE 4). The package regression is
 `test/incarnation-stamps.test.ts`; the schema and protocol implications are
 recorded in Amendment A16 of `docs/multiplayer-schema.md`.
 
+### KA-2 / KA-11 amendment — DQ-10 Lamport clean lineage (schema v3)
+**Rule:** Native V1 Lamport ops carry `[counter, actor, op_id]` inside the op
+through `ordering`, never alongside legacy `base_version` or `stamp`. A clean
+lineage records ordering version 2, Lamport clock kind, and durable
+`clock_max`; it retains DQ-11's incarnation-qualified target keys unchanged.
+Legacy scalar documents and ops are never numerically bridged into that
+lineage.
+
+**Enforced by:** `test/lamport.test.ts`,
+`fixtures/golden-vectors/lamport-ordering.json`, and
+[`ADR-0005`](adr/0005-lamport-ordering-v1-migration.md). The scalar-v1
+`applyOps` entrypoint remains frozen; native admission is the separate
+`applyLamportOps` boundary.
+
 ## FORECLOSE
 
 ### FC-1 — Never exchange raw Yjs struct updates between independently edited docs

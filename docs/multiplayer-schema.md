@@ -1998,3 +1998,31 @@ requirement before durable or offline queues are public: v1 transport may be
 translated only with the documented legacy token `"0"`, and mixed readers must
 not silently exchange the new semantics. This amendment does not implement a
 transport `v == 2` decoder.
+
+---
+
+## Amendment A16 — 2026-08-29 — DQ-10 Lamport clean lineage
+
+DQ-10 adds an explicitly separate schema-v3 lineage and native envelope:
+
+```text
+ordering = { kind: "lamport", counter: positive-safe-integer }
+winner   = [counter, actor, op_id]
+meta     = { schema_version: 3, ordering_version: 2,
+             clock_kind: "lamport", clock_max: non-negative-safe-integer }
+```
+
+`applyLamportOps` rejects missing/wrong ordering and the presence of either
+legacy `base_version` or `stamp` before the incompatible op mutates the doc.
+The existing tuple comparator is reused after private canonicalization; no
+second comparison implementation is introduced. Every structurally valid
+event in the admitted prefix advances `clock_max`, including semantic no-ops
+and LWW drops. Rejected events do not.
+
+This migration changes only winning-stamp values. Amendment A15's
+incarnation-qualified widget target keys remain byte-for-byte the register
+namespace. Because scalar ledger values cannot be converted into causal
+history, migration is a clean lineage cut: project the old document, dispatch
+explicit `doc_reset`, mint with `mintLamport`, and bind producers to the new
+lineage. Same-lineage reconnect and sequence gaps continue to use a Yjs
+state-vector delta against the existing follower document.
