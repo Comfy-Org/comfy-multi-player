@@ -97,7 +97,7 @@ export function writeTarget(op: WireOp): unknown[] {
         // DECLARED NAME, and declared names may contain dots (`images.image0`
         // is a legal subgraph input name), so the full name is the key —
         // comfy-cli `_write_target` at amendment v1.5 (PR #818,
-        // `8f83af6da0e36de374991764bac7e8e8262e1eec`). Truncating at the first
+        // `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`). Truncating at the first
         // dot made `foo.bar` and `foo.baz` contend for one slot. An ordinary
         // autogrow keeps the base-name key: its family IS the register.
         if (op.grow.promoted === true) {

@@ -2,7 +2,7 @@
  * Promoted subgraph widgets live on the HOST instance (ComfyUI_frontend ADR
  * 0009): `widgets_values[i]` on the instance node, positional over the
  * definition's widget-backed inputs. comfy-cli (PR #815, pinned at
- * `6ebc303276eebe521fb74355f906aca602f64bc2`) now mints two op shapes for
+ * `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`) now mints two op shapes for
  * that, and this suite mirrors its `test_workflow_edit_promoted.py` cases
  * against this applier (schema Amendment A15):
  *

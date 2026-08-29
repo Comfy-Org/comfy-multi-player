@@ -440,7 +440,7 @@ so a raw key gave `7` and `"7"` two registers for one node.
 | `set_widget` (promoted host write, A15) | `("widget", String(node_id), widget_name)` — `node_id` is the instance id, or the joined `instance_path` (`"57/61"`) for a nested host; the SAME register a top-level named write on that node claims (comfy-cli `_write_target`) | yes |
 | `connect` (concrete slot) | `("input", String(to_node), to_slot)` | **yes (A1)** |
 | `connect` (autogrow) | `("input", String(to_node), "grow", base_name)` | no — identity only, canonicalized by stamp (A7) |
-| `connect` (promoted input, A15) | `("input", String(to_node), "grow", name)` with the FULL declared name (names may contain dots — `images.image0`), matching comfy-cli `_write_target` at amendment v1.5 (`8f83af6da0e36de374991764bac7e8e8262e1eec`); only an ordinary autogrow keys by base name | **yes (A15)** — one register named by the definition |
+| `connect` (promoted input, A15) | `("input", String(to_node), "grow", name)` with the FULL declared name (names may contain dots — `images.image0`), matching comfy-cli `_write_target` at amendment v1.5 (`ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`); only an ordinary autogrow keys by base name | **yes (A15)** — one register named by the definition |
 | `add_node` / `delete_node` (presence) | `("node", String(node_id))` | **yes (A7)** |
 | `clear` (one row per entry in `removed_nodes`) | `("node", String(node_id))` | **yes (A7)** |
 | `delete_node` (severance of the link ids in `removed_links`) | none | no — monotonic, ungated (A7) |
@@ -600,7 +600,7 @@ nested-form concurrent write to the same interior widget LWW-converge
 (vector `subgraph-flat-vs-nested`).
 
 **Superseded for PROMOTED widgets by Amendment A15** (comfy-cli PR #815, pinned
-at `6ebc303276eebe521fb74355f906aca602f64bc2`). The flat form `57.width` no
+at `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`). The flat form `57.width` no
 longer resolves into the definition: it is a HOST write carrying
 `promoted: {value_index, instance_path, host_widgets_values}` and no `path`, and
 an interior address that backs a promotion (`57/13.width`) is redirected to the
@@ -1736,7 +1736,7 @@ document becomes unreadable that `project()` did not already refuse.
 ## Amendment A15 — 2026-08-27 — promoted subgraph widgets are written on the HOST; `connect` materializes a declared input
 
 Tracks comfy-cli PR #815 (`fix(subgraph): edit promoted widgets where the
-frontend reads them`), cited by SHA `6ebc303276eebe521fb74355f906aca602f64bc2`
+frontend reads them`), cited by SHA `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`
 and registered in `docs/upstream-pins.json` as
 `comfy-cli/workflow_ops@promoted-host-writes`. No `SCHEMA_VERSION` bump — see
 the end of this amendment.
@@ -1829,7 +1829,7 @@ autogrow, and exactly like a concrete input (A1) — it is stamp-gated on
 the autogrow base-name key: a declared subgraph input name may contain a dot
 (`images.image0`), and truncating at the first dot made `foo.bar` and
 `foo.baz` contend for one slot. comfy-cli spells it the same way since
-amendment v1.5 (PR #818, `8f83af6da0e36de374991764bac7e8e8262e1eec`), which
+amendment v1.5 (PR #818, `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`), which
 also gates the register and moves `grow_id` to the winner — closing the
 deviation recorded below.
 Once the gate passes the register is claimed unconditionally, then: reuse the
@@ -1845,14 +1845,16 @@ end with the input present and empty — the autogrow source-delete race (§2.5
 item 2) does not recur here. Delete of the DESTINATION is a no-op before any
 register is claimed, as for every connect.
 
-Once the input is materialized, comfy-cli's next `connect` to `57.width`
-resolves it as a CONCRETE slot (`to_slot: 1`, no `grow`) and claims
-`("input", "57", 1)` — a different register from the promoted grow's. That is
-the same relationship an autogrow and a later concrete connect onto the grown
-slot already have, and both implementations spell it the same way. Reuse by
-NAME on a `grow.promoted` op therefore arises only when two replicas race to
-materialize the same input; `fixtures/session-promoted-host.session.jsonl`
-carries the sequential shape, `test/promoted-host-writes.test.ts` the race.
+Reuse by NAME is the ordinary sequential case, not only the race: at comfy-cli
+main a later `connect` to `57.width` is minted as a promoted grow again (the
+declared-input check precedes the concrete-slot lookup in
+`_resolve_input_target`), so it claims the same full-name register, wins on
+stamp, retires the prior link and takes the slot's `grow_id`.
+`fixtures/session-promoted-host.session.jsonl` — regenerated at that revision
+— carries exactly that sequence; `test/promoted-host-writes.test.ts` pins the
+concurrent race in both orders. (At the PR-#815 head the second connect was
+minted as a concrete `to_slot: 1`, a different register; a peer minting that
+form still applies, through the concrete branch.)
 
 ### Deliberately NOT unified: the host register and the interior register
 
@@ -1875,7 +1877,7 @@ At PR #815 comfy-cli's `_apply_connect` did not `_lww_gate` a promoted grow
 and left `grow_id` on the first arrival; this applier gated and moved
 `grow_id` to the winner, and the divergence was logged in
 `docs/decisions/EXCEPTIONS.md`. comfy-cli PR #818 (amendment v1.5,
-`8f83af6da0e36de374991764bac7e8e8262e1eec`) now gates the same register under
+`ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`) now gates the same register under
 the same full-name spelling and moves `grow_id` identically, pinned in both
 arrival orders; the EXCEPTIONS row is struck.
 
@@ -1885,6 +1887,21 @@ frontend-only `PrimitiveNode` carried no positional payload and was rejected
 carry `promoted.value_index` + `host_widgets_values` with a one-segment
 `instance_path`, i.e. exactly a host write; the `legacy_primitive` flag itself
 is informational and unread.
+
+**OPEN — `promoted.repair` (vocabulary §14.4, merged to main after this
+amendment was drafted).** When the host instance carries a legacy
+`properties.proxyWidgets` entry the definition does not back with a linked
+input, comfy-cli first repairs it the way the frontend's forward migration
+does (`promoted.flush_proxy_migration`) and the host write additionally
+carries `promoted.repair = {entry, ids}`; its apply then MUTATES THE
+DEFINITION (mints a subgraph input and boundary links, ids derived by
+SHA-256 so replay is byte-identical). This applier reads only
+`value_index`/`instance_path`/`host_widgets_values`, ignores `repair`, and
+writes the host value only — the definition is left unrepaired and the two
+implementations then project different definitions for such a document. No
+shipped template in the corpus carries a legacy proxy entry (the z-image
+session has no `repair`), so nothing pins it yet; implementing it is a
+follow-up amendment, not a silent extension of this one.
 
 ### A mint defect this fixture exposed, fixed alongside
 
@@ -1936,6 +1953,8 @@ applier by `test/replay.test.ts`.
 comfy-cli separately; a doc host at the old pin rejects every host write with
 `uncatalogued_widget_write` and every promoted connect… applies it as an
 ungated autogrow. **Both pins move in the same change — the applier first,
-then the CLI**, as A1 already requires. comfy-cli's side is PR #818 (amendment v1.5): the promoted-grow gate, the
-full-name register, and the positional `legacy_primitive` payload; the two
-PRs move together.
+then the CLI**, as A1 already requires. comfy-cli's side is the #815 + #818 stack, merged to main as
+`ba0b0b92abcc86b01e8a6704d07088f92afe7aa7` (amendment v1.5): the promoted-grow
+gate, the full-name register, and the positional `legacy_primitive` payload;
+the pins above cite that merge commit. §14.4's `promoted.repair` is the one
+piece this package does not yet apply (OPEN above).

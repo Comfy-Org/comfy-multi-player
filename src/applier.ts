@@ -1244,7 +1244,7 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
 
 /**
  * Promoted input (Amendment A15; comfy-cli `_apply_connect` with
- * `grow.promoted`, PR #815 at `6ebc303276eebe521fb74355f906aca602f64bc2`):
+ * `grow.promoted`, PR #815 at `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`):
  * the destination is a subgraph instance and `grow.name` is
  * one of its definition's declared inputs. The frontend rebuilds those
  * `inputs[]` entries from the definition on load, so the instance may not

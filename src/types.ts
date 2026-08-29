@@ -152,7 +152,7 @@ export interface GrowSpec {
    * The destination is a subgraph instance and `name` is one of its
    * definition's DECLARED inputs (schema Amendment A15; comfy-cli
    * `_resolve_promoted_target`, PR #815 at
-   * `6ebc303276eebe521fb74355f906aca602f64bc2`). The input is ONE register
+   * `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`). The input is ONE register
    * named by the definition: an `inputs[]` entry with that `name` is reused if
    * the instance already carries one, otherwise `{name, type, link, grow_id,
    * widget?}` is appended VERBATIM — never a numbered collision rename, never a
@@ -160,7 +160,7 @@ export interface GrowSpec {
    * an interior widget; absent for a socket-only input. Unlike an autogrow,
    * the register IS stamp-gated — `("input", to_node, "grow", name)` with the
    * FULL declared name, since names may contain dots (comfy-cli amendment
-   * v1.5, PR #818 at `8f83af6da0e36de374991764bac7e8e8262e1eec`) — because
+   * v1.5, PR #818 at `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`) — because
    * two connects into one declared input contend for one slot the way two
    * concrete connects do.
    */
@@ -171,7 +171,7 @@ export interface GrowSpec {
 /**
  * A `set_widget` addressed at a promoted subgraph widget's HOST value
  * (schema Amendment A15; ComfyUI_frontend ADR 0009; comfy-cli PR #815 at
- * `6ebc303276eebe521fb74355f906aca602f64bc2`).
+ * `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`).
  *
  * The frontend keeps a promoted widget's value on the INSTANCE node, as
  * `widgets_values[value_index]` positional over the definition's widget-backed
