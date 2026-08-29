@@ -5,12 +5,17 @@ import { fileURLToPath } from "node:url";
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
 import { applyOps, mint, project, type Op, type WorkflowJSON, type WorkflowNode } from "../../src/index.js";
-import { loadCatalog } from "../helpers.js";
+import { loadCatalog, loadSession, sessionFiles } from "../helpers.js";
 
 const catalog = loadCatalog();
 const OUT_DIR = dirname(fileURLToPath(import.meta.url));
 const SCHEMES = ["base_version_actor", "lamport_doc_derived", "vector_reference"] as const;
 type Scheme = (typeof SCHEMES)[number];
+const SCHEME_PAIRS = [
+  { left: "base_version_actor", right: "lamport_doc_derived" },
+  { left: "base_version_actor", right: "vector_reference" },
+  { left: "lamport_doc_derived", right: "vector_reference" },
+] as const satisfies readonly { left: Scheme; right: Scheme }[];
 
 interface VectorClock {
   [actor: string]: number;
@@ -39,6 +44,16 @@ interface SchemeResult {
   divergence_class: "identical" | "equivalent-semantics" | "DIVERGENT";
 }
 
+interface SessionCorpusRow {
+  fixture_name: string;
+  ops_replayed: number;
+  scheme_pair: string;
+  divergence: boolean;
+  divergence_class: SchemeResult["divergence_class"];
+  left_final_state_hash: string;
+  right_final_state_hash: string;
+}
+
 const DIVERGENCE_ALLOWLIST: Record<string, string> = {
   "agent-add-human-connect":
     "base_version has no happened-before edge and can attempt the dependent connect before A exists; Lamport preserves the observed add-before-connect relation.",
@@ -54,7 +69,37 @@ const DIVERGENCE_ALLOWLIST: Record<string, string> = {
     "same-input reconnect writes expose the difference between legacy actor fallback and producer Lamport order; this is an explicit register-policy review case.",
   "delete-vs-edit-race":
     "the scalar schemes expose different arrival-sensitive delete/edit outcomes; DQ-11 and explicit product policy must classify this before rollout.",
+  "session-corpus:session-edit-heavy.session.jsonl:base_version_actor vs lamport_doc_derived":
+    "the recorded stream contains a stale zed base-1 edit at index 7 and an aaa base-1 edit at index 60; base_version_actor moves those equal-base branches by actor order, while the session Lamport reference preserves the recorded stream order.",
+  "session-corpus:session-edit-heavy.session.jsonl:base_version_actor vs vector_reference":
+    "the recorded stream contains a stale zed base-1 edit at index 7 and an aaa base-1 edit at index 60; base_version_actor moves those equal-base branches by actor order, while the cumulative session vector preserves the recorded stream order.",
+  "session-corpus:session-large-build.session.jsonl:base_version_actor vs lamport_doc_derived":
+    "the stream resumes with rewound branch edits at indexes 144-149 (base versions 80, 40, and three 90s); base_version_actor reorders that branch by base/actor, while the session Lamport reference preserves the recorded continuation order.",
+  "session-corpus:session-large-build.session.jsonl:base_version_actor vs vector_reference":
+    "the stream resumes with rewound branch edits at indexes 144-149 (base versions 80, 40, and three 90s); base_version_actor reorders that branch by base/actor, while the cumulative session vector preserves the recorded continuation order.",
+  "session-corpus:session-subgraph.session.jsonl:base_version_actor vs lamport_doc_derived":
+    "two bob subgraph set_widget operations at indexes 8 and 10 share base_version 9; base_version_actor resolves their tie with op identity, while the session Lamport reference preserves the recorded order and therefore the winning nested value differs.",
+  "session-corpus:session-subgraph.session.jsonl:base_version_actor vs vector_reference":
+    "two bob subgraph set_widget operations at indexes 8 and 10 share base_version 9; base_version_actor resolves their tie with op identity, while the cumulative session vector preserves the recorded order and therefore the winning nested value differs.",
 };
+
+/**
+ * The existing seven entries intentionally include three expected non-firing
+ * cases. Session divergence entries are included with expected firing status
+ * below so the suite detects both stale and newly firing rationale.
+ */
+const EXPECTED_FIRING_ALLOWLIST = new Set([
+  "dependent-producer-edits",
+  "reconnect-restart",
+  "stale-base-human-edit",
+  "reconnect-input-register",
+  "session-corpus:session-edit-heavy.session.jsonl:base_version_actor vs lamport_doc_derived",
+  "session-corpus:session-edit-heavy.session.jsonl:base_version_actor vs vector_reference",
+  "session-corpus:session-large-build.session.jsonl:base_version_actor vs lamport_doc_derived",
+  "session-corpus:session-large-build.session.jsonl:base_version_actor vs vector_reference",
+  "session-corpus:session-subgraph.session.jsonl:base_version_actor vs lamport_doc_derived",
+  "session-corpus:session-subgraph.session.jsonl:base_version_actor vs vector_reference",
+]);
 
 function hash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -170,6 +215,59 @@ function replay(caseData: MatrixCase, scheme: Scheme): Omit<SchemeResult, "diver
   };
 }
 
+function sessionCases(): MatrixCase[] {
+  return sessionFiles().sort().map((file) => {
+    const { header, ops } = loadSession(file);
+    // Session fixtures carry the legacy [base_version, actor] envelope only.
+    // Inject deterministic reference metadata from their recorded order; this
+    // is evidence plumbing, not a claim that production captured Lamport or
+    // vector stamps are present in these files.
+    const observedVector: VectorClock = {};
+    const logicalOps = ops.map((op, index) => {
+      observedVector[op.actor] = (observedVector[op.actor] ?? 0) + 1;
+      return logical(op, "session-corpus", index + 1, { ...observedVector });
+    });
+    return {
+      id: `session-corpus:${file}`,
+      name: file,
+      family: "session-corpus",
+      workflow: header.base_workflow,
+      ops: logicalOps,
+    };
+  });
+}
+
+function compareSchemePair(
+  left: SchemeResult,
+  right: SchemeResult,
+): Pick<SessionCorpusRow, "divergence" | "divergence_class" | "left_final_state_hash" | "right_final_state_hash"> {
+  const sameOrder = JSON.stringify(left.application_order) === JSON.stringify(right.application_order);
+  const divergence = left.final_state_hash !== right.final_state_hash;
+  return {
+    divergence,
+    divergence_class: divergence ? "DIVERGENT" : sameOrder ? "identical" : "equivalent-semantics",
+    left_final_state_hash: left.final_state_hash,
+    right_final_state_hash: right.final_state_hash,
+  };
+}
+
+function sessionCorpusRows(cases: MatrixCase[] = sessionCases()): SessionCorpusRow[] {
+  return cases.flatMap((caseData) => {
+    const raw = Object.fromEntries(SCHEMES.map((scheme) => [scheme, replay(caseData, scheme)])) as Record<Scheme, Omit<SchemeResult, "divergence_class">>;
+    const results = withDivergence(raw);
+    return SCHEME_PAIRS.map(({ left, right }) => ({
+      fixture_name: caseData.name,
+      ops_replayed: caseData.ops.length,
+      scheme_pair: `${left} vs ${right}`,
+      ...compareSchemePair(results[left], results[right]),
+    }));
+  });
+}
+
+function sessionAllowlistId(row: Pick<SessionCorpusRow, "fixture_name" | "scheme_pair">): string {
+  return `session-corpus:${row.fixture_name}:${row.scheme_pair}`;
+}
+
 function withDivergence(results: Record<Scheme, Omit<SchemeResult, "divergence_class">>): Record<Scheme, SchemeResult> {
   const baseline = results.base_version_actor;
   return Object.fromEntries(SCHEMES.map((scheme) => {
@@ -257,11 +355,40 @@ function allCases(): MatrixCase[] {
   return cases;
 }
 
-function renderMarkdown(matrix: { cases: { id: string; name: string; family: string; seed?: number; vector_relations: { ordered_pairs: number; concurrent_pairs: number }; schemes: Record<Scheme, SchemeResult> }[]; summary: Record<string, number> }): string {
-  const lines = ["# Clock ordering matrix", "", "Generated by `npm run test:clock-matrix`; final-state hashes cover canonical projected graph state only. Vector relations are pair counts from the test-only causal reference.", "", `Cases: ${matrix.summary.cases}; rows: ${matrix.summary.rows}; divergent rows: ${matrix.summary.divergent_rows}`, "", "| Case | Family | Seed | Vector ordered/concurrent pairs | Scheme | Application order | Final-state hash | Divergence |", "|---|---|---:|---:|---|---|---|---|"];
+function renderMarkdown(matrix: {
+  cases: { id: string; name: string; family: string; seed?: number; vector_relations: { ordered_pairs: number; concurrent_pairs: number }; schemes: Record<Scheme, SchemeResult> }[];
+  session_corpus: SessionCorpusRow[];
+  allowlist_firing_status: { id: string; expected_fired: boolean; fired: boolean; status: string }[];
+  summary: Record<string, number>;
+}): string {
+  const lines = ["# Clock ordering matrix", "", "Generated by `npm run test:clock-matrix`; final-state hashes cover canonical projected graph state only. Vector relations are pair counts from the test-only causal reference.", "", `Cases: ${matrix.summary.cases}; rows: ${matrix.summary.rows}; divergent rows: ${matrix.summary.divergent_rows}`, `Session corpus: ${matrix.summary.session_fixtures} fixtures; ${matrix.summary.session_ops_replayed} ops replayed across ${matrix.summary.session_stream_records} records`, `Allowlist: ${matrix.summary.allowlist_entries_fired} fired; ${matrix.summary.allowlist_entries_never_fired} NEVER_FIRED`, "", "| Case | Family | Seed | Vector ordered/concurrent pairs | Scheme | Application order | Final-state hash | Divergence |", "|---|---|---:|---:|---|---|---|---|"];
   for (const row of matrix.cases) for (const scheme of SCHEMES) {
     const result = row.schemes[scheme];
     lines.push(`| ${row.name} | ${row.family} | ${row.seed ?? "-"} | ${row.vector_relations.ordered_pairs}/${row.vector_relations.concurrent_pairs} | ${scheme} | ${result.application_order.join(" → ")} | ${result.final_state_hash} | ${result.divergence_class} |`);
+  }
+  lines.push(
+    "",
+    "## Session corpus",
+    "",
+    "Each JSONL file is one recorded stream. The replay reference assigns a monotonic session Lamport counter and cumulative test-only vector in file order; it does not change applier policy or clock semantics.",
+    "",
+    "| Fixture | Ops replayed | Scheme pair | Divergence | Class |",
+    "|---|---:|---|---|---|",
+  );
+  for (const row of matrix.session_corpus) {
+    lines.push(`| ${row.fixture_name} | ${row.ops_replayed} | ${row.scheme_pair} | ${row.divergence ? "yes" : "no"} | ${row.divergence_class} |`);
+  }
+  lines.push(
+    "",
+    "## Allowlist firing status",
+    "",
+    "`NEVER_FIRED` entries are intentional current slack, but their expected status is asserted so a future semantics change cannot silently activate or deactivate rationale.",
+    "",
+    "| Allowlist entry | Expected fired | Observed fired | Status |",
+    "|---|---|---|---|",
+  );
+  for (const row of matrix.allowlist_firing_status) {
+    lines.push(`| ${row.id} | ${row.expected_fired ? "yes" : "no"} | ${row.fired ? "yes" : "no"} | ${row.status} |`);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -271,14 +398,52 @@ function runMatrix() {
     const raw = Object.fromEntries(SCHEMES.map((scheme) => [scheme, replay(caseData, scheme)])) as Record<Scheme, Omit<SchemeResult, "divergence_class">>;
     return { id: caseData.id, name: caseData.name, family: caseData.family, ...(caseData.seed === undefined ? {} : { seed: caseData.seed }), vector_relations: vectorRelations(caseData.ops), schemes: withDivergence(raw) };
   });
+  const sessionFilesLoaded = sessionCases();
+  const sessionCorpus = sessionCorpusRows(sessionFilesLoaded);
+  const sessionDivergences = sessionCorpus.filter((row) => row.divergence);
   const divergentRows = rows.filter((row) => Object.values(row.schemes).some((result) => result.divergence_class === "DIVERGENT"));
   const unallowlisted = divergentRows.filter((row) => !(row.id in DIVERGENCE_ALLOWLIST));
-  if (unallowlisted.length > 0) throw new Error(`unallowlisted clock divergence: ${unallowlisted.map((row) => row.id).join(", ")}`);
+  const unallowlistedSession = sessionDivergences.filter((row) => !(sessionAllowlistId(row) in DIVERGENCE_ALLOWLIST));
+  if (unallowlisted.length > 0 || unallowlistedSession.length > 0) {
+    throw new Error(`unallowlisted clock divergence: ${[...unallowlisted.map((row) => row.id), ...unallowlistedSession.map(sessionAllowlistId)].join(", ")}`);
+  }
+  const firedAllowlistEntries = new Set([
+    ...divergentRows.map((row) => row.id),
+    ...sessionDivergences.map(sessionAllowlistId),
+  ]);
+  const allowlistKeys = Object.keys(DIVERGENCE_ALLOWLIST).sort();
+  const expectedKeys = [...EXPECTED_FIRING_ALLOWLIST].sort();
+  if (JSON.stringify(allowlistKeys.filter((id) => EXPECTED_FIRING_ALLOWLIST.has(id))) !== JSON.stringify(expectedKeys)) {
+    throw new Error("allowlist expected-firing declarations do not cover the allowlist entries");
+  }
+  const allowlistFiringStatus = allowlistKeys.map((id) => {
+    const expected_fired = EXPECTED_FIRING_ALLOWLIST.has(id);
+    const fired = firedAllowlistEntries.has(id);
+    if (expected_fired !== fired) throw new Error(`allowlist firing drift for ${id}: expected ${expected_fired}, observed ${fired}`);
+    return { id, expected_fired, fired, status: fired ? "FIRED" : "NEVER_FIRED" };
+  });
+  const sessionOps = sessionFilesLoaded.reduce((total, caseData) => total + caseData.ops.length, 0);
   const matrix = {
-    schema_version: 1,
+    schema_version: 2,
     schemes: SCHEMES,
     divergence_allowlist: DIVERGENCE_ALLOWLIST,
-    summary: { cases: rows.length, rows: rows.length * SCHEMES.length, divergent_rows: divergentRows.length, divergent_rows_allowlisted: divergentRows.length - unallowlisted.length },
+    summary: {
+      cases: rows.length,
+      rows: rows.length * SCHEMES.length,
+      divergent_rows: divergentRows.length,
+      divergent_rows_allowlisted: divergentRows.length - unallowlisted.length,
+      session_fixtures: sessionFilesLoaded.length,
+      session_stream_records: sessionOps + sessionFilesLoaded.length,
+      session_ops_replayed: sessionOps,
+      session_comparison_rows: sessionCorpus.length,
+      session_divergent_rows: sessionDivergences.length,
+      allowlist_entries: allowlistKeys.length,
+      allowlist_entries_fired: firedAllowlistEntries.size,
+      allowlist_entries_never_fired: allowlistKeys.length - firedAllowlistEntries.size,
+      session_divergent_rows_allowlisted: sessionDivergences.length - unallowlistedSession.length,
+    },
+    allowlist_firing_status: allowlistFiringStatus,
+    session_corpus: sessionCorpus,
     cases: rows,
   };
   mkdirSync(OUT_DIR, { recursive: true });
@@ -298,5 +463,16 @@ describe("clock shadow-comparison acceptance matrix", () => {
     expect(matrix.cases.find((row) => row.id === "agent-add-human-connect")?.vector_relations.ordered_pairs).toBe(1);
     expect(matrix.cases.find((row) => row.id === "same-widget-true-concurrency")?.vector_relations.concurrent_pairs).toBe(1);
     expect(matrix.summary.divergent_rows).toBeGreaterThanOrEqual(0);
+    expect(matrix.summary.session_fixtures).toBe(5);
+    expect(matrix.summary.session_stream_records).toBe(248);
+    expect(matrix.summary.session_ops_replayed).toBe(243);
+    expect(matrix.summary.session_comparison_rows).toBe(5 * SCHEME_PAIRS.length);
+    expect(matrix.allowlist_firing_status).toHaveLength(7 + matrix.summary.session_divergent_rows);
+    expect(Object.values(DIVERGENCE_ALLOWLIST).every((rationale) => rationale.trim().length > 0)).toBe(true);
+    expect(matrix.allowlist_firing_status.filter((row) => row.status === "NEVER_FIRED").map((row) => row.id)).toEqual([
+      "agent-add-human-connect",
+      "delete-vs-edit-race",
+      "same-widget-true-concurrency",
+    ]);
   });
 });

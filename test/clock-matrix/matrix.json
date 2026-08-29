@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "schemes": [
     "base_version_actor",
     "lamport_doc_derived",
@@ -12,14 +12,246 @@
     "reconnect-restart": "a restart continuation has equal shared revision metadata in the legacy stream; the doc-derived counter preserves the observed continuation order.",
     "stale-base-human-edit": "the stale human base revision is intentionally compared with the Lamport observed-event order; the differing scalar winner is a rollout-review signal.",
     "reconnect-input-register": "same-input reconnect writes expose the difference between legacy actor fallback and producer Lamport order; this is an explicit register-policy review case.",
-    "delete-vs-edit-race": "the scalar schemes expose different arrival-sensitive delete/edit outcomes; DQ-11 and explicit product policy must classify this before rollout."
+    "delete-vs-edit-race": "the scalar schemes expose different arrival-sensitive delete/edit outcomes; DQ-11 and explicit product policy must classify this before rollout.",
+    "session-corpus:session-edit-heavy.session.jsonl:base_version_actor vs lamport_doc_derived": "the recorded stream contains a stale zed base-1 edit at index 7 and an aaa base-1 edit at index 60; base_version_actor moves those equal-base branches by actor order, while the session Lamport reference preserves the recorded stream order.",
+    "session-corpus:session-edit-heavy.session.jsonl:base_version_actor vs vector_reference": "the recorded stream contains a stale zed base-1 edit at index 7 and an aaa base-1 edit at index 60; base_version_actor moves those equal-base branches by actor order, while the cumulative session vector preserves the recorded stream order.",
+    "session-corpus:session-large-build.session.jsonl:base_version_actor vs lamport_doc_derived": "the stream resumes with rewound branch edits at indexes 144-149 (base versions 80, 40, and three 90s); base_version_actor reorders that branch by base/actor, while the session Lamport reference preserves the recorded continuation order.",
+    "session-corpus:session-large-build.session.jsonl:base_version_actor vs vector_reference": "the stream resumes with rewound branch edits at indexes 144-149 (base versions 80, 40, and three 90s); base_version_actor reorders that branch by base/actor, while the cumulative session vector preserves the recorded continuation order.",
+    "session-corpus:session-subgraph.session.jsonl:base_version_actor vs lamport_doc_derived": "two bob subgraph set_widget operations at indexes 8 and 10 share base_version 9; base_version_actor resolves their tie with op identity, while the session Lamport reference preserves the recorded order and therefore the winning nested value differs.",
+    "session-corpus:session-subgraph.session.jsonl:base_version_actor vs vector_reference": "two bob subgraph set_widget operations at indexes 8 and 10 share base_version 9; base_version_actor resolves their tie with op identity, while the cumulative session vector preserves the recorded order and therefore the winning nested value differs."
   },
   "summary": {
     "cases": 409,
     "rows": 1227,
     "divergent_rows": 4,
-    "divergent_rows_allowlisted": 4
+    "divergent_rows_allowlisted": 4,
+    "session_fixtures": 5,
+    "session_stream_records": 248,
+    "session_ops_replayed": 243,
+    "session_comparison_rows": 15,
+    "session_divergent_rows": 6,
+    "allowlist_entries": 13,
+    "allowlist_entries_fired": 10,
+    "allowlist_entries_never_fired": 3,
+    "session_divergent_rows_allowlisted": 6
   },
+  "allowlist_firing_status": [
+    {
+      "id": "agent-add-human-connect",
+      "expected_fired": false,
+      "fired": false,
+      "status": "NEVER_FIRED"
+    },
+    {
+      "id": "delete-vs-edit-race",
+      "expected_fired": false,
+      "fired": false,
+      "status": "NEVER_FIRED"
+    },
+    {
+      "id": "dependent-producer-edits",
+      "expected_fired": true,
+      "fired": true,
+      "status": "FIRED"
+    },
+    {
+      "id": "reconnect-input-register",
+      "expected_fired": true,
+      "fired": true,
+      "status": "FIRED"
+    },
+    {
+      "id": "reconnect-restart",
+      "expected_fired": true,
+      "fired": true,
+      "status": "FIRED"
+    },
+    {
+      "id": "same-widget-true-concurrency",
+      "expected_fired": false,
+      "fired": false,
+      "status": "NEVER_FIRED"
+    },
+    {
+      "id": "session-corpus:session-edit-heavy.session.jsonl:base_version_actor vs lamport_doc_derived",
+      "expected_fired": true,
+      "fired": true,
+      "status": "FIRED"
+    },
+    {
+      "id": "session-corpus:session-edit-heavy.session.jsonl:base_version_actor vs vector_reference",
+      "expected_fired": true,
+      "fired": true,
+      "status": "FIRED"
+    },
+    {
+      "id": "session-corpus:session-large-build.session.jsonl:base_version_actor vs lamport_doc_derived",
+      "expected_fired": true,
+      "fired": true,
+      "status": "FIRED"
+    },
+    {
+      "id": "session-corpus:session-large-build.session.jsonl:base_version_actor vs vector_reference",
+      "expected_fired": true,
+      "fired": true,
+      "status": "FIRED"
+    },
+    {
+      "id": "session-corpus:session-subgraph.session.jsonl:base_version_actor vs lamport_doc_derived",
+      "expected_fired": true,
+      "fired": true,
+      "status": "FIRED"
+    },
+    {
+      "id": "session-corpus:session-subgraph.session.jsonl:base_version_actor vs vector_reference",
+      "expected_fired": true,
+      "fired": true,
+      "status": "FIRED"
+    },
+    {
+      "id": "stale-base-human-edit",
+      "expected_fired": true,
+      "fired": true,
+      "status": "FIRED"
+    }
+  ],
+  "session_corpus": [
+    {
+      "fixture_name": "session-edit-heavy.session.jsonl",
+      "ops_replayed": 61,
+      "scheme_pair": "base_version_actor vs lamport_doc_derived",
+      "divergence": true,
+      "divergence_class": "DIVERGENT",
+      "left_final_state_hash": "aaa7a08c78bad672fcc389c8f7368585cdb719c0ad1f0fc2705b8f3578815c28",
+      "right_final_state_hash": "a3d0192981a17543f7d2db1b3e87dda05fb3977a808de8ae63f970cf62c7282f"
+    },
+    {
+      "fixture_name": "session-edit-heavy.session.jsonl",
+      "ops_replayed": 61,
+      "scheme_pair": "base_version_actor vs vector_reference",
+      "divergence": true,
+      "divergence_class": "DIVERGENT",
+      "left_final_state_hash": "aaa7a08c78bad672fcc389c8f7368585cdb719c0ad1f0fc2705b8f3578815c28",
+      "right_final_state_hash": "a3d0192981a17543f7d2db1b3e87dda05fb3977a808de8ae63f970cf62c7282f"
+    },
+    {
+      "fixture_name": "session-edit-heavy.session.jsonl",
+      "ops_replayed": 61,
+      "scheme_pair": "lamport_doc_derived vs vector_reference",
+      "divergence": false,
+      "divergence_class": "identical",
+      "left_final_state_hash": "a3d0192981a17543f7d2db1b3e87dda05fb3977a808de8ae63f970cf62c7282f",
+      "right_final_state_hash": "a3d0192981a17543f7d2db1b3e87dda05fb3977a808de8ae63f970cf62c7282f"
+    },
+    {
+      "fixture_name": "session-frontend-only-notes.session.jsonl",
+      "ops_replayed": 2,
+      "scheme_pair": "base_version_actor vs lamport_doc_derived",
+      "divergence": false,
+      "divergence_class": "identical",
+      "left_final_state_hash": "3ca589071196d550b3022a6880962f8b278aa34ef100d3d598bc068d4ecea61a",
+      "right_final_state_hash": "3ca589071196d550b3022a6880962f8b278aa34ef100d3d598bc068d4ecea61a"
+    },
+    {
+      "fixture_name": "session-frontend-only-notes.session.jsonl",
+      "ops_replayed": 2,
+      "scheme_pair": "base_version_actor vs vector_reference",
+      "divergence": false,
+      "divergence_class": "identical",
+      "left_final_state_hash": "3ca589071196d550b3022a6880962f8b278aa34ef100d3d598bc068d4ecea61a",
+      "right_final_state_hash": "3ca589071196d550b3022a6880962f8b278aa34ef100d3d598bc068d4ecea61a"
+    },
+    {
+      "fixture_name": "session-frontend-only-notes.session.jsonl",
+      "ops_replayed": 2,
+      "scheme_pair": "lamport_doc_derived vs vector_reference",
+      "divergence": false,
+      "divergence_class": "identical",
+      "left_final_state_hash": "3ca589071196d550b3022a6880962f8b278aa34ef100d3d598bc068d4ecea61a",
+      "right_final_state_hash": "3ca589071196d550b3022a6880962f8b278aa34ef100d3d598bc068d4ecea61a"
+    },
+    {
+      "fixture_name": "session-large-build.session.jsonl",
+      "ops_replayed": 162,
+      "scheme_pair": "base_version_actor vs lamport_doc_derived",
+      "divergence": true,
+      "divergence_class": "DIVERGENT",
+      "left_final_state_hash": "1ad0b3cf4817bd5e87d3f6981f1721a2c0010db7929772a88adbd19db355115f",
+      "right_final_state_hash": "c0abc7da45987371e5e0c17ce1285f6ba971eb50c831b8acb648480d9c81dbeb"
+    },
+    {
+      "fixture_name": "session-large-build.session.jsonl",
+      "ops_replayed": 162,
+      "scheme_pair": "base_version_actor vs vector_reference",
+      "divergence": true,
+      "divergence_class": "DIVERGENT",
+      "left_final_state_hash": "1ad0b3cf4817bd5e87d3f6981f1721a2c0010db7929772a88adbd19db355115f",
+      "right_final_state_hash": "c0abc7da45987371e5e0c17ce1285f6ba971eb50c831b8acb648480d9c81dbeb"
+    },
+    {
+      "fixture_name": "session-large-build.session.jsonl",
+      "ops_replayed": 162,
+      "scheme_pair": "lamport_doc_derived vs vector_reference",
+      "divergence": false,
+      "divergence_class": "identical",
+      "left_final_state_hash": "c0abc7da45987371e5e0c17ce1285f6ba971eb50c831b8acb648480d9c81dbeb",
+      "right_final_state_hash": "c0abc7da45987371e5e0c17ce1285f6ba971eb50c831b8acb648480d9c81dbeb"
+    },
+    {
+      "fixture_name": "session-promoted-host.session.jsonl",
+      "ops_replayed": 7,
+      "scheme_pair": "base_version_actor vs lamport_doc_derived",
+      "divergence": false,
+      "divergence_class": "equivalent-semantics",
+      "left_final_state_hash": "e09e1aaa0b734dd9dfa4c556a752e774b871d6eb8c5ac32166e3be86efec3cea",
+      "right_final_state_hash": "e09e1aaa0b734dd9dfa4c556a752e774b871d6eb8c5ac32166e3be86efec3cea"
+    },
+    {
+      "fixture_name": "session-promoted-host.session.jsonl",
+      "ops_replayed": 7,
+      "scheme_pair": "base_version_actor vs vector_reference",
+      "divergence": false,
+      "divergence_class": "equivalent-semantics",
+      "left_final_state_hash": "e09e1aaa0b734dd9dfa4c556a752e774b871d6eb8c5ac32166e3be86efec3cea",
+      "right_final_state_hash": "e09e1aaa0b734dd9dfa4c556a752e774b871d6eb8c5ac32166e3be86efec3cea"
+    },
+    {
+      "fixture_name": "session-promoted-host.session.jsonl",
+      "ops_replayed": 7,
+      "scheme_pair": "lamport_doc_derived vs vector_reference",
+      "divergence": false,
+      "divergence_class": "identical",
+      "left_final_state_hash": "e09e1aaa0b734dd9dfa4c556a752e774b871d6eb8c5ac32166e3be86efec3cea",
+      "right_final_state_hash": "e09e1aaa0b734dd9dfa4c556a752e774b871d6eb8c5ac32166e3be86efec3cea"
+    },
+    {
+      "fixture_name": "session-subgraph.session.jsonl",
+      "ops_replayed": 11,
+      "scheme_pair": "base_version_actor vs lamport_doc_derived",
+      "divergence": true,
+      "divergence_class": "DIVERGENT",
+      "left_final_state_hash": "6ea93109af0abb34b7cad960ea41b32fe75b939f8b87897f4e28b7ac256da1dc",
+      "right_final_state_hash": "5dd9a3b4fd5b4ab24c2849c70a1e05d316fe5a7e0deb2ea0515bfbe7fdde7ea3"
+    },
+    {
+      "fixture_name": "session-subgraph.session.jsonl",
+      "ops_replayed": 11,
+      "scheme_pair": "base_version_actor vs vector_reference",
+      "divergence": true,
+      "divergence_class": "DIVERGENT",
+      "left_final_state_hash": "6ea93109af0abb34b7cad960ea41b32fe75b939f8b87897f4e28b7ac256da1dc",
+      "right_final_state_hash": "5dd9a3b4fd5b4ab24c2849c70a1e05d316fe5a7e0deb2ea0515bfbe7fdde7ea3"
+    },
+    {
+      "fixture_name": "session-subgraph.session.jsonl",
+      "ops_replayed": 11,
+      "scheme_pair": "lamport_doc_derived vs vector_reference",
+      "divergence": false,
+      "divergence_class": "identical",
+      "left_final_state_hash": "5dd9a3b4fd5b4ab24c2849c70a1e05d316fe5a7e0deb2ea0515bfbe7fdde7ea3",
+      "right_final_state_hash": "5dd9a3b4fd5b4ab24c2849c70a1e05d316fe5a7e0deb2ea0515bfbe7fdde7ea3"
+    }
+  ],
   "cases": [
     {
       "id": "agent-add-human-connect",
