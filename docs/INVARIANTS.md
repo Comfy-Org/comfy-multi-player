@@ -91,7 +91,7 @@ and legacy widget keys to life `"0"`.
 **Why:** A delete followed by same-ID re-add must not let a life-1 widget stamp
 defeat a valid life-2 write (DQ-11, KEEP-ALIVE 4). The package regression is
 `test/incarnation-stamps.test.ts`; the schema and protocol implications are
-recorded in Amendment A15 of `docs/multiplayer-schema.md`.
+recorded in Amendment A16 of `docs/multiplayer-schema.md`.
 
 ## FORECLOSE
 

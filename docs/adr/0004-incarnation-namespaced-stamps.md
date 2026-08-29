@@ -54,7 +54,7 @@ new node 7 ── add(life 2) ── widget write(life 2) ── valid winner
 ## References
 
 - Workspace ADR-016: `decisions/ADR-016-dq11-incarnation-namespaced-stamps.md`.
-- `docs/multiplayer-schema.md`, Amendment A15.
+- `docs/multiplayer-schema.md`, Amendment A16.
 - `docs/INVARIANTS.md`, KA-11 amendment.
 - `test/incarnation-stamps.test.ts`.
 
