@@ -4,6 +4,8 @@ import {
   applyOps,
   mint,
   project,
+  readStamps,
+  stampTargetKey,
   type ConnectOp,
   type Op,
   type WidgetCatalog,
@@ -348,6 +350,96 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
     });
     // Both orders must REJECT — never `null` (accepted as a delete-wins no-op).
     expect(dispositions).toEqual(["output_slot_missing", "output_slot_missing"]);
+  });
+
+  it("KA-4/A6 §2.5 item 5 destination-axis exception preserves the input stamp on a missing destination", () => {
+    const incumbent = {
+      op: "connect", op_id: opId("edge-dst-inc"), actor: "human:i", base_version: 1,
+      stamp: [1, "human:i"], link_id: 7000, from_node: 301, from_slot: 0,
+      to_node: 700, to_slot: 0, link_type: "IMAGE",
+    } as Op;
+    const connect = {
+      op: "connect", op_id: opId("edge-dst-connect"), actor: "human:x", base_version: 5,
+      stamp: [5, "human:x"], link_id: 9800, from_node: 300, from_slot: 0,
+      to_node: 700, to_slot: 0, link_type: "IMAGE",
+    } as Op;
+    const deleteDestination = {
+      op: "delete_node", op_id: opId("edge-dst-delete"), actor: "human:d",
+      base_version: 4, stamp: [4, "human:d"], node_id: 700, removed_links: [],
+    } as Op;
+    const seeded = mint(convergenceWorkflow, catalog);
+    expect(applyOps(seeded, [incumbent], catalog).failed).toBeNull();
+    const snapshot = Y.encodeStateAsUpdate(seeded);
+    const inputTarget = stampTargetKey(connect);
+    const cases = [[connect, deleteDestination], [deleteDestination, connect]].map((order) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      let connectOutcome: string | undefined;
+      for (const op of order) {
+        const result = applyOps(doc, [op], catalog);
+        if (op === connect) connectOutcome = result.outcomes[0]?.outcome;
+      }
+      return {
+        connectOutcome,
+        inputStamp: readStamps(doc)[inputTarget],
+        projection: project(doc, catalog),
+      };
+    });
+
+    // A6's destination-axis exception is a disposition difference, not a
+    // license to force convergence of the hidden register ledger: when the
+    // destination is already gone, delete-wins returns before claiming input.
+    expect(cases[0]!.connectOutcome).toBe("applied");
+    expect(cases[0]!.inputStamp).toEqual([5, "human:x", connect.op_id]);
+    expect(cases[1]!.connectOutcome).toBe("no-op");
+    expect(cases[1]!.inputStamp).toEqual([1, "human:i", incumbent.op_id]);
+    expect(cases[0]!.projection).toEqual(cases[1]!.projection);
+    expect(cases[1]!.projection.links).toEqual([]);
+  });
+
+  it("KA-4/A6 §2.5 item 4 source-axis disposition claims the input stamp before a missing-source no-op", () => {
+    const incumbent = {
+      op: "connect", op_id: opId("edge-src-inc"), actor: "human:i", base_version: 1,
+      stamp: [1, "human:i"], link_id: 7000, from_node: 301, from_slot: 0,
+      to_node: 700, to_slot: 0, link_type: "IMAGE",
+    } as Op;
+    const connect = {
+      op: "connect", op_id: opId("edge-src-connect"), actor: "human:x", base_version: 5,
+      stamp: [5, "human:x"], link_id: 9801, from_node: 300, from_slot: 0,
+      to_node: 700, to_slot: 0, link_type: "IMAGE",
+    } as Op;
+    const deleteSource = {
+      op: "delete_node", op_id: opId("edge-src-delete"), actor: "human:d",
+      base_version: 4, stamp: [4, "human:d"], node_id: 300, removed_links: [],
+    } as Op;
+    const seeded = mint(convergenceWorkflow, catalog);
+    expect(applyOps(seeded, [incumbent], catalog).failed).toBeNull();
+    const snapshot = Y.encodeStateAsUpdate(seeded);
+    const inputTarget = stampTargetKey(connect);
+    const cases = [[connect, deleteSource], [deleteSource, connect]].map((order) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      let connectOutcome: string | undefined;
+      for (const op of order) {
+        const result = applyOps(doc, [op], catalog);
+        if (op === connect) connectOutcome = result.outcomes[0]?.outcome;
+      }
+      return {
+        connectOutcome,
+        inputStamp: readStamps(doc)[inputTarget],
+        projection: project(doc, catalog),
+      };
+    });
+
+    // The source-axis exception is deliberately asymmetric at the outcome
+    // level: a missing source returns no-op, but the concrete input register
+    // is still claimed first, retiring the incumbent stamp and link.
+    expect(cases.map((entry) => entry.connectOutcome)).toEqual(["applied", "no-op"]);
+    expect(cases[0]!.inputStamp).toEqual([5, "human:x", connect.op_id]);
+    expect(cases[1]!.inputStamp).toEqual([5, "human:x", connect.op_id]);
+    expect(cases[0]!.projection).toEqual(cases[1]!.projection);
+    expect(cases[0]!.projection.links).toEqual([]);
+    expect(cases[0]!.projection.nodes.find((node) => node.id === 700)?.inputs?.[0]?.link).toBeNull();
   });
 
   it.each([
