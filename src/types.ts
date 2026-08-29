@@ -21,6 +21,12 @@
  */
 export const SCHEMA_VERSION = 2;
 
+/** Clean-lineage schema used by the additive V1 Lamport migration. */
+export const LAMPORT_SCHEMA_VERSION = 3;
+
+/** Ordering contract stored in Lamport-lineage document metadata. */
+export const LAMPORT_ORDERING_VERSION = 2;
+
 /** Internal per-node lifetime key. It never projects into workflow JSON. */
 export const NODE_INCARNATION_KEY = "__incarnation";
 
@@ -117,6 +123,12 @@ export type Stamp = [baseVersion: number, actor: Actor];
  * string order.
  */
 export type StampKey = [baseVersion: number, actor: Actor, opId: string];
+
+/** Creator-carried Lamport ordering. Counter zero is reserved for bootstrap. */
+export interface LamportOrdering {
+  kind: "lamport";
+  counter: number;
+}
 
 /** Envelope every op carries (comfy-cli `_new_op`). */
 export interface OpBase {
@@ -363,6 +375,16 @@ export type DeferredOp = ResetDocOp;
  * `unknown_op` is what protects the document.
  */
 export type WireOp = Op | DeferredOp;
+
+type WithoutLegacyOrdering<T> = T extends unknown
+  ? Omit<T, "base_version" | "stamp"> & { ordering: LamportOrdering }
+  : never;
+
+/** Native V1 Lamport envelope. Legacy scalar fields are absent by construction. */
+export type LamportOp = WithoutLegacyOrdering<Op>;
+
+/** A Lamport op before runtime admission has established its shape. */
+export type LamportWireOp = WithoutLegacyOrdering<WireOp>;
 
 // ---------------------------------------------------------------------------
 // Op-kind partition guard (issue #21, strengthened by issue #17)

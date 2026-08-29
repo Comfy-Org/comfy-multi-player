@@ -33,8 +33,8 @@ import {
   widgetStorageOf,
 } from "./doc.js";
 import { assertNever } from "./exhaustive.js";
-import { assertReadableSchema } from "./schema-version.js";
-import { NODE_INCARNATION_KEY, type WidgetCatalog, type WorkflowJSON, type WorkflowNode } from "./types.js";
+import { assertReadableSchema, assertSchemaVersionAgainst } from "./schema-version.js";
+import { LAMPORT_SCHEMA_VERSION, NODE_INCARNATION_KEY, type WidgetCatalog, type WorkflowJSON, type WorkflowNode } from "./types.js";
 
 /** Sorted-by-id comparator: numeric when both ids are numbers, else string order. */
 function idCompare(a: unknown, b: unknown): number {
@@ -251,10 +251,27 @@ function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): Record<s
  */
 export function project(doc: Y.Doc, catalog: WidgetCatalog): WorkflowJSON {
   assertReadableSchema(doc, "project");
+  return projectReadable(doc, catalog);
+}
+
+/** Project a clean Lamport lineage after the dedicated v3 fail-closed read gate. */
+export function projectLamport(doc: Y.Doc, catalog: WidgetCatalog): WorkflowJSON {
+  assertSchemaVersionAgainst(doc, "projectLamport", LAMPORT_SCHEMA_VERSION);
+  return projectReadable(doc, catalog);
+}
+
+function projectReadable(doc: Y.Doc, catalog: WidgetCatalog): WorkflowJSON {
 
   const wf: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   metaMap(doc).forEach((v, k) => {
-    if (k === "schema_version" || k === "catalog_version" || k.startsWith("__")) return;
+    if (
+      k === "schema_version" ||
+      k === "catalog_version" ||
+      k === "ordering_version" ||
+      k === "clock_kind" ||
+      k === "clock_max" ||
+      k.startsWith("__")
+    ) return;
     wf[k] = structuredClone(v);
   });
 

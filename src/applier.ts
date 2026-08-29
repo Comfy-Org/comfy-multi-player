@@ -140,6 +140,16 @@ import { NODE_INCARNATION_KEY } from "./types.js";
  * cannot are rejected with `catalog_required`.
  */
 export function applyOps(doc: Y.Doc, ops: Op[], catalog?: WidgetCatalog): ApplyResult {
+  return applyOpsWithAdmission(doc, ops, catalog);
+}
+
+/** Module-internal seam for ordering domains that carry atomic admitted-event metadata. */
+export function applyOpsWithAdmission(
+  doc: Y.Doc,
+  ops: Op[],
+  catalog?: WidgetCatalog,
+  onAdmitted?: (doc: Y.Doc, op: Op) => void,
+): ApplyResult {
   const bookkeeping = appliedMap(doc);
   const outcomes: ApplyOutcome[] = [];
   const duplicateIds = new Set<string>();
@@ -181,6 +191,7 @@ export function applyOps(doc: Y.Doc, ops: Op[], catalog?: WidgetCatalog): ApplyR
       let outcome: Exclude<ApplyOutcome["outcome"], "rejected"> = "applied";
       doc.transact(() => {
         outcome = dispatch(doc, op, catalog);
+        onAdmitted?.(doc, op);
         // comfy-cli records the op_id even for delete-wins/LWW-dropped no-ops.
         mset(bookkeeping, op.op_id, digest);
       }, op.actor);
