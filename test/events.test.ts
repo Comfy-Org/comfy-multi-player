@@ -9,7 +9,10 @@ import {
   readGraph,
   type CmpEvent,
   type Op,
+  type WidgetCatalog,
 } from "../src/index.js";
+
+const catalog: WidgetCatalog = { types: {} };
 
 const malformed = {
   op: "not_a_real_op",
@@ -26,7 +29,7 @@ const validClear = {
 
 describe("caller-owned cmp event sink", () => {
   it("isolates a throwing sink from applier results and document bytes", () => {
-    const baselineDoc = mint({ nodes: [], links: [] });
+    const baselineDoc = mint({ nodes: [], links: [] }, catalog);
     const observedDoc = new Y.Doc();
     Y.applyUpdate(observedDoc, Y.encodeStateAsUpdate(baselineDoc));
 
@@ -41,7 +44,7 @@ describe("caller-owned cmp event sink", () => {
 
   it("emits a versioned JSON-serializable rejection without Error instances", () => {
     const events: CmpEvent[] = [];
-    applyOps(mint({ nodes: [], links: [] }), [malformed], undefined, { eventSink: (event) => { events.push(event); } });
+    applyOps(mint({ nodes: [], links: [] }, catalog), [malformed], undefined, { eventSink: (event) => { events.push(event); } });
 
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
@@ -60,7 +63,7 @@ describe("caller-owned cmp event sink", () => {
   it("reports the existing batch limit once without changing its result", () => {
     const sink = vi.fn((_event: CmpEvent): undefined => undefined);
     const ops = Array.from({ length: MAX_OPS_PER_BATCH + 1 }, () => malformed);
-    const result = applyOps(mint({ nodes: [], links: [] }), ops, undefined, { eventSink: sink });
+    const result = applyOps(mint({ nodes: [], links: [] }, catalog), ops, undefined, { eventSink: sink });
 
     expect(sink).toHaveBeenCalledOnce();
     expect(sink).toHaveBeenCalledWith(expect.objectContaining({
@@ -74,7 +77,7 @@ describe("caller-owned cmp event sink", () => {
   });
 
   it("isolates a throwing sink after an applied prefix and abort remainder are fixed", () => {
-    const baselineDoc = mint({ nodes: [], links: [] });
+    const baselineDoc = mint({ nodes: [], links: [] }, catalog);
     const observedDoc = new Y.Doc();
     Y.applyUpdate(observedDoc, Y.encodeStateAsUpdate(baselineDoc));
     const ops = [validClear, malformed, validClear];
