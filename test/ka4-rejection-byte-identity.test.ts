@@ -532,7 +532,6 @@ function promotedCatalogRequiredCase(): { doc: Y.Doc; op: Op; catalog?: WidgetCa
       value: "v",
       promoted: { value_index: 0, instance_path: ["6"], host_widgets_values: ["v"] },
     } as unknown as Op,
-    catalog: undefined,
     code: "catalog_required",
   };
 }

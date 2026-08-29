@@ -1,4 +1,4 @@
-import type { Actor, LamportOrdering } from "./types.js";
+import type { Actor } from "./types.js";
 
 export const MAX_LAMPORT_COUNTER = Number.MAX_SAFE_INTEGER;
 
@@ -44,13 +44,13 @@ export async function persistLamportTick(
   identity: Omit<LamportProducerClock, "counter">,
   observed: readonly number[],
   options: { requireSeed?: boolean } = {},
-): Promise<LamportOrdering> {
+): Promise<number> {
   return store.transaction(identity, async (stored) => {
     if (stored === undefined && options.requireSeed && observed.length === 0) {
       throw new Error("Lamport producer clock is unseeded; observe authoritative lineage state before minting");
     }
     const counter = tickLamport(stored ?? 0, ...observed);
-    return { counter, value: { kind: "lamport", counter } };
+    return { counter, value: counter };
   });
 }
 
@@ -59,14 +59,14 @@ export function freezeLamportEnvelope<T extends object>(
   payload: T,
   actor: Actor,
   opId: string,
-  ordering: LamportOrdering,
-): Readonly<T & { actor: Actor; op_id: string; ordering: LamportOrdering }> {
-  validateLamportCounter(ordering.counter);
-  if (ordering.kind !== "lamport") throw new TypeError("unsupported ordering kind");
+  counter: number,
+): Readonly<T & { actor: Actor; op_id: string; base_version: number; stamp: readonly [number, Actor] }> {
+  validateLamportCounter(counter);
   return Object.freeze({
     ...payload,
     actor,
     op_id: opId,
-    ordering: Object.freeze({ ...ordering }),
+    base_version: counter,
+    stamp: Object.freeze([counter, actor]) as readonly [number, Actor],
   });
 }

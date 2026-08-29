@@ -187,7 +187,7 @@ describe("KA-2 / FC-2: the in-op stamp governs every LWW register, not just top-
     ...setText(opId, envelope, stamp, value),
     path: ["100", "27"],
     inner_widget: "text",
-  });
+  }) as unknown as SetWidgetOp;
 
   it("interior subgraph writes resolve by the in-op stamp", () => {
     const winner = interiorWrite("w", { actor: "a", base_version: 1 }, [50, "a"], "stamp-wins");

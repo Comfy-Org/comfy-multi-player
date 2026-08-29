@@ -61,8 +61,7 @@ export {
   type EncodingLoss,
 } from "./doc.js";
 export { applyOps } from "./applier.js";
-export { applyLamportOps, mintLamport } from "./lamport.js";
-export { project, projectLamport } from "./project.js";
+export { project } from "./project.js";
 export { mint } from "./mint.js";
 export { migrate } from "./migrate.js";
 export { assertReadableSchema, readSchemaVersion } from "./schema-version.js";
