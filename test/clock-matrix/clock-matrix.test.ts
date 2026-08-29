@@ -36,7 +36,12 @@ interface SchemeResult {
   application_order: string[];
   rejected: string[];
   final_state_hash: string;
+  final_state_delta: string[];
   divergence_class: "identical" | "equivalent-semantics" | "DIVERGENT";
+}
+
+interface ReplayResult extends Omit<SchemeResult, "divergence_class" | "final_state_delta"> {
+  projection: WorkflowJSON;
 }
 
 const DIVERGENCE_ALLOWLIST: Record<string, string> = {
@@ -178,7 +183,7 @@ function canonicalProjection(doc: Y.Doc): WorkflowJSON {
   return value;
 }
 
-function replay(caseData: MatrixCase, scheme: Scheme): Omit<SchemeResult, "divergence_class"> {
+function replay(caseData: MatrixCase, scheme: Scheme): ReplayResult {
   const ordered = orderFor(caseData, scheme);
   const ops = ordered.map((item) => ({ ...item.op, stamp: schemeStamp(item, scheme, ordered) })) as Op[];
   const doc = mint(caseData.workflow, catalog);
@@ -188,16 +193,38 @@ function replay(caseData: MatrixCase, scheme: Scheme): Omit<SchemeResult, "diver
     application_order: ordered.map((item) => item.op.op_id),
     rejected: result.outcomes.filter((outcome) => outcome.outcome === "rejected").map((outcome) => outcome.op_id),
     final_state_hash: hash(projection),
+    projection,
   };
 }
 
-function withDivergence(results: Record<Scheme, Omit<SchemeResult, "divergence_class">>): Record<Scheme, SchemeResult> {
+function changedPaths(baseline: unknown, candidate: unknown, path = "$"): string[] {
+  if (Object.is(baseline, candidate)) return [];
+  if (Array.isArray(baseline) && Array.isArray(candidate)) {
+    const paths: string[] = [];
+    for (let index = 0; index < Math.max(baseline.length, candidate.length); index++) {
+      paths.push(...changedPaths(baseline[index], candidate[index], `${path}[${index}]`));
+    }
+    return paths;
+  }
+  if (baseline !== null && candidate !== null && typeof baseline === "object" && typeof candidate === "object") {
+    const keys = new Set([...Object.keys(baseline), ...Object.keys(candidate)]);
+    return [...keys].sort().flatMap((key) => changedPaths(
+      (baseline as Record<string, unknown>)[key],
+      (candidate as Record<string, unknown>)[key],
+      `${path}.${key}`,
+    ));
+  }
+  return [path];
+}
+
+function withDivergence(results: Record<Scheme, ReplayResult>): Record<Scheme, SchemeResult> {
   const baseline = results.base_version_actor;
   return Object.fromEntries(SCHEMES.map((scheme) => {
     const candidate = results[scheme];
     const sameOrder = JSON.stringify(candidate.application_order) === JSON.stringify(baseline.application_order);
     const divergence_class = candidate.final_state_hash !== baseline.final_state_hash ? "DIVERGENT" : sameOrder ? "identical" : "equivalent-semantics";
-    return [scheme, { ...candidate, divergence_class }];
+    const { projection, ...artifact } = candidate;
+    return [scheme, { ...artifact, final_state_delta: changedPaths(baseline.projection, projection), divergence_class }];
   })) as Record<Scheme, SchemeResult>;
 }
 
@@ -337,7 +364,7 @@ function runMatrix() {
   const cases = allCases();
   const opCounts = new Map(cases.map((caseData) => [caseData.id, caseData.ops.length]));
   const rows = cases.map((caseData) => {
-    const raw = Object.fromEntries(SCHEMES.map((scheme) => [scheme, replay(caseData, scheme)])) as Record<Scheme, Omit<SchemeResult, "divergence_class">>;
+    const raw = Object.fromEntries(SCHEMES.map((scheme) => [scheme, replay(caseData, scheme)])) as Record<Scheme, ReplayResult>;
     return { id: caseData.id, name: caseData.name, family: caseData.family, ...(caseData.seed === undefined ? {} : { seed: caseData.seed }), vector_relations: vectorRelations(caseData.ops), schemes: withDivergence(raw) };
   });
   const divergentRows = rows.filter((row) => Object.values(row.schemes).some((result) => result.divergence_class === "DIVERGENT"));
@@ -351,7 +378,7 @@ function runMatrix() {
   };
   const allowlist_firing = Object.fromEntries(Object.keys(DIVERGENCE_ALLOWLIST).map((id) => [id, divergentRows.some((row) => row.id === id)]));
   const matrix = {
-    schema_version: 2,
+    schema_version: 3,
     schemes: SCHEMES,
     divergence_allowlist: DIVERGENCE_ALLOWLIST,
     allowlist_firing,
@@ -380,5 +407,9 @@ describe("clock shadow-comparison acceptance matrix", () => {
     expect(matrix.cases.find((row) => row.id === "same-widget-true-concurrency")?.vector_relations.concurrent_pairs).toBe(1);
     expect(matrix.summary.divergent_rows).toBeGreaterThanOrEqual(0);
     expect(matrix.allowlist_firing).toEqual(ALLOWLIST_FIRING);
+    for (const row of matrix.cases) for (const scheme of SCHEMES) {
+      const result = row.schemes[scheme];
+      expect(result.final_state_delta.length === 0).toBe(result.final_state_hash === row.schemes.base_version_actor.final_state_hash);
+    }
   });
 });
