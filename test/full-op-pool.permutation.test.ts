@@ -49,6 +49,7 @@ const SAMPLED_RUNS = 44_704;
 const SAMPLED_EXECUTIONS = SAMPLED_RUNS * 2;
 const TOTAL_EXECUTIONS = PAIR_EXECUTIONS + SAMPLED_EXECUTIONS;
 const SAMPLE_SEED = 0x4f70504;
+const IDEMPOTENCY_VERIFIED = new Set<Kind>();
 
 type Kind = (typeof KINDS)[number];
 type Precondition = (typeof PRECONDITIONS)[number];
@@ -66,6 +67,7 @@ const catalog: WidgetCatalog = {
 interface RunState {
   projection: WorkflowJSON;
   outcomes: Array<{ opId: string; outcome: string; code?: string }>;
+  appliedIds: Set<string>;
 }
 
 interface Taxonomy {
@@ -210,14 +212,46 @@ function run(workflow: WorkflowJSON, ops: readonly WireOp[], mode: BatchMode): R
   const groups = mode === "together" ? [[...ops]] : ops.map((op) => [op]);
   const outcomes: RunState["outcomes"] = [];
   for (const group of groups) {
+    const before = Y.encodeStateAsUpdate(doc);
     const result = applyOps(doc, group as Op[], catalog);
     outcomes.push(...result.outcomes.map((outcome) => ({
       opId: outcome.op_id,
       outcome: outcome.outcome,
       ...(outcome.outcome === "rejected" ? { code: outcome.reason.code } : {}),
     })));
+    if (mode === "split" && result.outcomes[0]?.outcome === "rejected") {
+      expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+    }
+    if (mode === "together" && result.outcomes.some((outcome) => outcome.outcome === "rejected")) {
+      assertRejectedOpDoesNotMutate(before, group);
+    }
+    for (const op of group) {
+      const outcome = result.outcomes.find((candidate) => candidate.op_id === op.op_id);
+      if (outcome?.outcome === "rejected" || IDEMPOTENCY_VERIFIED.has(op.op)) continue;
+      const beforeRetry = Y.encodeStateAsUpdate(doc);
+      expect(applyOps(doc, [op] as Op[], catalog).outcomes[0]?.outcome).toBe("no-op");
+      expect(Y.encodeStateAsUpdate(doc)).toEqual(beforeRetry);
+      IDEMPOTENCY_VERIFIED.add(op.op);
+    }
   }
-  return { projection: canonicalize(project(doc, catalog)), outcomes };
+  const appliedIds = new Set(doc.getMap("__applied").keys());
+  for (const outcome of outcomes) {
+    if (outcome.outcome === "rejected") expect(appliedIds.has(outcome.opId)).toBe(false);
+  }
+  return { projection: canonicalize(project(doc, catalog)), outcomes, appliedIds };
+}
+
+function assertRejectedOpDoesNotMutate(encodedDoc: Uint8Array, group: readonly WireOp[]): void {
+  const oracle = new Y.Doc();
+  Y.applyUpdate(oracle, encodedDoc);
+  for (const op of group) {
+    const before = Y.encodeStateAsUpdate(oracle);
+    const outcome = applyOps(oracle, [op] as Op[], catalog).outcomes[0];
+    if (outcome?.outcome !== "rejected") continue;
+    expect(Y.encodeStateAsUpdate(oracle)).toEqual(before);
+    expect(oracle.getMap("__applied").has(op.op_id)).toBe(false);
+    return;
+  }
 }
 
 function stable(value: unknown): string {
@@ -326,7 +360,7 @@ function classify(
   const rightRejected = rejectionMap(right);
   const rejectionChanged = ops.some((op) => leftRejected.has(op.op_id) !== rightRejected.has(op.op_id));
   if (hasA6Shape(ops, precondition) && rejectionChanged) return "a6";
-  if (mode === "together" && (leftRejected.size > 0 || rightRejected.size > 0)) return "abortBoundary";
+  if (mode === "together" && rejectionChanged) return "abortBoundary";
   if (hasDeclaredStateDependentShape(ops) &&
       stable(normalizeR69(normalizeSourceDeleteAutogrow(left.projection, ops))) ===
         stable(normalizeR69(normalizeSourceDeleteAutogrow(right.projection, ops)))) {
@@ -383,6 +417,9 @@ describe("full op-pool permutation equivalence", () => {
     expect(kindPairs()).toHaveLength(KINDS.length ** 2);
     expect(executions).toBe(PAIR_EXECUTIONS);
     expect(Object.values(taxonomy).reduce((sum, count) => sum + count, 0)).toBe(PAIR_EXECUTIONS / 2);
+    // Deferred reset_doc never consumes its op_id; every frozen kind does and
+    // has one byte-identical immediate duplicate check in run().
+    expect(IDEMPOTENCY_VERIFIED).toEqual(new Set(FROZEN_OPS));
     // A6 and section-4 categories are ruled. R-69 is deliberately measured,
     // not count-pinned: fixing it must not require weakening this test.
     expect(taxonomy.a6).toBeGreaterThan(0);
