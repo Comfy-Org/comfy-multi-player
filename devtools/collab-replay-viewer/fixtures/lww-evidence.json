@@ -1,0 +1,75 @@
+{
+  "schema": "comfy.collab-replay/v1",
+  "run": {
+    "trace_id": "fixture-lww-evidence-v1",
+    "test": "lww-evidence-fixture",
+    "seed": 1592594695,
+    "source": {
+      "cmp_sha": "5f7b5aa000000000000000000000000000000000",
+      "harness_sha": "fixture",
+      "fixture_sha": "fixture",
+      "catalog_sha": "fixture-catalog",
+      "dirty": false,
+      "node_version": "v22.22.1",
+      "yjs_version": "13.6.27"
+    },
+    "workflow_id": "wf-fixture",
+    "lineage_id": "lineage-1",
+    "ordering_scheme": "explicit-stamp",
+    "projection_normalization": "workflow-projection/v1"
+  },
+  "steps": [
+    {
+      "step_id": "s-0",
+      "kind": "semantic-op",
+      "actor": "human:fixture",
+      "op_id": "11111111111111111111111111111111",
+      "stamp": [40, "human:fixture"],
+      "base_version": 4,
+      "arrival_index": 0,
+      "causal": { "status": "known", "parents": [] },
+      "verb": "set_widget",
+      "payload": { "op": "set_widget", "op_id": "11111111111111111111111111111111", "actor": "human:fixture", "base_version": 4, "stamp": [40, "human:fixture"], "node_id": 1, "node_incarnation": "0", "widget": "steps", "value": 25 },
+      "before_projection_hash": { "algorithm": "sha256", "encoding": "canonical-json-v1", "value": "before-0" },
+      "after_projection_hash": { "algorithm": "sha256", "encoding": "canonical-json-v1", "value": "after-0" },
+      "before_projection": { "nodes": [{ "id": 1, "type": "KSampler", "widgets_values": [1, "fixed", 20, 7, "euler", "normal", 1] }], "links": [], "groups": [] },
+      "after_projection": { "nodes": [{ "id": 1, "type": "KSampler", "widgets_values": [1, "fixed", 25, 7, "euler", "normal", 1] }], "links": [], "groups": [] },
+      "semantic_diff": { "nodes_added": [], "nodes_removed": [], "nodes_changed": ["1"], "links_added": [], "links_removed": [], "links_changed": [] },
+      "outcome": "applied",
+      "reason_code": "applied",
+      "processed": true,
+      "consumed_op_id": true,
+      "targets": [{ "kind": "conflict-register", "path": ["widget", "1", "0", "steps"], "role": "conflict" }],
+      "decision_evidence": { "kind": "none" }
+    },
+    {
+      "step_id": "s-1",
+      "kind": "semantic-op",
+      "actor": "agent:fixture",
+      "op_id": "22222222222222222222222222222222",
+      "stamp": [3, "agent:fixture"],
+      "base_version": 99,
+      "arrival_index": 1,
+      "causal": { "status": "known", "parents": [{ "op_id": "11111111111111111111111111111111", "relation": "fixture-declared", "evidence": "fixture" }] },
+      "verb": "set_widget",
+      "payload": { "op": "set_widget", "op_id": "22222222222222222222222222222222", "actor": "agent:fixture", "base_version": 99, "stamp": [3, "agent:fixture"], "node_id": 1, "node_incarnation": "0", "widget": "steps", "value": 10 },
+      "before_projection_hash": { "algorithm": "sha256", "encoding": "canonical-json-v1", "value": "after-0" },
+      "after_projection_hash": { "algorithm": "sha256", "encoding": "canonical-json-v1", "value": "after-0" },
+      "before_projection": { "nodes": [{ "id": 1, "type": "KSampler", "widgets_values": [1, "fixed", 25, 7, "euler", "normal", 1] }], "links": [], "groups": [] },
+      "after_projection": { "nodes": [{ "id": 1, "type": "KSampler", "widgets_values": [1, "fixed", 25, 7, "euler", "normal", 1] }], "links": [], "groups": [] },
+      "semantic_diff": { "nodes_added": [], "nodes_removed": [], "nodes_changed": [], "links_added": [], "links_removed": [], "links_changed": [] },
+      "outcome": "lww-dropped",
+      "reason_code": "lww-dropped",
+      "processed": true,
+      "consumed_op_id": true,
+      "targets": [{ "kind": "conflict-register", "path": ["widget", "1", "0", "steps"], "role": "conflict" }],
+      "decision_evidence": { "kind": "lww-comparison", "winning_stamp": [40, "human:fixture", "11111111111111111111111111111111"], "losing_stamp": [3, "agent:fixture", "22222222222222222222222222222222"] }
+    }
+  ],
+  "assertions": {
+    "converged": true,
+    "final_projection_hash": { "algorithm": "sha256", "encoding": "canonical-json-v1", "value": "after-0" },
+    "final_applied_op_ids_hash": { "algorithm": "sha256", "encoding": "canonical-json-v1", "value": "fixture" },
+    "failure_step_id": null
+  }
+}

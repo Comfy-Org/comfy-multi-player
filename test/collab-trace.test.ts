@@ -92,6 +92,8 @@ function capture(doc: Y.Doc, op: Op, arrival_index: number, parents: SemanticOpT
     payload: structuredClone(op),
     before_projection_hash: hash(before),
     after_projection_hash: hash(after),
+    before_projection: structuredClone(before),
+    after_projection: structuredClone(after),
     semantic_diff: diff(before, after),
     outcome: result.outcome,
     reason_code: result.outcome === "rejected" ? result.reason.code : result.outcome,

@@ -74,6 +74,13 @@ export interface SemanticDiff {
   links_changed: readonly (string | number)[];
 }
 
+/** Captured projection data for read-only visualization. Never fed back to the applier. */
+export interface TraceProjection {
+  nodes: readonly object[];
+  links: readonly unknown[];
+  groups?: readonly unknown[];
+}
+
 export interface SemanticOpTraceStep {
   step_id: string;
   kind: "semantic-op";
@@ -90,6 +97,8 @@ export interface SemanticOpTraceStep {
   payload: Op;
   before_projection_hash: TraceHash;
   after_projection_hash: TraceHash;
+  before_projection?: TraceProjection;
+  after_projection?: TraceProjection;
   semantic_diff: SemanticDiff;
   outcome: "applied" | "no-op" | "lww-dropped" | "rejected" | "batch-aborted";
   reason_code: string;
