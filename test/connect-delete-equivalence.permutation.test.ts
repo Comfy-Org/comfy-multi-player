@@ -12,6 +12,7 @@
  * boundary effect, not an A6 exception. Any remaining projection divergence
  * is an unexpected convergence bug.
  */
+import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
 import {
   applyOps,
@@ -111,9 +112,33 @@ function operations(
 
 function run(seed: WorkflowJSON, ops: readonly Op[], mode: BatchMode): LogicalState {
   const doc = mint(seed, catalog);
-  const results = mode === "together"
-    ? [applyOps(doc, [...ops], catalog)]
-    : ops.map((op) => applyOps(doc, [op], catalog));
+  const results = [];
+  if (mode === "together") {
+    const before = Y.encodeStateAsUpdate(doc);
+    const result = applyOps(doc, [...ops], catalog);
+    results.push(result);
+    if (result.outcomes[0]?.outcome === "rejected") {
+      expect([...Y.encodeStateAsUpdate(doc)]).toEqual([...before]);
+      expect(doc.getMap("__applied").has(ops[0]!.op_id)).toBe(false);
+      // Section 4 reports the unprocessed suffix explicitly as batch-aborted;
+      // it must not report an applied/no-op effect or mutate the document.
+      expect(result.outcomes[1]?.outcome).toBe("rejected");
+      if (result.outcomes[1]?.outcome === "rejected") {
+        expect(result.outcomes[1].reason.code).toBe("batch_aborted");
+      }
+      expect(doc.getMap("__applied").has(ops[1]!.op_id)).toBe(false);
+    }
+  } else {
+    for (const op of ops) {
+      const before = Y.encodeStateAsUpdate(doc);
+      const result = applyOps(doc, [op], catalog);
+      results.push(result);
+      if (result.outcomes[0]?.outcome === "rejected") {
+        expect([...Y.encodeStateAsUpdate(doc)]).toEqual([...before]);
+        expect(doc.getMap("__applied").has(op.op_id)).toBe(false);
+      }
+    }
+  }
   return {
     projection: canonicalize(project(doc, catalog)),
     outcomes: results.flatMap((result) => result.outcomes.map((outcome) => ({ opId: outcome.op_id, outcome: outcome.outcome }))),
@@ -157,9 +182,17 @@ describe("bounded exhaustive connect x delete equivalence", () => {
                     state.outcomes.find((outcome) => outcome.opId === connectId)?.outcome ?? "batch-aborted";
                   const forwardConnect = connectOutcome(forward);
                   const reverseConnect = connectOutcome(reverse);
-                  const a6 = divergent && (forwardConnect === "rejected") !== (reverseConnect === "rejected");
-                  const abortBoundary = divergent && !a6 && mode === "together" &&
-                    (forwardConnect === "rejected" || reverseConnect === "rejected");
+                  const bothPresent = presence.source && presence.destination;
+                  const permittedA6Tuple = axis === "source"
+                    ? bothPresent && slots.from === 5 && slots.to === 0
+                    : mode === "together" && presence.destination &&
+                      (slots.to === 5 || bothPresent && slots.from === 5);
+                  const a6 = divergent && permittedA6Tuple &&
+                    (forwardConnect === "rejected") !== (reverseConnect === "rejected");
+                  const permittedAbortTuple = mode === "together" && axis === "source" &&
+                    bothPresent && slots.to === 5;
+                  const abortBoundary = divergent && permittedAbortTuple && !a6 &&
+                    forwardConnect === "rejected" && reverseConnect === "rejected";
                   if (a6) a6DivergentPairs++;
                   else if (abortBoundary) abortBoundaryPairs++;
                   else if (divergent) unexpected.push(`${repro} outcomes=${JSON.stringify([forward.outcomes, reverse.outcomes])}`);
