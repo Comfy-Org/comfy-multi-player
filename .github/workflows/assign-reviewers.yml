@@ -1,0 +1,35 @@
+name: Assign Reviewers
+
+# Thin caller for the shared expertise-aware reviewer-assignment workflow in
+# Comfy-Org/github-workflows (see docs/callers/assign-reviewers.md there).
+# Despite the name it writes the ASSIGNEE field, not a reviewer request —
+# Comfy-Org routes and alerts people via assignees.
+#
+# This repo's expertise map is .github/reviewers.yml; edit that file to retune
+# which paths route to which people. Assignment is made with the CLOUD_CODE_BOT
+# app token (vars.APP_ID + secrets.CLOUD_CODE_BOT_PRIVATE_KEY) rather than the
+# default GITHUB_TOKEN — see the "Needs from repo owner" note in the PR
+# description; these are not yet configured on this repo.
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+jobs:
+  assign:
+    # Same-repo, human-authored PRs only. Fork PRs withhold Actions secrets, and
+    # Dependabot-triggered runs read the Dependabot secret store instead of
+    # Actions secrets — either way CLOUD_CODE_BOT_PRIVATE_KEY arrives empty and
+    # the App-token mint would hard-fail with nothing to route anyway.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+    # SHA-pinned per zizmor `unpinned-uses: hash-pin`, matching the pin already
+    # used by ci-cursor-review.yml and ci-pr-risk.yml in this repo.
+    uses: Comfy-Org/github-workflows/.github/workflows/assign-reviewers.yml@ffcc3f5b4dfc568e846e769c4f4df4f749c7887b # github-workflows main (ffcc3f5)
+    with:
+      num_reviewers: 2
+    secrets:
+      CLOUD_CODE_BOT_PRIVATE_KEY: ${{ secrets.CLOUD_CODE_BOT_PRIVATE_KEY }}

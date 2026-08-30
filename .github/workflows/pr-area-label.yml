@@ -1,0 +1,55 @@
+name: PR Area Label
+
+# Thin caller for the shared agentic area-label classifier in
+# Comfy-Org/github-workflows (see docs/callers/pr-area-label.md there). The
+# classification logic lives there; this repo carries only this caller and
+# its own taxonomy, .github/area-labels.yml.
+#
+# Security model lives in the reusable: the model gets no tools and no token,
+# PR text is passed as data, the reply is enum-constrained to the taxonomy's
+# own label names, the taxonomy is read from the PR's base ref (never its
+# head), and fork/Dependabot PRs are skipped. label-pr bills the org-wide
+# ANTHROPIC_API_KEY.
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/area-labels.yml"] # sync labels when the taxonomy changes
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR to (re)classify (empty => full label sync)"
+        required: false
+      dry_run:
+        description: "Classify and log the decision without applying the label"
+        type: boolean
+        default: false
+
+# Empty default token; the job below grants its own scoped permissions.
+permissions: {}
+
+# Caller-level group so a force-push during review cancels the superseded run
+# before it calls the model or writes a label. Deliberately not the same group
+# name the reusable uses internally (a called workflow re-acquiring the same
+# group would cancel its own caller run).
+concurrency:
+  group: pr-area-label-caller-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  area-label:
+    permissions:
+      contents: read # reusable reads the taxonomy; label-pr checks out no PR code
+      issues: write # sync-labels: labels are an issues API surface
+      pull-requests: write # label-pr: apply the label
+    # SHA-pinned per zizmor `unpinned-uses: hash-pin`, matching the pin already
+    # used by ci-cursor-review.yml and ci-pr-risk.yml in this repo.
+    uses: Comfy-Org/github-workflows/.github/workflows/pr-area-label.yml@ffcc3f5b4dfc568e846e769c4f4df4f749c7887b # github-workflows main (ffcc3f5)
+    with:
+      workflows_ref: ffcc3f5b4dfc568e846e769c4f4df4f749c7887b
+      pr_number: ${{ github.event.inputs.pr_number }}
+      dry_run: ${{ github.event.inputs.dry_run == 'true' }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
