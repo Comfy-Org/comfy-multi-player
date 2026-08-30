@@ -726,6 +726,10 @@ describe("read-only surface — classification", () => {
     "freezeLamportEnvelope",
     "AGENT_EVENT_JSON_SCHEMA",
     "CMP_EVENT_SCHEMA_VERSION",
+    // Evidence-only trace contract: validates and renders captured facts; it
+    // exposes no shared-document write, replay, or merge-policy implementation.
+    "COLLAB_TRACE_SCHEMA",
+    "assertCollabReplayTraceV1",
   ];
   const READ_SURFACE: readonly string[] = [
     "readGraph",
