@@ -122,16 +122,16 @@ function winner(a: ConnectOp, b: ConnectOp): ConnectOp {
 
 function assertCoherentGraph(wf: WorkflowJSON, owner: ConnectOp, repro: string): void {
   expect(tuple(wf).slice(1, 6), repro).toEqual([owner.from_node, owner.from_slot, owner.to_node, owner.to_slot, owner.link_type]);
-  const tupleIds = wf.links.map((link) => String(link[0]));
+  const tupleIds = (wf.links as unknown[][]).map((link) => String(link[0]));
   expect(new Set(tupleIds).size, repro).toBe(tupleIds.length);
   const live = new Set(tupleIds);
   const refs: string[] = [];
   for (const node of wf.nodes) {
-    for (const input of node.inputs ?? []) if (input.link != null) {
+    for (const input of (node.inputs ?? []) as Array<{ link?: unknown }>) if (input.link != null) {
       refs.push(String(input.link));
       expect(live.has(String(input.link)), repro).toBe(true);
     }
-    for (const output of node.outputs ?? []) for (const linkId of output.links ?? []) {
+    for (const output of (node.outputs ?? []) as Array<{ links?: unknown[] }>) for (const linkId of output.links ?? []) {
       refs.push(String(linkId));
       expect(live.has(String(linkId)), repro).toBe(true);
     }
