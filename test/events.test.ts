@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import {
@@ -26,6 +27,17 @@ const validClear = {
   op: "clear", op_id: "00000000000000000000000000000002",
   actor: "agent:event-test", base_version: 2, stamp: [2, "agent:event-test"], removed_nodes: [],
 } as unknown as Op;
+
+const applierFailure = {
+  ...validClear,
+  op_id: "00000000000000000000000000000003",
+  stamp: [{ valueOf() { throw new Error("boom"); } }, "agent:event-test"],
+} as unknown as Op;
+
+const goldenEvents = readFileSync(new URL("../fixtures/cmp-events/v1.jsonl", import.meta.url), "utf8")
+  .trim()
+  .split("\n")
+  .map((line) => JSON.parse(line) as CmpEvent);
 
 describe("caller-owned cmp event sink", () => {
   it("isolates a throwing sink from applier results and document bytes", () => {
@@ -74,6 +86,55 @@ describe("caller-owned cmp event sink", () => {
     expect(result.outcomes).toHaveLength(ops.length);
     expect(result.outcomes.every((outcome) => outcome.outcome === "rejected")).toBe(true);
     expect(JSON.parse(JSON.stringify(sink.mock.calls[0]![0]))).toEqual(sink.mock.calls[0]![0]);
+  });
+
+  it("emits the generic applier error shape for an unexpected internal failure", () => {
+    const sink = vi.fn((_event: CmpEvent): undefined => undefined);
+    const result = applyOps(mint({ nodes: [], links: [] }, catalog), [applierFailure], undefined, { eventSink: sink });
+
+    expect(result.outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "apply_failed", message: "boom" } });
+    expect(sink).toHaveBeenCalledOnce();
+    expect(sink).toHaveBeenCalledWith(expect.objectContaining({
+      schema_version: 1,
+      type: "applier_error",
+      source: "applyOps",
+      code: "apply_failed",
+      error_name: "Error",
+      op_id: applierFailure.op_id,
+      batch_index: 0,
+    }));
+    expect(JSON.parse(JSON.stringify(sink.mock.calls[0]![0]))).toEqual(sink.mock.calls[0]![0]);
+  });
+
+  it("lets a host register hooks on its own adapter and pass one sink per call", () => {
+    const hooks = new Set<(event: CmpEvent) => void>();
+    const seen: CmpEvent[] = [];
+    hooks.add((event) => { seen.push(event); });
+    const eventSink = (event: CmpEvent): undefined => {
+      for (const hook of hooks) hook(event);
+      return undefined;
+    };
+
+    applyOps(mint({ nodes: [], links: [] }, catalog), [malformed], undefined, { eventSink });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.type).toBe("op_rejected");
+  });
+
+  it("keeps the emitted v1 shapes in sync with the language-neutral golden vectors", () => {
+    const events: CmpEvent[] = [];
+    const eventSink = (event: CmpEvent): undefined => { events.push(event); return undefined; };
+
+    applyOps(mint({ nodes: [], links: [] }, catalog), [malformed], undefined, { eventSink });
+    applyOps(mint({ nodes: [], links: [] }, catalog), [applierFailure], undefined, { eventSink });
+    applyOps(
+      mint({ nodes: [], links: [] }, catalog),
+      Array.from({ length: MAX_OPS_PER_BATCH + 1 }, () => malformed),
+      undefined,
+      { eventSink },
+    );
+
+    expect(events).toEqual(goldenEvents);
   });
 
   it("isolates a throwing sink after an applied prefix and abort remainder are fixed", () => {

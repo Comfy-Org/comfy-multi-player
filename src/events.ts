@@ -24,7 +24,6 @@ export interface CmpEvent {
   readonly message: string;
   readonly error_name?: string;
   readonly op_id?: string;
-  readonly op_kind?: string;
   readonly batch_index?: number;
 }
 

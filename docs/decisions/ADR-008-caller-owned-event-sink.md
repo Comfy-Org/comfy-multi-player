@@ -1,6 +1,6 @@
 # ADR-008: caller-owned, explicitly passed event sink
 
-- Status: Proposed, pending Christian approval
+- Status: Accepted (Option B approved in `christian-byrne/blocked-on-christian#121`)
 - Date: 2026-08-29
 - Invariants: KA-3, KA-4, KA-11; FC-3; ADR-021 statelessness boundary
 
@@ -44,7 +44,7 @@ this scaffold; reconsider only if events later become durable protocol facts.
 Add a dependency-free `events.ts` surface:
 
 ```ts
-type CmpEventSink = (event: CmpEvent) => void
+type CmpEventSink = (event: CmpEvent) => undefined
 interface CmpCallContext { readonly eventSink?: CmpEventSink }
 
 applyOps(doc, ops, catalog?, context?)
@@ -137,7 +137,7 @@ fields to `internal/agenttel`; payloads and messages must not become high-cardin
   byte/result/throw equivalence tests against a throwing sink.
 - Decide message length/redaction at each host boundary before exporting. `code`, type, source,
   and bounded identifiers are the stable machine fields; `message` is diagnostic, not a metric key.
-- Before a Go consumer lands, add a language-neutral golden JSON vector (or JSON Schema) consumed
-  by both TypeScript producer tests and Go decoder tests; prose and a TS interface alone are not a
-  cross-language drift gate.
+- The language-neutral golden vectors in `fixtures/cmp-events/v1.jsonl` are consumed by the
+  TypeScript producer test. Every Go decoder must consume those same vectors before it lands;
+  prose and a TS interface alone are not a cross-language drift gate.
 - Run the unchanged purity/import/stateless gates. No exception is requested.
