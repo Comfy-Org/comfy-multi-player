@@ -724,6 +724,10 @@ describe("read-only surface — classification", () => {
     "tickLamport",
     "persistLamportTick",
     "freezeLamportEnvelope",
+    // Evidence-only trace contract: validates and renders captured facts; it
+    // exposes no shared-document write, replay, or merge-policy implementation.
+    "COLLAB_TRACE_SCHEMA",
+    "assertCollabReplayTraceV1",
   ];
   const READ_SURFACE: readonly string[] = [
     "readGraph",
