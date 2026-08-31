@@ -55,7 +55,13 @@ function addNode(tag: string, actor: string, version: number, node: WorkflowNode
 
 describe("add_node presence LWW gate", () => {
   it("drops a lower-or-equal re-add without mutating the existing node or stamp", () => {
-    const doc = mint(base(), catalog);
+    const snapshot = Y.encodeStateAsUpdate(mint(base(), catalog));
+    const fork = () => {
+      const forked = new Y.Doc();
+      Y.applyUpdate(forked, snapshot);
+      return forked;
+    };
+    const doc = fork();
     const winner = addNode("winner", "agent:a", 5, {
       ...baseNode(),
       title: "winner",
@@ -106,5 +112,13 @@ describe("add_node presence LWW gate", () => {
     expect(project(doc, catalog).nodes).toEqual([projectedWinner]);
     expect(readStamps(doc)[nodeStampKey]).toEqual(winningStamp);
     expect(appliedOpIds(doc)).toContain(equal.op_id);
+
+    const reverse = fork();
+    expect(applyOps(reverse, [equal, lower, winner], catalog).outcomes).toEqual([
+      { op_id: equal.op_id, outcome: "applied" },
+      { op_id: lower.op_id, outcome: "lww-dropped" },
+      { op_id: winner.op_id, outcome: "applied" },
+    ]);
+    expect(project(reverse, catalog)).toEqual(project(doc, catalog));
   });
 });
