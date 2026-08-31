@@ -8,22 +8,25 @@ function threeNodeWorkflow(withGroups: boolean): WorkflowJSON {
   const source = loadSession("session-edit-heavy.session.jsonl").header.base_workflow;
   const nodeIds = new Set(source.nodes.slice(0, 3).map((node) => String(node.id)));
   const links = source.links.filter(
-    (link) => nodeIds.has(String(link[1])) && nodeIds.has(String(link[3])),
+    (link) => {
+      const tuple = link as unknown[];
+      return nodeIds.has(String(tuple[1])) && nodeIds.has(String(tuple[3]));
+    },
   );
-  const linkIds = new Set(links.map((link) => link[0]));
+  const linkIds = new Set(links.map((link) => (link as unknown[])[0]));
+  const nodes = structuredClone(source.nodes.slice(0, 3));
+  for (const node of nodes) {
+    for (const input of (node.inputs ?? []) as Record<string, unknown>[]) {
+      input.link = input.link != null && linkIds.has(input.link) ? input.link : null;
+    }
+    for (const output of (node.outputs ?? []) as Record<string, unknown>[]) {
+      const outputLinks = Array.isArray(output.links) ? output.links : [];
+      output.links = outputLinks.filter((linkId) => linkIds.has(linkId));
+    }
+  }
   const workflow: WorkflowJSON = {
     ...source,
-    nodes: source.nodes.slice(0, 3).map((node) => ({
-      ...node,
-      inputs: node.inputs?.map((input) => ({
-        ...input,
-        link: input.link != null && linkIds.has(input.link) ? input.link : null,
-      })),
-      outputs: node.outputs?.map((output) => ({
-        ...output,
-        links: output.links?.filter((linkId) => linkIds.has(linkId)) ?? [],
-      })),
-    })),
+    nodes,
     links,
   };
   if (withGroups) {
