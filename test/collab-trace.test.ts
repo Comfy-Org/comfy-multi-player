@@ -118,6 +118,107 @@ function fixture(): CollabReplayTraceV1 {
   };
 }
 
+function captureRejectedBatch(doc: Y.Doc, ops: Op[]): SemanticOpTraceStep[] {
+  const before = normalized(doc);
+  const result = applyOps(doc, ops, catalog);
+  const after = normalized(doc);
+  const failingIndex = result.outcomes.findIndex((outcome) => outcome.outcome === "rejected" && outcome.reason.code !== "batch_aborted");
+  if (failingIndex < 0) throw new Error("fixture batch did not reject");
+
+  return result.outcomes.map((outcome, index) => {
+    if (outcome.outcome !== "rejected") throw new Error(`fixture outcome ${index} did not reject`);
+    const op = ops[index]!;
+    return {
+      step_id: `batch-${index}`,
+      kind: "semantic-op",
+      actor: op.actor,
+      op_id: op.op_id,
+      stamp: op.stamp,
+      base_version: op.base_version,
+      arrival_index: index,
+      causal: { status: "known", parents: [] },
+      verb: op.op,
+      payload: structuredClone(op),
+      before_projection_hash: hash(before),
+      after_projection_hash: hash(after),
+      semantic_diff: diff(before, after),
+      outcome: outcome.outcome,
+      reason_code: outcome.reason.code,
+      processed: outcome.reason.code !== "batch_aborted",
+      consumed_op_id: false,
+      targets: [{ kind: "conflict-register", path: writeTarget(op) as (string | number)[], role: "conflict" }],
+      decision_evidence: { kind: "rejection", code: outcome.reason.code, message: outcome.reason.message, failing_index: failingIndex },
+      batch: { batch_id: "rejected-batch", index, size: ops.length },
+    };
+  });
+}
+
+function deletePath(value: unknown, path: readonly (string | number)[]): void {
+  let owner = value as Record<string | number, unknown>;
+  for (const segment of path.slice(0, -1)) owner = owner[segment] as Record<string | number, unknown>;
+  delete owner[path.at(-1)!];
+}
+
+const requiredTraceFields = ([
+  ["schema"],
+  ["run"],
+  ["run", "trace_id"],
+  ["run", "test"],
+  ["run", "seed"],
+  ["run", "source"],
+  ["run", "source", "cmp_sha"],
+  ["run", "source", "harness_sha"],
+  ["run", "source", "fixture_sha"],
+  ["run", "source", "catalog_sha"],
+  ["run", "source", "dirty"],
+  ["run", "source", "node_version"],
+  ["run", "source", "yjs_version"],
+  ["run", "workflow_id"],
+  ["run", "lineage_id"],
+  ["run", "ordering_scheme"],
+  ["run", "projection_normalization"],
+  ["steps"],
+  ["steps", 0, "step_id"],
+  ["steps", 0, "kind"],
+  ["steps", 0, "actor"],
+  ["steps", 0, "op_id"],
+  ["steps", 0, "stamp"],
+  ["steps", 0, "base_version"],
+  ["steps", 0, "arrival_index"],
+  ["steps", 0, "causal"],
+  ["steps", 0, "causal", "status"],
+  ["steps", 0, "causal", "parents"],
+  ["steps", 0, "verb"],
+  ["steps", 0, "payload"],
+  ["steps", 0, "payload", "op"],
+  ["steps", 0, "payload", "node_id"],
+  ["steps", 0, "payload", "widget"],
+  ["steps", 0, "payload", "value"],
+  ["steps", 0, "before_projection_hash"],
+  ["steps", 0, "before_projection_hash", "algorithm"],
+  ["steps", 0, "before_projection_hash", "encoding"],
+  ["steps", 0, "before_projection_hash", "value"],
+  ["steps", 0, "after_projection_hash"],
+  ["steps", 0, "semantic_diff"],
+  ["steps", 0, "semantic_diff", "nodes_added"],
+  ["steps", 0, "semantic_diff", "nodes_removed"],
+  ["steps", 0, "semantic_diff", "nodes_changed"],
+  ["steps", 0, "semantic_diff", "links_added"],
+  ["steps", 0, "semantic_diff", "links_removed"],
+  ["steps", 0, "semantic_diff", "links_changed"],
+  ["steps", 0, "outcome"],
+  ["steps", 0, "reason_code"],
+  ["steps", 0, "processed"],
+  ["steps", 0, "consumed_op_id"],
+  ["steps", 0, "targets"],
+  ["steps", 0, "decision_evidence"],
+  ["assertions"],
+  ["assertions", "converged"],
+  ["assertions", "final_projection_hash"],
+  ["assertions", "final_applied_op_ids_hash"],
+  ["assertions", "failure_step_id"],
+] satisfies readonly (readonly (string | number)[])[]).map((path) => ({ name: path.join("."), path }));
+
 describe("collaboration trace v1 contract and fixture emitter", () => {
   it("emits deterministic facts from the real applier and preserves stamp separately from base_version", () => {
     const a = fixture(), b = fixture();
@@ -134,6 +235,74 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
     const bad = structuredClone(fixture());
     if (bad.steps[0]?.kind === "semantic-op") bad.steps[0].op_id = "regenerated";
     expect(() => assertCollabReplayTraceV1(bad)).toThrow(/immutable op_id/);
+  });
+
+  it.each(requiredTraceFields)("fails closed when required field $name is absent", ({ path }) => {
+    const trace: unknown = structuredClone(fixture());
+    deletePath(trace, path);
+    expect(() => assertCollabReplayTraceV1(trace)).toThrow();
+  });
+
+  it("rejects duplicate or out-of-order step identity", () => {
+    const duplicateId = structuredClone(fixture());
+    duplicateId.steps[1]!.step_id = duplicateId.steps[0]!.step_id;
+    expect(() => assertCollabReplayTraceV1(duplicateId)).toThrow(/step_id/);
+
+    const duplicateArrival = structuredClone(fixture());
+    duplicateArrival.steps[1]!.arrival_index = duplicateArrival.steps[0]!.arrival_index;
+    expect(() => assertCollabReplayTraceV1(duplicateArrival)).toThrow(/arrival_index/);
+
+    const original = structuredClone(fixture());
+    const outOfOrder = { ...original, steps: [...original.steps].reverse() };
+    expect(() => assertCollabReplayTraceV1(outOfOrder)).toThrow(/arrival_index/);
+  });
+
+  it("rejects dangling or incoherent failure assertions", () => {
+    const dangling = structuredClone(fixture());
+    dangling.assertions.converged = false;
+    dangling.assertions.failure_step_id = "missing-step";
+    expect(() => assertCollabReplayTraceV1(dangling)).toThrow(/failure_step_id/);
+
+    const contradictory = structuredClone(fixture());
+    contradictory.assertions.failure_step_id = contradictory.steps[0]!.step_id;
+    expect(() => assertCollabReplayTraceV1(contradictory)).toThrow(/converged/);
+  });
+
+  it("rejects incoherent outcome evidence and semantic identity", () => {
+    const wrongDecision = structuredClone(fixture());
+    if (wrongDecision.steps[0]?.kind === "semantic-op") wrongDecision.steps[0].decision_evidence = { kind: "dedupe", original_op_id: wrongDecision.steps[0].op_id };
+    expect(() => assertCollabReplayTraceV1(wrongDecision)).toThrow(/decision_evidence/);
+
+    const wrongConsumption = structuredClone(fixture());
+    if (wrongConsumption.steps[1]?.kind === "semantic-op") wrongConsumption.steps[1].consumed_op_id = false;
+    expect(() => assertCollabReplayTraceV1(wrongConsumption)).toThrow(/consumed_op_id/);
+
+    const wrongReason = structuredClone(fixture());
+    if (wrongReason.steps[1]?.kind === "semantic-op") wrongReason.steps[1].reason_code = "applied";
+    expect(() => assertCollabReplayTraceV1(wrongReason)).toThrow(/reason_code/);
+
+    const wrongPayload = structuredClone(fixture());
+    if (wrongPayload.steps[0]?.kind === "semantic-op") wrongPayload.steps[0].payload.actor = "human:other";
+    expect(() => assertCollabReplayTraceV1(wrongPayload)).toThrow(/semantic identity/);
+  });
+
+  it("captures a real rejected batch without mutating or consuming either op", () => {
+    const doc = mint(workflow, catalog);
+    const rejected = { ...edit("rejected", 11, 5), widget: "not-in-catalog" };
+    const trailing = edit("trailing", 12, 6);
+    const before = Y.encodeStateAsUpdate(doc);
+    const steps = captureRejectedBatch(doc, [rejected, trailing]);
+
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+    expect(appliedOpIds(doc)).not.toContain(rejected.op_id);
+    expect(appliedOpIds(doc)).not.toContain(trailing.op_id);
+    const projected = normalized(doc).nodes[0]?.widgets_values;
+    expect(Array.isArray(projected) ? projected[2] : undefined).toBe(20);
+    expect(steps).toMatchObject([
+      { outcome: "rejected", reason_code: "unknown_widget", processed: true, consumed_op_id: false, decision_evidence: { kind: "rejection", failing_index: 0 } },
+      { outcome: "rejected", reason_code: "batch_aborted", processed: false, consumed_op_id: false, decision_evidence: { kind: "rejection", failing_index: 0 } },
+    ]);
+    expect(() => assertCollabReplayTraceV1({ ...fixture(), steps })).not.toThrow();
   });
 
   it("keeps state-vector replay and doc reset as distinct lifecycle events", () => {
