@@ -118,6 +118,7 @@ import {
   type ApplyResult,
   type ConnectOp,
   type DeleteNodeOp,
+  type DisconnectOp,
   type GrowConnectOp,
   type GrowSpec,
   type InteriorSetWidgetOp,
@@ -409,6 +410,8 @@ function dispatch(doc: Y.Doc, op: Op, catalog?: WidgetCatalog): SuccessfulOutcom
       return applySetWidget(doc, op, catalog);
     case "connect":
       return applyConnect(doc, op, catalog);
+    case "disconnect":
+      return applyDisconnect(doc, op);
     case "delete_node":
       return applyDeleteNode(doc, op);
     case "clear":
@@ -1790,6 +1793,57 @@ function scrubDanglingLinkRefs(doc: Y.Doc): void {
   const keptIds = new Set<unknown>();
   linksMap(doc).forEach((ln: unknown) => keptIds.add((ln as unknown[])[0]));
   scrubLinkRefs(doc, (linkId) => linkId != null && !keptIds.has(linkId));
+}
+
+// ---------------------------------------------------------------------------
+// disconnect
+// ---------------------------------------------------------------------------
+
+function validateDisconnectOp(op: DisconnectOp): void {
+  if (!Number.isInteger(op.to_slot) || op.to_slot < 0) {
+    throw new OpRejectedError(
+      "input_slot_missing",
+      `disconnect: input slot ${String(op.to_slot)} not found on node ${String(op.to_node)}`,
+    );
+  }
+  const linkRefusal = arrayItemRefusal(op.link_id) ?? mapValueRefusal(op.link_id);
+  if (linkRefusal !== null) {
+    throw new OpRejectedError("malformed_op", `disconnect: link_id: ${linkRefusal}`);
+  }
+  stampKey(op);
+}
+
+function applyDisconnect(doc: Y.Doc, op: DisconnectOp): SuccessfulOutcome {
+  validateDisconnectOp(op);
+
+  const nodes = nodesMap(doc);
+  const dst = nodes.get(String(op.to_node));
+  if (!dst) return "no-op";
+
+  const ins = dst.get("inputs");
+  if (!(ins instanceof Y.Array) || op.to_slot >= ins.length) {
+    throw new OpRejectedError(
+      "input_slot_missing",
+      `disconnect: input slot ${String(op.to_slot)} not found on node ${String(op.to_node)}`,
+    );
+  }
+  const slot = ins.get(op.to_slot);
+  if (!(slot instanceof Y.Map)) {
+    throw new OpRejectedError("input_slot_missing", `disconnect: input slot ${op.to_slot} is not a slot record`);
+  }
+
+  const stamps = stampsMap(doc);
+  const targetKey = stampTargetKey(op);
+  const prior = stamps.get(targetKey) as StampKey | undefined;
+  const key = stampKey(op);
+  if (prior != null && compareStampKeys(key, prior) <= 0) return "lww-dropped";
+
+  mset(stamps, targetKey, key);
+  const prev = slot.get("link");
+  const hadLink = linksMap(doc).has(String(op.link_id)) || prev === op.link_id || prev != null;
+  removeLink(doc, op.link_id);
+  if (prev != null && prev !== op.link_id) removeLink(doc, prev);
+  return hadLink ? "applied" : "no-op";
 }
 
 // ---------------------------------------------------------------------------

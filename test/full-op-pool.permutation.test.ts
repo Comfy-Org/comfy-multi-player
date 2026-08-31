@@ -180,6 +180,14 @@ function makeOp(
       }
       return { ...common, to_slot: precondition === "to-slot-out-of-range" ? 5 : 0 };
     }
+    case "disconnect":
+      return {
+        ...env,
+        op: "disconnect",
+        link_id: precondition === "occupied-input" ? 80 : 100 + side,
+        to_node: precondition === "destination-missing" ? 999 : 20,
+        to_slot: precondition === "to-slot-out-of-range" ? 5 : 0,
+      };
     case "set_widget":
       if (precondition === "interior-or-inputcount") {
         return {
