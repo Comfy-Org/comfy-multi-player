@@ -375,7 +375,10 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
       { outcome: "rejected", reason_code: "unknown_widget", processed: true, consumed_op_id: false, decision_evidence: { kind: "rejection", failing_index: 0 } },
       { outcome: "rejected", reason_code: "batch_aborted", processed: false, consumed_op_id: false, decision_evidence: { kind: "rejection", failing_index: 0 } },
     ]);
-    expect(() => assertCollabReplayTraceV1({ ...fixture(), steps })).not.toThrow();
+    const trace = fixture();
+    trace.steps = steps;
+    trace.assertions.final_projection_hash = steps.at(-1)!.after_projection_hash;
+    expect(() => assertCollabReplayTraceV1(trace)).not.toThrow();
   });
 
   it("rejects missing or mismatched batch failure evidence and non-contiguous aborts", () => {
@@ -414,7 +417,23 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
     expect(appliedOpIds(doc)).toEqual([]);
     expect(steps).toHaveLength(MAX_OPS_PER_BATCH + 1);
     expect(steps.every((step) => !step.processed && step.reason_code === "malformed_op" && step.decision_evidence.kind === "rejection" && step.decision_evidence.failing_index === null)).toBe(true);
-    expect(() => assertCollabReplayTraceV1({ ...fixture(), steps })).not.toThrow();
+    const trace = fixture();
+    trace.steps = steps;
+    trace.assertions.final_projection_hash = steps.at(-1)!.after_projection_hash;
+    expect(() => assertCollabReplayTraceV1(trace)).not.toThrow();
+  });
+
+  it("rejects broken semantic projection continuity", () => {
+    const adjacent = structuredClone(fixture());
+    const secondStep = adjacent.steps[1]!;
+    if (secondStep.kind !== "semantic-op") throw new Error("fixture step must be semantic");
+    secondStep.before_projection_hash = { ...secondStep.before_projection_hash, value: "b".repeat(64) };
+    secondStep.after_projection_hash = { ...secondStep.after_projection_hash, value: "b".repeat(64) };
+    expect(() => assertCollabReplayTraceV1(adjacent)).toThrow(/projection continuity/);
+
+    const final = structuredClone(fixture());
+    final.assertions.final_projection_hash = { ...final.assertions.final_projection_hash, value: "c".repeat(64) };
+    expect(() => assertCollabReplayTraceV1(final)).toThrow(/final_projection_hash/);
   });
 
   it("keeps state-vector replay and doc reset as distinct lifecycle events", () => {

@@ -170,6 +170,12 @@ interface ValidatedBatchStep {
   failingIndex: number | null | undefined;
 }
 
+interface ValidatedSemanticStep {
+  beforeHash: TraceHash;
+  afterHash: TraceHash;
+  batchStep: ValidatedBatchStep | undefined;
+}
+
 function invalid(context: string, message: string): never {
   throw new TypeError(`${context} ${message}`);
 }
@@ -475,7 +481,7 @@ function assertObservedFrontier(value: unknown, context: string): void {
   }
 }
 
-function assertSemanticStep(step: UnknownRecord, context: string): ValidatedBatchStep | undefined {
+function assertSemanticStep(step: UnknownRecord, context: string): ValidatedSemanticStep {
   const actor = asString(required(step, "actor", context), `${context}.actor`);
   const opId = asOpId(required(step, "op_id", context), `${context}.op_id`);
   const stamp = assertStamp(required(step, "stamp", context), `${context}.stamp`);
@@ -535,18 +541,22 @@ function assertSemanticStep(step: UnknownRecord, context: string): ValidatedBatc
     if (!expectedFailureIndex) invalid(`${context}.decision_evidence.failing_index`, "does not identify the rejected operation");
   }
 
-  return batch === undefined
-    ? undefined
-    : {
-        context,
-        batchId: batch.batchId,
-        index: batch.index,
-        size: batch.size,
-        outcome,
-        reasonCode,
-        processed,
-        failingIndex: decision.kind === "rejection" ? decision.failingIndex : undefined,
-      };
+  return {
+    afterHash,
+    batchStep: batch === undefined
+      ? undefined
+      : {
+          context,
+          batchId: batch.batchId,
+          index: batch.index,
+          size: batch.size,
+          outcome,
+          reasonCode,
+          processed,
+          failingIndex: decision.kind === "rejection" ? decision.failingIndex : undefined,
+        },
+    beforeHash,
+  };
 }
 
 function assertBatchSequences(steps: readonly ValidatedBatchStep[]): void {
@@ -620,6 +630,7 @@ export function assertCollabReplayTraceV1(value: unknown): asserts value is Coll
   let currentLineage = run.lineageId;
   let currentDoc: string | undefined;
   let previousLifecycleAfterStateVectorHash: TraceHash | undefined;
+  let previousSemanticAfterProjectionHash: TraceHash | undefined;
 
   for (const [index, value] of steps.entries()) {
     const context = `trace step ${index}`;
@@ -632,12 +643,17 @@ export function assertCollabReplayTraceV1(value: unknown): asserts value is Coll
     const kind = asOneOf(required(step, "kind", context), STEP_KINDS, `${context}.kind`);
 
     if (kind === "semantic-op") {
-      const batchStep = assertSemanticStep(step, context);
-      if (batchStep !== undefined) batchSteps.push(batchStep);
+      const semantic = assertSemanticStep(step, context);
+      if (previousSemanticAfterProjectionHash !== undefined && !hashesMatch(previousSemanticAfterProjectionHash, semantic.beforeHash)) {
+        invalid(`${context}.before_projection_hash`, "violates projection continuity");
+      }
+      if (semantic.batchStep !== undefined) batchSteps.push(semantic.batchStep);
       previousLifecycleAfterStateVectorHash = undefined;
+      previousSemanticAfterProjectionHash = semantic.afterHash;
       continue;
     }
 
+    previousSemanticAfterProjectionHash = undefined;
     const lifecycle = assertLifecycleBase(step, context, run.workflowId);
     if (lifecycle.beforeLineage !== currentLineage) invalid(`${context}.before_lineage_id`, "violates lifecycle ordering");
     if (currentDoc !== undefined && lifecycle.beforeDoc !== currentDoc) invalid(`${context}.before_doc_id`, "violates lifecycle ordering");
@@ -669,7 +685,10 @@ export function assertCollabReplayTraceV1(value: unknown): asserts value is Coll
 
   const assertions = asRecord(required(trace, "assertions", "collaboration trace"), "collaboration trace.assertions");
   const converged = asBoolean(required(assertions, "converged", "collaboration trace.assertions"), "collaboration trace.assertions.converged");
-  assertHash(required(assertions, "final_projection_hash", "collaboration trace.assertions"), "collaboration trace.assertions.final_projection_hash");
+  const finalProjectionHash = assertHash(required(assertions, "final_projection_hash", "collaboration trace.assertions"), "collaboration trace.assertions.final_projection_hash");
+  if (previousSemanticAfterProjectionHash !== undefined && !hashesMatch(previousSemanticAfterProjectionHash, finalProjectionHash)) {
+    invalid("collaboration trace.assertions.final_projection_hash", "must match the terminal semantic step");
+  }
   assertHash(required(assertions, "final_applied_op_ids_hash", "collaboration trace.assertions"), "collaboration trace.assertions.final_applied_op_ids_hash");
   const failure = required(assertions, "failure_step_id", "collaboration trace.assertions");
   if (failure !== null && (typeof failure !== "string" || !stepIds.has(failure))) invalid("collaboration trace.assertions.failure_step_id", "must reference an existing step_id or be null");
