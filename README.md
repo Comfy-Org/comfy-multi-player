@@ -354,7 +354,7 @@ Compile-time assertions in `src/types.ts` pin that `FROZEN_OPS` is exactly
 is exactly `WireOp["op"]`, and that `BATCHABLE_OPS ⊆ FROZEN_OPS`, so the lists
 and the unions cannot drift apart silently.
 
-**`Op` vs `WireOp`.** `Op` is what `applyOps` implements — the five kinds it
+**`Op` vs `WireOp`.** `Op` is what `applyOps` implements — the six kinds it
 can actually apply. `WireOp` is `Op` plus the deferred kinds a conforming peer
 may legally put on the wire, and it is what `ApplyFailure.op` and the stamp
 helpers take: a rejected `reset_doc` really does land in `failed.op`, so typing
