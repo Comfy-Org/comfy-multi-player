@@ -228,6 +228,38 @@ function assertNumberArray(value: unknown, context: string): void {
   }
 }
 
+function assertJsonValue(value: unknown, context: string, ancestors = new Set<object>()): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) invalid(context, "must be canonical JSON data");
+    return;
+  }
+  if (typeof value !== "object") invalid(context, "must be canonical JSON data");
+  if (ancestors.has(value)) invalid(context, "must be canonical JSON data without reference cycles");
+
+  ancestors.add(value);
+  if (Array.isArray(value)) {
+    const ownKeys = Reflect.ownKeys(value);
+    if (ownKeys.some((key) => key !== "length" && (typeof key !== "string" || !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= value.length))) {
+      invalid(context, "must be canonical JSON data without ignored array properties");
+    }
+    for (let index = 0; index < value.length; index++) {
+      if (!Object.hasOwn(value, index)) invalid(`${context}[${index}]`, "must be canonical JSON data without sparse entries");
+      assertJsonValue(value[index], `${context}[${index}]`, ancestors);
+    }
+  } else {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) invalid(context, "must be a canonical JSON object");
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string") invalid(context, "must be canonical JSON data without symbol keys");
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+      if (!descriptor.enumerable || !("value" in descriptor)) invalid(`${context}.${key}`, "must be canonical JSON data without ignored or computed properties");
+      assertJsonValue(descriptor.value, `${context}.${key}`, ancestors);
+    }
+  }
+  ancestors.delete(value);
+}
+
 function assertHash(value: unknown, context: string): TraceHash {
   const hash = asRecord(value, context);
   const algorithm = asOneOf(required(hash, "algorithm", context), ["sha256"] as const, `${context}.algorithm`);
@@ -287,6 +319,7 @@ function assertRun(value: unknown, context: string): { lineageId: string; workfl
 
 function assertOpPayload(value: unknown, context: string) {
   const payload = asRecord(value, context);
+  assertJsonValue(payload, context);
   const op = asOneOf(required(payload, "op", context), FROZEN_OPS, `${context}.op`);
   const opId = asOpId(required(payload, "op_id", context), `${context}.op_id`);
   const actor = asString(required(payload, "actor", context), `${context}.actor`);

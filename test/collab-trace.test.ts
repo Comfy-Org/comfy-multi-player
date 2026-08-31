@@ -163,6 +163,21 @@ function deletePath(value: unknown, path: readonly (string | number)[]): void {
   delete owner[path.at(-1)!];
 }
 
+const invalidJsonValues: readonly (readonly [string, () => unknown])[] = [
+  ["undefined", () => undefined],
+  ["BigInt", () => 1n],
+  ["function", () => () => 1],
+  ["symbol", () => Symbol("trace")],
+  ["non-finite number", () => Number.NaN],
+  ["non-JSON object", () => new Date(0)],
+  ["sparse array", () => Array(1)],
+  ["reference cycle", () => {
+    const cycle: Record<string, unknown> = {};
+    cycle["self"] = cycle;
+    return cycle;
+  }],
+];
+
 const requiredTraceFields = ([
   ["schema"],
   ["run"],
@@ -289,6 +304,32 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
     const wrongPayload = structuredClone(fixture());
     if (wrongPayload.steps[0]?.kind === "semantic-op") wrongPayload.steps[0].payload.actor = "human:other";
     expect(() => assertCollabReplayTraceV1(wrongPayload)).toThrow(/semantic identity/);
+  });
+
+  it.each(invalidJsonValues)("rejects a persistent payload containing %s", (_name, makeValue) => {
+    const trace = structuredClone(fixture());
+    if (trace.steps[0]?.kind === "semantic-op" && trace.steps[0].payload.op === "set_widget") {
+      trace.steps[0].payload.value = { nested: makeValue() };
+    }
+    expect(() => assertCollabReplayTraceV1(trace)).toThrow(/JSON/);
+  });
+
+  it("validates JSON values nested in grow and promoted payload evidence", () => {
+    const grow = structuredClone(fixture());
+    if (grow.steps[0]?.kind === "semantic-op") {
+      (grow.steps[0].payload as Op & { grow: unknown }).grow = { inputcount: { value: 1n } };
+    }
+    expect(() => assertCollabReplayTraceV1(grow)).toThrow(/JSON/);
+
+    const promoted = structuredClone(fixture());
+    if (promoted.steps[0]?.kind === "semantic-op" && promoted.steps[0].payload.op === "set_widget") {
+      promoted.steps[0].payload.value = 1;
+      (promoted.steps[0].payload as Op & { promoted: unknown }).promoted = {
+        value_index: 0,
+        host_widgets_values: [Symbol("trace")],
+      };
+    }
+    expect(() => assertCollabReplayTraceV1(promoted)).toThrow(/JSON/);
   });
 
   it("captures a real rejected batch without mutating or consuming either op", () => {
