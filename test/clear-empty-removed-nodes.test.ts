@@ -1,5 +1,7 @@
+import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
 import { applyOps, mint, project, type ClearOp, type WorkflowJSON } from "../src/index.js";
+import { appliedMap } from "../src/doc.js";
 import { loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
@@ -63,10 +65,17 @@ describe("clear([]) current-behavior characterization", () => {
     const before = project(doc, catalog);
     const beforeBytes = JSON.stringify(before);
 
-    const result = applyOps(doc, [clearEmpty(1)], catalog);
+    const op = clearEmpty(1);
+    const result = applyOps(doc, [op], catalog);
 
     expect(result.outcomes).toEqual([{ op_id: "00000000000000000000000000000001", outcome: "no-op" }]);
     expect(JSON.stringify(project(doc, catalog))).toBe(beforeBytes);
+    expect(appliedMap(doc).has(op.op_id)).toBe(true);
+
+    const afterFirstApply = Y.encodeStateAsUpdate(doc);
+    const retry = applyOps(doc, [op], catalog);
+    expect(retry.outcomes).toEqual([{ op_id: op.op_id, outcome: "no-op" }]);
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(afterFirstApply);
   });
 
   it("resets an existing groups array even though removed_nodes is empty", () => {
