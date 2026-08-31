@@ -460,7 +460,9 @@ function assertSemanticStep(step: UnknownRecord, context: string): void {
   } else if (outcome === "no-op") {
     if (reasonCode !== outcome) invalid(`${context}.reason_code`, "must match outcome");
     if (!processed || !consumed) invalid(`${context}.consumed_op_id`, "must be true for a no-op outcome");
-    if (decision.kind !== "dedupe" || decision.originalOpId !== opId) invalid(`${context}.decision_evidence`, "must identify the deduplicated op_id");
+    if (decision.kind !== "none" && (decision.kind !== "dedupe" || decision.originalOpId !== opId)) {
+      invalid(`${context}.decision_evidence`, "must be none or identify the deduplicated op_id");
+    }
     if (!emptyDiff || !hashesMatch(beforeHash, afterHash)) invalid(`${context}.semantic_diff`, "must be empty for a no-op outcome");
   } else if (outcome === "lww-dropped") {
     if (reasonCode !== outcome) invalid(`${context}.reason_code`, "must match outcome");

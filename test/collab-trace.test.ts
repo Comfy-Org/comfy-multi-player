@@ -65,7 +65,7 @@ function diff(before: WorkflowJSON, after: WorkflowJSON): SemanticDiff {
 /** Fixture emitter: observes one real applyOps admission and never replays policy. */
 function capture(doc: Y.Doc, op: Op, arrival_index: number, parents: SemanticOpTraceStep["causal"]): SemanticOpTraceStep {
   const before = normalized(doc);
-  const beforeStamps = readStamps(doc);
+  const alreadyApplied = appliedOpIds(doc).includes(op.op_id);
   const result = applyOps(doc, [op], catalog).outcomes[0]!;
   const after = normalized(doc);
   const afterStamps = readStamps(doc);
@@ -74,7 +74,7 @@ function capture(doc: Y.Doc, op: Op, arrival_index: number, parents: SemanticOpT
   const incoming = stampKey(op);
   const evidence = result.outcome === "lww-dropped" && Array.isArray(winner)
     ? { kind: "lww-comparison" as const, winning_stamp: winner as [number, string, string], losing_stamp: incoming }
-    : result.outcome === "no-op" && beforeStamps[targetKey] === afterStamps[targetKey]
+    : result.outcome === "no-op" && alreadyApplied
       ? { kind: "dedupe" as const, original_op_id: op.op_id }
       : result.outcome === "rejected"
         ? { kind: "rejection" as const, code: result.reason.code, message: result.reason.message, failing_index: 0 }
@@ -109,7 +109,11 @@ function fixture(): CollabReplayTraceV1 {
   const doc = mint(workflow, catalog);
   const first = edit("winner", 25, 4, 40);
   const second = edit("loser", 10, 99, 3);
-  const steps = [capture(doc, first, 0, { status: "known", parents: [] }), capture(doc, second, 1, { status: "known", parents: [{ op_id: first.op_id, relation: "fixture-declared", evidence: "fixture" }] })];
+  const steps = [
+    capture(doc, first, 0, { status: "known", parents: [] }),
+    capture(doc, second, 1, { status: "known", parents: [{ op_id: first.op_id, relation: "fixture-declared", evidence: "fixture" }] }),
+    capture(doc, first, 2, { status: "known", parents: [{ op_id: first.op_id, relation: "observed-before", evidence: "producer-observation" }] }),
+  ];
   return {
     schema: COLLAB_TRACE_SCHEMA,
     run: { trace_id: hash(steps).value, test: "lww-evidence-fixture", seed: 1592594695, source: { cmp_sha: "c543d947e3cb6ddf7570709e88a9eae2de031553", harness_sha: "fixture", fixture_sha: hash(workflow).value, catalog_sha: "fixture-catalog", dirty: false, node_version: process.version, yjs_version: "13.6.27" }, workflow_id: "wf-fixture", lineage_id: "lineage-1", ordering_scheme: "explicit-stamp", projection_normalization: "workflow-projection/v1" },
@@ -225,6 +229,7 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
     expect(canonical(a)).toBe(canonical(b));
     expect(a.steps[0]).toMatchObject({ base_version: 4, stamp: [40, "human:winner"], outcome: "applied" });
     expect(a.steps[1]).toMatchObject({ outcome: "lww-dropped", consumed_op_id: true, decision_evidence: { kind: "lww-comparison" } });
+    expect(a.steps[2]).toMatchObject({ outcome: "no-op", consumed_op_id: true, decision_evidence: { kind: "dedupe" } });
     assertCollabReplayTraceV1(a);
   });
 
