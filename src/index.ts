@@ -28,6 +28,8 @@
  *    accepts but does not preserve across encode → decode;
  *  - stamp machinery (`compareStampKeys`, `stampKey`, `writeTarget`) for
  *    hosts that need conflict identity or watermark bookkeeping;
+ *  - evidence-only collaboration trace declarations and
+ *    `assertCollabReplayTraceV1` for fail-closed trace reads;
  *  - the ADR-004 follower read surface (`nodesMap`, `linksMap`,
  *    `OPAQUE_WIDGETS_KEY`) for consuming the wire layout without applying ops;
  *  - the safer snapshot surface (`readGraph`, `readMeta`, `docCatalogPin`,
