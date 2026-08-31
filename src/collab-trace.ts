@@ -63,7 +63,7 @@ export interface TraceTarget {
 export type DecisionEvidence =
   | { kind: "lww-comparison"; winning_stamp: StampKey; losing_stamp: StampKey }
   | { kind: "dedupe"; original_op_id: string }
-  | { kind: "rejection"; code: string; message: string; failing_index: number }
+  | { kind: "rejection"; code: string; message: string; failing_index: number | null }
   | { kind: "none" };
 
 export interface SemanticDiff {
@@ -445,9 +445,10 @@ function assertDecision(value: unknown, context: string) {
   }
   if (kind === "dedupe") return { kind, originalOpId: asOpId(required(decision, "original_op_id", context), `${context}.original_op_id`) };
   if (kind === "rejection") {
+    const failingIndex = required(decision, "failing_index", context);
     return {
       code: asString(required(decision, "code", context), `${context}.code`),
-      failingIndex: asInteger(required(decision, "failing_index", context), `${context}.failing_index`),
+      failingIndex: failingIndex === null ? null : asInteger(failingIndex, `${context}.failing_index`),
       kind,
       message: asString(required(decision, "message", context), `${context}.message`),
     };
@@ -513,8 +514,13 @@ function assertSemanticStep(step: UnknownRecord, context: string): void {
     if (decision.kind !== "rejection" || decision.code !== reasonCode) invalid(`${context}.decision_evidence`, "must match the rejection reason_code");
     if (!emptyDiff || !hashesMatch(beforeHash, afterHash)) invalid(`${context}.semantic_diff`, "must be empty for a rejected outcome");
     const aborted = reasonCode === "batch_aborted";
-    if (processed === aborted) invalid(`${context}.processed`, aborted ? "must be false for an aborted remainder" : "must be true for the rejected operation");
-    const expectedFailureIndex = aborted ? decision.kind === "rejection" && batch !== undefined && decision.failingIndex < batch.index : decision.kind === "rejection" && decision.failingIndex === (batch?.index ?? 0);
+    if (aborted && processed) invalid(`${context}.processed`, "must be false for an aborted remainder");
+    if (!aborted && !processed && (batch === undefined || decision.failingIndex !== null)) {
+      invalid(`${context}.decision_evidence.failing_index`, "must be null for a batch preflight refusal");
+    }
+    const expectedFailureIndex = aborted
+      ? decision.kind === "rejection" && batch !== undefined && decision.failingIndex !== null && decision.failingIndex < batch.index
+      : !processed || (decision.kind === "rejection" && decision.failingIndex === (batch?.index ?? 0));
     if (!expectedFailureIndex) invalid(`${context}.decision_evidence.failing_index`, "does not identify the rejected operation");
   }
 }

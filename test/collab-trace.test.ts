@@ -3,6 +3,7 @@ import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
 import {
   COLLAB_TRACE_SCHEMA,
+  MAX_OPS_PER_BATCH,
   applyOps,
   appliedOpIds,
   assertCollabReplayTraceV1,
@@ -127,6 +128,7 @@ function captureRejectedBatch(doc: Y.Doc, ops: Op[]): SemanticOpTraceStep[] {
   const result = applyOps(doc, ops, catalog);
   const after = normalized(doc);
   const failingIndex = result.outcomes.findIndex((outcome) => outcome.outcome === "rejected" && outcome.reason.code !== "batch_aborted");
+  const preflightRefusal = ops.length > MAX_OPS_PER_BATCH;
   if (failingIndex < 0) throw new Error("fixture batch did not reject");
 
   return result.outcomes.map((outcome, index) => {
@@ -148,10 +150,10 @@ function captureRejectedBatch(doc: Y.Doc, ops: Op[]): SemanticOpTraceStep[] {
       semantic_diff: diff(before, after),
       outcome: outcome.outcome,
       reason_code: outcome.reason.code,
-      processed: outcome.reason.code !== "batch_aborted",
+      processed: !preflightRefusal && outcome.reason.code !== "batch_aborted",
       consumed_op_id: false,
       targets: [{ kind: "conflict-register", path: writeTarget(op) as (string | number)[], role: "conflict" }],
-      decision_evidence: { kind: "rejection", code: outcome.reason.code, message: outcome.reason.message, failing_index: failingIndex },
+      decision_evidence: { kind: "rejection", code: outcome.reason.code, message: outcome.reason.message, failing_index: preflightRefusal ? null : failingIndex },
       batch: { batch_id: "rejected-batch", index, size: ops.length },
     };
   });
@@ -358,6 +360,19 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
       { outcome: "rejected", reason_code: "unknown_widget", processed: true, consumed_op_id: false, decision_evidence: { kind: "rejection", failing_index: 0 } },
       { outcome: "rejected", reason_code: "batch_aborted", processed: false, consumed_op_id: false, decision_evidence: { kind: "rejection", failing_index: 0 } },
     ]);
+    expect(() => assertCollabReplayTraceV1({ ...fixture(), steps })).not.toThrow();
+  });
+
+  it("captures an oversized batch as a preflight refusal with no processed member", () => {
+    const doc = mint(workflow, catalog);
+    const before = Y.encodeStateAsUpdate(doc);
+    const ops = Array.from({ length: MAX_OPS_PER_BATCH + 1 }, (_, index) => edit(`oversized-${index}`, index, index));
+    const steps = captureRejectedBatch(doc, ops);
+
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+    expect(appliedOpIds(doc)).toEqual([]);
+    expect(steps).toHaveLength(MAX_OPS_PER_BATCH + 1);
+    expect(steps.every((step) => !step.processed && step.reason_code === "malformed_op" && step.decision_evidence.kind === "rejection" && step.decision_evidence.failing_index === null)).toBe(true);
     expect(() => assertCollabReplayTraceV1({ ...fixture(), steps })).not.toThrow();
   });
 
