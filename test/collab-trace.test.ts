@@ -306,6 +306,16 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
     expect(() => assertCollabReplayTraceV1(wrongPayload)).toThrow(/semantic identity/);
   });
 
+  it("rejects LWW evidence whose claimed winner does not outrank the loser", () => {
+    for (const winningStamp of [[3, "human:loser", opId("loser")], [2, "human:winner", opId("winner")]] as const) {
+      const trace = structuredClone(fixture());
+      if (trace.steps[1]?.kind === "semantic-op" && trace.steps[1].decision_evidence.kind === "lww-comparison") {
+        trace.steps[1].decision_evidence.winning_stamp = [...winningStamp];
+      }
+      expect(() => assertCollabReplayTraceV1(trace)).toThrow(/winning_stamp/);
+    }
+  });
+
   it.each(invalidJsonValues)("rejects a persistent payload containing %s", (_name, makeValue) => {
     const trace = structuredClone(fixture());
     if (trace.steps[0]?.kind === "semantic-op" && trace.steps[0].payload.op === "set_widget") {

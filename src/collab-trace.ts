@@ -5,6 +5,7 @@
  * format and intentionally exposes no replay, merge, comparator, Yjs, or mint
  * API. Consumers render captured decisions; they must never recompute them.
  */
+import { compareStampKeys } from "./stamps.js";
 import { FROZEN_OPS, type Op, type StampKey } from "./types.js";
 
 export const COLLAB_TRACE_SCHEMA = "comfy.collab-replay/v1" as const;
@@ -502,6 +503,9 @@ function assertSemanticStep(step: UnknownRecord, context: string): void {
     if (!processed || !consumed) invalid(`${context}.consumed_op_id`, "must be true for an LWW-dropped outcome");
     if (decision.kind !== "lww-comparison" || decision.losing[0] !== stamp[0] || decision.losing[1] !== stamp[1] || decision.losing[2] !== opId) {
       invalid(`${context}.decision_evidence`, "must preserve the incoming losing stamp");
+    }
+    if (compareStampKeys(decision.winning, decision.losing) <= 0) {
+      invalid(`${context}.decision_evidence.winning_stamp`, "must outrank the losing stamp");
     }
     if (!emptyDiff || !hashesMatch(beforeHash, afterHash)) invalid(`${context}.semantic_diff`, "must be empty for an LWW-dropped outcome");
   } else {
