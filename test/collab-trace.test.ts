@@ -460,5 +460,11 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
     if (firstStep.kind === "semantic-op") throw new Error("fixture step must be a lifecycle event");
     firstStep.after_state_vector_hash = { ...firstStep.after_state_vector_hash, value: "b".repeat(64) };
     expect(() => assertCollabReplayTraceV1(discontinuous)).toThrow(/state-vector continuity/);
+
+    const wrongLineage = structuredClone(trace);
+    const secondStep = wrongLineage.steps[1]!;
+    if (secondStep.kind === "semantic-op") throw new Error("fixture step must be a lifecycle event");
+    secondStep.before_lineage_id = "unrelated-lineage";
+    expect(() => assertCollabReplayTraceV1(wrongLineage)).toThrow(/before_lineage_id/);
   });
 });
