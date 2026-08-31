@@ -247,6 +247,21 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
     expect(a.steps[0]).toMatchObject({ base_version: 4, stamp: [40, "human:winner"], outcome: "applied" });
     expect(a.steps[1]).toMatchObject({ outcome: "lww-dropped", consumed_op_id: true, decision_evidence: { kind: "lww-comparison" } });
     expect(a.steps[2]).toMatchObject({ outcome: "no-op", consumed_op_id: true, decision_evidence: { kind: "dedupe" } });
+
+    const snapshot = Y.encodeStateAsUpdate(mint(workflow, catalog));
+    const captureOrder = (ops: readonly Op[]) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      const steps = ops.map((op, index) => capture(doc, op, index, { status: "known", parents: [] }));
+      return { projection: normalized(doc), steps };
+    };
+    const first = edit("winner", 25, 4, 40);
+    const second = edit("loser", 10, 99, 3);
+    const forward = captureOrder([first, second]);
+    const reverse = captureOrder([second, first]);
+    expect(reverse.projection).toEqual(forward.projection);
+    expect(reverse.steps).toMatchObject([{ outcome: "applied" }, { outcome: "applied" }]);
+
     assertCollabReplayTraceV1(a);
   });
 
