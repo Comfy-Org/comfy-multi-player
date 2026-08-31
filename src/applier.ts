@@ -1832,6 +1832,7 @@ function applyDisconnect(doc: Y.Doc, op: DisconnectOp): SuccessfulOutcome {
     throw new OpRejectedError("input_slot_missing", `disconnect: input slot ${op.to_slot} is not a slot record`);
   }
 
+  const prev = slot.get("link");
   const stamps = stampsMap(doc);
   const targetKey = stampTargetKey(op);
   const prior = stamps.get(targetKey) as StampKey | undefined;
@@ -1839,11 +1840,8 @@ function applyDisconnect(doc: Y.Doc, op: DisconnectOp): SuccessfulOutcome {
   if (prior != null && compareStampKeys(key, prior) <= 0) return "lww-dropped";
 
   mset(stamps, targetKey, key);
-  const prev = slot.get("link");
-  const hadLink = linksMap(doc).has(String(op.link_id)) || prev === op.link_id || prev != null;
-  removeLink(doc, op.link_id);
-  if (prev != null && prev !== op.link_id) removeLink(doc, prev);
-  return hadLink ? "applied" : "no-op";
+  if (prev != null) removeLink(doc, prev);
+  return prev != null ? "applied" : "no-op";
 }
 
 // ---------------------------------------------------------------------------

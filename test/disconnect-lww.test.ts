@@ -4,7 +4,7 @@ import {
   applyOps,
   mint,
   project,
-  type ConnectOp,
+  type ConcreteConnectOp,
   type DisconnectOp,
   type Op,
   type WorkflowJSON,
@@ -57,7 +57,12 @@ function wiredWorkflow(): WorkflowJSON {
   };
 }
 
-function disconnect(tag: string, actor: string, baseVersion: number, linkId = 9000): DisconnectOp {
+function disconnect(
+  tag: string,
+  actor: string,
+  baseVersion: number,
+  linkId: DisconnectOp["link_id"] = 9000,
+): DisconnectOp {
   return {
     op: "disconnect",
     op_id: opId(tag),
@@ -70,7 +75,12 @@ function disconnect(tag: string, actor: string, baseVersion: number, linkId = 90
   };
 }
 
-function connect(tag: string, actor: string, baseVersion: number, linkId = 9001): ConnectOp {
+function connect(
+  tag: string,
+  actor: string,
+  baseVersion: number,
+  linkId: ConcreteConnectOp["link_id"] = 9001,
+): ConcreteConnectOp {
   return {
     op: "connect",
     op_id: opId(tag),
@@ -97,6 +107,16 @@ function comparable(wf: WorkflowJSON): string {
   return JSON.stringify(canonicalize(wf));
 }
 
+function withSecondTargetSlot(): WorkflowJSON {
+  const workflow = wiredWorkflow();
+  (workflow.nodes.find((node) => node.id === TARGET)!.inputs as unknown[]).push({
+    name: "negative",
+    type: "CONDITIONING",
+    link: null,
+  });
+  return workflow;
+}
+
 function bytes(doc: Y.Doc): string {
   return Buffer.from(Y.encodeStateAsUpdate(doc)).toString("hex");
 }
@@ -112,19 +132,33 @@ describe("disconnect", () => {
 
   it("normalizes link identity while scrubbing references outside the claimed slot", () => {
     const workflow = wiredWorkflow();
-    (workflow.nodes.find((node) => node.id === TARGET)!.inputs as unknown[]).push({
-      name: "negative",
-      type: "CONDITIONING",
-      link: null,
-    });
+    (workflow.nodes.find((node) => node.id === TARGET)!.inputs as Array<{ link: unknown }>)[SLOT]!.link = "9000";
     const doc = mint(workflow, catalog, "sha");
-    const op = { ...disconnect("d1", HUMAN, 1, "9000"), to_slot: 1 };
+    const op = disconnect("d1", HUMAN, 1, "9000");
 
     expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
     const wf = canonicalize(project(doc, catalog));
     expect(wf.links).toEqual([]);
     expect((wf.nodes.find((node) => node.id === TARGET)!.inputs as Array<{ link: unknown }>)[SLOT]!.link).toBeNull();
     expect((wf.nodes.find((node) => node.id === SOURCE)!.outputs as Array<{ links: unknown[] }>)[0]!.links).toEqual([]);
+  });
+
+  it("converges when the named link and claimed input are different registers", () => {
+    const run = (ops: Op[]) => {
+      const doc = mint(withSecondTargetSlot(), catalog, "sha");
+      expect(applyOps(doc, ops, catalog).outcomes.every((outcome) => outcome.outcome !== "rejected")).toBe(true);
+      return canonicalize(project(doc, catalog));
+    };
+    const reconnect = { ...connect("c1", AGENT, 5, 9001), to_slot: 1 };
+    const sever = disconnect("d2", HUMAN, 9, 9001);
+
+    expect(comparable(run([sever, reconnect]))).toBe(comparable(run([reconnect, sever])));
+    expect(run([reconnect, sever]).links).toEqual([[9001, SOURCE, 0, TARGET, 1, "CONDITIONING"]]);
+
+    const newerReconnect = { ...reconnect, base_version: 9, stamp: [9, AGENT] as [number, string] };
+    const olderSever = { ...sever, base_version: 5, stamp: [5, HUMAN] as [number, string] };
+    expect(comparable(run([olderSever, newerReconnect]))).toBe(comparable(run([newerReconnect, olderSever])));
+    expect(run([olderSever, newerReconnect]).links).toEqual([[9001, SOURCE, 0, TARGET, 1, "CONDITIONING"]]);
   });
 
   it("is idempotent on retry", () => {
