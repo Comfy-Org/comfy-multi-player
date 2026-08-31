@@ -435,5 +435,11 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
         expect(() => assertCollabReplayTraceV1(malformed), `${field} must reject ${encoding}`).toThrow(/yjs-state-vector/);
       }
     }
+
+    const discontinuous = structuredClone(trace);
+    const firstStep = discontinuous.steps[0]!;
+    if (firstStep.kind === "semantic-op") throw new Error("fixture step must be a lifecycle event");
+    firstStep.after_state_vector_hash = { ...firstStep.after_state_vector_hash, value: "b".repeat(64) };
+    expect(() => assertCollabReplayTraceV1(discontinuous)).toThrow(/state-vector continuity/);
   });
 });

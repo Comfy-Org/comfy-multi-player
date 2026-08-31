@@ -604,7 +604,7 @@ function assertLifecycleBase(step: UnknownRecord, context: string, workflowId: s
   if (beforeStateVectorHash.encoding !== "yjs-state-vector") invalid(`${context}.before_state_vector_hash.encoding`, "must be yjs-state-vector");
   if (afterStateVectorHash.encoding !== "yjs-state-vector") invalid(`${context}.after_state_vector_hash.encoding`, "must be yjs-state-vector");
   if (Object.hasOwn(step, "diagnostic")) assertDiagnostic(step["diagnostic"], `${context}.diagnostic`);
-  return { afterDoc, afterLineage, beforeDoc, beforeLineage };
+  return { afterDoc, afterLineage, afterStateVectorHash, beforeDoc, beforeLineage, beforeStateVectorHash };
 }
 
 /** Fail closed at the schema-major boundary before a viewer reads a trace. */
@@ -619,6 +619,7 @@ export function assertCollabReplayTraceV1(value: unknown): asserts value is Coll
   const batchSteps: ValidatedBatchStep[] = [];
   let currentLineage = run.lineageId;
   let currentDoc: string | undefined;
+  let previousLifecycleAfterStateVectorHash: TraceHash | undefined;
 
   for (const [index, value] of steps.entries()) {
     const context = `trace step ${index}`;
@@ -633,12 +634,16 @@ export function assertCollabReplayTraceV1(value: unknown): asserts value is Coll
     if (kind === "semantic-op") {
       const batchStep = assertSemanticStep(step, context);
       if (batchStep !== undefined) batchSteps.push(batchStep);
+      previousLifecycleAfterStateVectorHash = undefined;
       continue;
     }
 
     const lifecycle = assertLifecycleBase(step, context, run.workflowId);
     if (lifecycle.beforeLineage !== currentLineage) invalid(`${context}.before_lineage_id`, "violates lifecycle ordering");
     if (currentDoc !== undefined && lifecycle.beforeDoc !== currentDoc) invalid(`${context}.before_doc_id`, "violates lifecycle ordering");
+    if (previousLifecycleAfterStateVectorHash !== undefined && !hashesMatch(previousLifecycleAfterStateVectorHash, lifecycle.beforeStateVectorHash)) {
+      invalid(`${context}.before_state_vector_hash`, "violates state-vector continuity");
+    }
     if (kind === "state-vector-replay") {
       if (!asBoolean(required(step, "same_document", context), `${context}.same_document`) || lifecycle.beforeDoc !== lifecycle.afterDoc || lifecycle.beforeLineage !== lifecycle.afterLineage) {
         invalid(context, "violates same-document replay");
@@ -657,6 +662,7 @@ export function assertCollabReplayTraceV1(value: unknown): asserts value is Coll
     }
     currentLineage = lifecycle.afterLineage;
     currentDoc = lifecycle.afterDoc;
+    previousLifecycleAfterStateVectorHash = lifecycle.afterStateVectorHash;
   }
 
   assertBatchSequences(batchSteps);
