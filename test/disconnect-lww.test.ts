@@ -110,6 +110,23 @@ describe("disconnect", () => {
     expect((wf.nodes.find((node) => node.id === SOURCE)!.outputs as Array<{ links: unknown[] }>)[0]!.links).toEqual([]);
   });
 
+  it("normalizes link identity while scrubbing references outside the claimed slot", () => {
+    const workflow = wiredWorkflow();
+    (workflow.nodes.find((node) => node.id === TARGET)!.inputs as unknown[]).push({
+      name: "negative",
+      type: "CONDITIONING",
+      link: null,
+    });
+    const doc = mint(workflow, catalog, "sha");
+    const op = { ...disconnect("d1", HUMAN, 1, "9000"), to_slot: 1 };
+
+    expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+    const wf = canonicalize(project(doc, catalog));
+    expect(wf.links).toEqual([]);
+    expect((wf.nodes.find((node) => node.id === TARGET)!.inputs as Array<{ link: unknown }>)[SLOT]!.link).toBeNull();
+    expect((wf.nodes.find((node) => node.id === SOURCE)!.outputs as Array<{ links: unknown[] }>)[0]!.links).toEqual([]);
+  });
+
   it("is idempotent on retry", () => {
     const doc = mint(wiredWorkflow(), catalog, "sha");
     const op = disconnect("d1", HUMAN, 1);

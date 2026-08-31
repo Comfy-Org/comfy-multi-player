@@ -1641,7 +1641,7 @@ function removeLink(doc: Y.Doc, linkId: unknown): void {
   const links = linksMap(doc);
   const key = String(linkId);
   if (links.has(key)) mdel(links, key);
-  scrubLinkRefs(doc, (candidate) => candidate === linkId);
+  scrubLinkRefs(doc, (candidate) => candidate != null && String(candidate) === key);
 }
 
 /** Scrub input/output references selected by one shared link-id predicate. */
