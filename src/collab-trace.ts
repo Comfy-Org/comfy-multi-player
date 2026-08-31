@@ -91,7 +91,7 @@ export interface SemanticOpTraceStep {
   before_projection_hash: TraceHash;
   after_projection_hash: TraceHash;
   semantic_diff: SemanticDiff;
-  outcome: "applied" | "no-op" | "lww-dropped" | "rejected" | "batch-aborted";
+  outcome: "applied" | "no-op" | "lww-dropped" | "rejected";
   reason_code: string;
   processed: boolean;
   consumed_op_id: boolean;
