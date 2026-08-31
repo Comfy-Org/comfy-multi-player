@@ -1,33 +1,30 @@
 import { describe, expect, it } from "vitest";
 import { applyOps, mint, project, type ClearOp, type WorkflowJSON } from "../src/index.js";
-import { loadCatalog, loadSession } from "./helpers.js";
+import { loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
 
 function threeNodeWorkflow(withGroups: boolean): WorkflowJSON {
-  const source = loadSession("session-edit-heavy.session.jsonl").header.base_workflow;
-  const nodeIds = new Set(source.nodes.slice(0, 3).map((node) => String(node.id)));
-  const links = source.links.filter(
-    (link) => {
-      const tuple = link as unknown[];
-      return nodeIds.has(String(tuple[1])) && nodeIds.has(String(tuple[3]));
-    },
-  );
-  const linkIds = new Set(links.map((link) => (link as unknown[])[0]));
-  const nodes = structuredClone(source.nodes.slice(0, 3));
-  for (const node of nodes) {
-    for (const input of (node.inputs ?? []) as Record<string, unknown>[]) {
-      input.link = input.link != null && linkIds.has(input.link) ? input.link : null;
-    }
-    for (const output of (node.outputs ?? []) as Record<string, unknown>[]) {
-      const outputLinks = Array.isArray(output.links) ? output.links : [];
-      output.links = outputLinks.filter((linkId) => linkIds.has(linkId));
-    }
-  }
   const workflow: WorkflowJSON = {
-    ...source,
-    nodes,
-    links,
+    nodes: [
+      {
+        id: 1, type: "LoadImage", inputs: [],
+        outputs: [{ name: "IMAGE", type: "IMAGE", links: [10] }], widgets_values: [],
+      },
+      {
+        id: 2, type: "PreviewImage",
+        inputs: [{ name: "images", type: "IMAGE", link: 10 }],
+        outputs: [{ name: "IMAGE", type: "IMAGE", links: [11] }], widgets_values: [],
+      },
+      {
+        id: 3, type: "PreviewImage",
+        inputs: [{ name: "images", type: "IMAGE", link: 11 }], outputs: [], widgets_values: [],
+      },
+    ],
+    links: [[10, 1, 0, 2, 0, "IMAGE"], [11, 2, 0, 3, 0, "IMAGE"]],
+    last_node_id: 3,
+    last_link_id: 11,
+    extra: {},
   };
   if (withGroups) {
     workflow.groups = [
