@@ -599,8 +599,10 @@ function assertLifecycleBase(step: UnknownRecord, context: string, workflowId: s
   const afterLineage = asString(required(step, "after_lineage_id", context), `${context}.after_lineage_id`);
   const beforeDoc = asString(required(step, "before_doc_id", context), `${context}.before_doc_id`);
   const afterDoc = asString(required(step, "after_doc_id", context), `${context}.after_doc_id`);
-  assertHash(required(step, "before_state_vector_hash", context), `${context}.before_state_vector_hash`);
-  assertHash(required(step, "after_state_vector_hash", context), `${context}.after_state_vector_hash`);
+  const beforeStateVectorHash = assertHash(required(step, "before_state_vector_hash", context), `${context}.before_state_vector_hash`);
+  const afterStateVectorHash = assertHash(required(step, "after_state_vector_hash", context), `${context}.after_state_vector_hash`);
+  if (beforeStateVectorHash.encoding !== "yjs-state-vector") invalid(`${context}.before_state_vector_hash.encoding`, "must be yjs-state-vector");
+  if (afterStateVectorHash.encoding !== "yjs-state-vector") invalid(`${context}.after_state_vector_hash.encoding`, "must be yjs-state-vector");
   if (Object.hasOwn(step, "diagnostic")) assertDiagnostic(step["diagnostic"], `${context}.diagnostic`);
   return { afterDoc, afterLineage, beforeDoc, beforeLineage };
 }

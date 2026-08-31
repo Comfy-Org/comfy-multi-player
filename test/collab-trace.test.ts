@@ -425,5 +425,15 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
       { step_id: "life-2", kind: "doc-reset", arrival_index: 1, workflow_id: "wf-fixture", before_lineage_id: "lineage-1", after_lineage_id: "lineage-2", before_doc_id: "doc-1", after_doc_id: "doc-2", before_state_vector_hash: stateVectorHash, after_state_vector_hash: stateVectorHash, same_document: false, reset_seq: 9, projectors_notified_before_replace: true },
     ] };
     expect(() => assertCollabReplayTraceV1(trace)).not.toThrow();
+
+    for (const encoding of ["canonical-json-v1", "binary"] as const) {
+      for (const field of ["before_state_vector_hash", "after_state_vector_hash"] as const) {
+        const malformed = structuredClone(trace);
+        const firstStep = malformed.steps[0]!;
+        if (firstStep.kind === "semantic-op") throw new Error("fixture step must be a lifecycle event");
+        firstStep[field].encoding = encoding;
+        expect(() => assertCollabReplayTraceV1(malformed), `${field} must reject ${encoding}`).toThrow(/yjs-state-vector/);
+      }
+    }
   });
 });
