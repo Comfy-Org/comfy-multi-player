@@ -277,7 +277,8 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
   it.each(requiredTraceFields)("fails closed when required field $name is absent", ({ path }) => {
     const trace: unknown = structuredClone(fixture());
     deletePath(trace, path);
-    expect(() => assertCollabReplayTraceV1(trace)).toThrow();
+    const field = String(path.at(-1));
+    expect(() => assertCollabReplayTraceV1(trace)).toThrow(new RegExp(field));
   });
 
   it("rejects duplicate or out-of-order step identity", () => {
