@@ -1,6 +1,6 @@
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
-import { applyOps, mint, project, type ClearOp, type WorkflowJSON } from "../src/index.js";
+import { applyOps, mint, project, type ClearOp, type DeleteNodeOp, type WorkflowJSON } from "../src/index.js";
 import { appliedMap } from "../src/doc.js";
 import { loadCatalog } from "./helpers.js";
 
@@ -82,14 +82,39 @@ describe("clear([]) current-behavior characterization", () => {
     const workflow = threeNodeWorkflow(true);
     const doc = mint(workflow, catalog);
     const before = project(doc, catalog);
+    const op = clearEmpty(2);
 
-    const result = applyOps(doc, [clearEmpty(2)], catalog);
+    const result = applyOps(doc, [op], catalog);
     const projected = project(doc, catalog);
 
     expect(result.outcomes).toEqual([{ op_id: "00000000000000000000000000000002", outcome: "applied" }]);
     expect(projected.nodes).toEqual(before.nodes);
     expect(projected.links).toEqual(before.links);
     expect(projected.groups).toEqual([]);
+
+    const retry = applyOps(doc, [op], catalog);
+    expect(retry.outcomes).toEqual([{ op_id: op.op_id, outcome: "no-op" }]);
+    expect(project(doc, catalog)).toEqual(projected);
+
+    const deleteNode: DeleteNodeOp = {
+      op: "delete_node",
+      op_id: "00000000000000000000000000000004",
+      actor: "bob",
+      base_version: 4,
+      stamp: [4, "bob"],
+      node_id: 3,
+      removed_links: [11],
+    };
+    const snapshot = Y.encodeStateAsUpdate(mint(workflow, catalog));
+    const projections = [[op, deleteNode], [deleteNode, op]].map((order) => {
+      const fork = new Y.Doc();
+      Y.applyUpdate(fork, snapshot);
+      for (const orderedOp of order) {
+        expect(applyOps(fork, [orderedOp], catalog).outcomes[0]?.outcome).not.toBe("rejected");
+      }
+      return project(fork, catalog);
+    });
+    expect(projections[0]).toEqual(projections[1]);
   });
 
   it("does not invent a missing groups key", () => {
