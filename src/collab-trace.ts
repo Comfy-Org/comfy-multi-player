@@ -159,6 +159,17 @@ const DECISION_KINDS = ["lww-comparison", "dedupe", "rejection", "none"] as cons
 const OP_ID_PATTERN = /^[0-9a-f]{32}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
+interface ValidatedBatchStep {
+  context: string;
+  batchId: string;
+  index: number;
+  size: number;
+  outcome: SemanticOpTraceStep["outcome"];
+  reasonCode: string;
+  processed: boolean;
+  failingIndex: number | null | undefined;
+}
+
 function invalid(context: string, message: string): never {
   throw new TypeError(`${context} ${message}`);
 }
@@ -428,13 +439,13 @@ function assertTargets(value: unknown, context: string): void {
   }
 }
 
-function assertBatch(value: unknown, context: string): { index: number; size: number } {
+function assertBatch(value: unknown, context: string): { batchId: string; index: number; size: number } {
   const batch = asRecord(value, context);
-  asString(required(batch, "batch_id", context), `${context}.batch_id`);
+  const batchId = asString(required(batch, "batch_id", context), `${context}.batch_id`);
   const index = asInteger(required(batch, "index", context), `${context}.index`);
   const size = asInteger(required(batch, "size", context), `${context}.size`, 1);
   if (index >= size) invalid(`${context}.index`, "must be smaller than size");
-  return { index, size };
+  return { batchId, index, size };
 }
 
 function assertDecision(value: unknown, context: string) {
@@ -464,7 +475,7 @@ function assertObservedFrontier(value: unknown, context: string): void {
   }
 }
 
-function assertSemanticStep(step: UnknownRecord, context: string): void {
+function assertSemanticStep(step: UnknownRecord, context: string): ValidatedBatchStep | undefined {
   const actor = asString(required(step, "actor", context), `${context}.actor`);
   const opId = asOpId(required(step, "op_id", context), `${context}.op_id`);
   const stamp = assertStamp(required(step, "stamp", context), `${context}.stamp`);
@@ -523,6 +534,55 @@ function assertSemanticStep(step: UnknownRecord, context: string): void {
       : !processed || (decision.kind === "rejection" && decision.failingIndex === (batch?.index ?? 0));
     if (!expectedFailureIndex) invalid(`${context}.decision_evidence.failing_index`, "does not identify the rejected operation");
   }
+
+  return batch === undefined
+    ? undefined
+    : {
+        context,
+        batchId: batch.batchId,
+        index: batch.index,
+        size: batch.size,
+        outcome,
+        reasonCode,
+        processed,
+        failingIndex: decision.kind === "rejection" ? decision.failingIndex : undefined,
+      };
+}
+
+function assertBatchSequences(steps: readonly ValidatedBatchStep[]): void {
+  const batches = new Map<string, { size: number; steps: Map<number, ValidatedBatchStep> }>();
+  for (const step of steps) {
+    const existing = batches.get(step.batchId);
+    if (existing !== undefined && existing.size !== step.size) invalid(`${step.context}.batch.size`, `must match batch '${step.batchId}' size ${existing.size}`);
+    const batch = existing ?? { size: step.size, steps: new Map<number, ValidatedBatchStep>() };
+    if (batch.steps.has(step.index)) invalid(`${step.context}.batch.index`, `duplicates index ${step.index} in batch '${step.batchId}'`);
+    batch.steps.set(step.index, step);
+    batches.set(step.batchId, batch);
+  }
+
+  for (const [batchId, batch] of batches) {
+    if (batch.steps.size !== batch.size) invalid(`batch '${batchId}'`, `must include all ${batch.size} members under one batch_id`);
+    const ordered = Array.from({ length: batch.size }, (_, index) => batch.steps.get(index));
+    if (ordered.some((step) => step === undefined)) invalid(`batch '${batchId}'`, "must use contiguous indexes");
+    const members = ordered as ValidatedBatchStep[];
+    const rejected = members.filter((step) => step.outcome === "rejected");
+    if (rejected.length === 0) continue;
+
+    const preflight = rejected.length === members.length
+      && rejected.every((step) => !step.processed && step.reasonCode !== "batch_aborted" && step.failingIndex === null);
+    if (preflight) continue;
+
+    const failures = rejected.filter((step) => step.processed && step.reasonCode !== "batch_aborted");
+    if (failures.length !== 1) invalid(`batch '${batchId}'`, "must contain exactly one processed rejection");
+    const failure = failures[0]!;
+    for (const step of members) {
+      if (step.index < failure.index && step.outcome === "rejected") invalid(`${step.context}.batch`, "contains a rejection before failing_index");
+      if (step.index === failure.index && step !== failure) invalid(`${step.context}.batch`, "does not identify the processed rejection");
+      if (step.index > failure.index && (step.outcome !== "rejected" || step.processed || step.reasonCode !== "batch_aborted" || step.failingIndex !== failure.index)) {
+        invalid(`${step.context}.batch`, "must form a contiguous aborted suffix after failing_index");
+      }
+    }
+  }
 }
 
 function assertDiagnostic(value: unknown, context: string): void {
@@ -554,6 +614,7 @@ export function assertCollabReplayTraceV1(value: unknown): asserts value is Coll
   const run = assertRun(required(trace, "run", "collaboration trace"), "collaboration trace.run");
   const steps = asArray(required(trace, "steps", "collaboration trace"), "collaboration trace.steps");
   const stepIds = new Set<string>();
+  const batchSteps: ValidatedBatchStep[] = [];
   let currentLineage = run.lineageId;
   let currentDoc: string | undefined;
 
@@ -568,7 +629,8 @@ export function assertCollabReplayTraceV1(value: unknown): asserts value is Coll
     const kind = asOneOf(required(step, "kind", context), STEP_KINDS, `${context}.kind`);
 
     if (kind === "semantic-op") {
-      assertSemanticStep(step, context);
+      const batchStep = assertSemanticStep(step, context);
+      if (batchStep !== undefined) batchSteps.push(batchStep);
       continue;
     }
 
@@ -594,6 +656,8 @@ export function assertCollabReplayTraceV1(value: unknown): asserts value is Coll
     currentLineage = lifecycle.afterLineage;
     currentDoc = lifecycle.afterDoc;
   }
+
+  assertBatchSequences(batchSteps);
 
   const assertions = asRecord(required(trace, "assertions", "collaboration trace"), "collaboration trace.assertions");
   const converged = asBoolean(required(assertions, "converged", "collaboration trace.assertions"), "collaboration trace.assertions.converged");

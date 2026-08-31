@@ -363,6 +363,32 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
     expect(() => assertCollabReplayTraceV1({ ...fixture(), steps })).not.toThrow();
   });
 
+  it("rejects missing or mismatched batch failure evidence and non-contiguous aborts", () => {
+    const rejected = { ...edit("batch-failure", 11, 5), widget: "not-in-catalog" };
+    const trailing = [edit("batch-trailing-1", 12, 6), edit("batch-trailing-2", 13, 7)];
+    const makeSteps = () => captureRejectedBatch(mint(workflow, catalog), [rejected, ...trailing]);
+
+    const missingFailure = makeSteps().slice(1);
+    missingFailure.forEach((step, index) => { step.arrival_index = index; });
+    expect(() => assertCollabReplayTraceV1({ ...fixture(), steps: missingFailure })).toThrow(/batch/);
+
+    const mismatchedBatch = makeSteps();
+    mismatchedBatch[1]!.batch!.batch_id = "different-batch";
+    expect(() => assertCollabReplayTraceV1({ ...fixture(), steps: mismatchedBatch })).toThrow(/batch/);
+
+    const mismatchedSize = makeSteps();
+    mismatchedSize[1]!.batch!.size += 1;
+    expect(() => assertCollabReplayTraceV1({ ...fixture(), steps: mismatchedSize })).toThrow(/batch/);
+
+    const abortGap = makeSteps();
+    Object.assign(abortGap[1]!, { outcome: "no-op", reason_code: "no-op", processed: true, consumed_op_id: true, decision_evidence: { kind: "none" } });
+    expect(() => assertCollabReplayTraceV1({ ...fixture(), steps: abortGap })).toThrow(/batch/);
+
+    const twoFailures = makeSteps();
+    Object.assign(twoFailures[1]!, { reason_code: "unknown_widget", processed: true, decision_evidence: { kind: "rejection", code: "unknown_widget", message: "second failure", failing_index: 1 } });
+    expect(() => assertCollabReplayTraceV1({ ...fixture(), steps: twoFailures })).toThrow(/batch/);
+  });
+
   it("captures an oversized batch as a preflight refusal with no processed member", () => {
     const doc = mint(workflow, catalog);
     const before = Y.encodeStateAsUpdate(doc);
