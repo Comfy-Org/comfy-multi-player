@@ -287,6 +287,12 @@ function assertHash(value: unknown, context: string): TraceHash {
   return { algorithm, encoding, value: digest };
 }
 
+function assertHashWithEncoding(value: unknown, context: string, encoding: TraceHash["encoding"]): TraceHash {
+  const hash = assertHash(value, context);
+  if (hash.encoding !== encoding) invalid(`${context}.encoding`, `must be ${encoding}`);
+  return hash;
+}
+
 function hashesMatch(left: TraceHash, right: TraceHash): boolean {
   return left.algorithm === right.algorithm && left.encoding === right.encoding && left.value === right.value;
 }
@@ -494,8 +500,8 @@ function assertSemanticStep(step: UnknownRecord, context: string): ValidatedSema
   if (payload.opId !== opId || payload.actor !== actor || payload.baseVersion !== baseVersion || payload.op !== verb || payload.stamp[0] !== stamp[0] || payload.stamp[1] !== stamp[1]) {
     invalid(context, "does not preserve semantic identity across the step and payload");
   }
-  const beforeHash = assertHash(required(step, "before_projection_hash", context), `${context}.before_projection_hash`);
-  const afterHash = assertHash(required(step, "after_projection_hash", context), `${context}.after_projection_hash`);
+  const beforeHash = assertHashWithEncoding(required(step, "before_projection_hash", context), `${context}.before_projection_hash`, "canonical-json-v1");
+  const afterHash = assertHashWithEncoding(required(step, "after_projection_hash", context), `${context}.after_projection_hash`, "canonical-json-v1");
   const emptyDiff = assertSemanticDiff(required(step, "semantic_diff", context), `${context}.semantic_diff`);
   const outcome = asOneOf(required(step, "outcome", context), OUTCOMES, `${context}.outcome`);
   const reasonCode = asString(required(step, "reason_code", context), `${context}.reason_code`);
@@ -599,7 +605,7 @@ function assertDiagnostic(value: unknown, context: string): void {
   const diagnostic = asRecord(value, context);
   asOneOf(required(diagnostic, "direction", context), ["host-to-follower"] as const, `${context}.direction`);
   asInteger(required(diagnostic, "byte_length", context), `${context}.byte_length`);
-  assertHash(required(diagnostic, "hash", context), `${context}.hash`);
+  assertHashWithEncoding(required(diagnostic, "hash", context), `${context}.hash`, "binary");
   assertOptionalString(diagnostic, "attachment_ref", context);
 }
 
@@ -609,10 +615,8 @@ function assertLifecycleBase(step: UnknownRecord, context: string, workflowId: s
   const afterLineage = asString(required(step, "after_lineage_id", context), `${context}.after_lineage_id`);
   const beforeDoc = asString(required(step, "before_doc_id", context), `${context}.before_doc_id`);
   const afterDoc = asString(required(step, "after_doc_id", context), `${context}.after_doc_id`);
-  const beforeStateVectorHash = assertHash(required(step, "before_state_vector_hash", context), `${context}.before_state_vector_hash`);
-  const afterStateVectorHash = assertHash(required(step, "after_state_vector_hash", context), `${context}.after_state_vector_hash`);
-  if (beforeStateVectorHash.encoding !== "yjs-state-vector") invalid(`${context}.before_state_vector_hash.encoding`, "must be yjs-state-vector");
-  if (afterStateVectorHash.encoding !== "yjs-state-vector") invalid(`${context}.after_state_vector_hash.encoding`, "must be yjs-state-vector");
+  const beforeStateVectorHash = assertHashWithEncoding(required(step, "before_state_vector_hash", context), `${context}.before_state_vector_hash`, "yjs-state-vector");
+  const afterStateVectorHash = assertHashWithEncoding(required(step, "after_state_vector_hash", context), `${context}.after_state_vector_hash`, "yjs-state-vector");
   if (Object.hasOwn(step, "diagnostic")) assertDiagnostic(step["diagnostic"], `${context}.diagnostic`);
   return { afterDoc, afterLineage, afterStateVectorHash, beforeDoc, beforeLineage, beforeStateVectorHash };
 }
@@ -685,11 +689,11 @@ export function assertCollabReplayTraceV1(value: unknown): asserts value is Coll
 
   const assertions = asRecord(required(trace, "assertions", "collaboration trace"), "collaboration trace.assertions");
   const converged = asBoolean(required(assertions, "converged", "collaboration trace.assertions"), "collaboration trace.assertions.converged");
-  const finalProjectionHash = assertHash(required(assertions, "final_projection_hash", "collaboration trace.assertions"), "collaboration trace.assertions.final_projection_hash");
+  const finalProjectionHash = assertHashWithEncoding(required(assertions, "final_projection_hash", "collaboration trace.assertions"), "collaboration trace.assertions.final_projection_hash", "canonical-json-v1");
   if (previousSemanticAfterProjectionHash !== undefined && !hashesMatch(previousSemanticAfterProjectionHash, finalProjectionHash)) {
     invalid("collaboration trace.assertions.final_projection_hash", "must match the terminal semantic step");
   }
-  assertHash(required(assertions, "final_applied_op_ids_hash", "collaboration trace.assertions"), "collaboration trace.assertions.final_applied_op_ids_hash");
+  assertHashWithEncoding(required(assertions, "final_applied_op_ids_hash", "collaboration trace.assertions"), "collaboration trace.assertions.final_applied_op_ids_hash", "canonical-json-v1");
   const failure = required(assertions, "failure_step_id", "collaboration trace.assertions");
   if (failure !== null && (typeof failure !== "string" || !stepIds.has(failure))) invalid("collaboration trace.assertions.failure_step_id", "must reference an existing step_id or be null");
   if (converged !== (failure === null)) invalid("collaboration trace.assertions.converged", "does not agree with failure_step_id");

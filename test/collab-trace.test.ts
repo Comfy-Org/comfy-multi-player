@@ -436,14 +436,48 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
     expect(() => assertCollabReplayTraceV1(final)).toThrow(/final_projection_hash/);
   });
 
+  it("pins projection and applied-op hashes to canonical JSON", () => {
+    const cases = [
+      ["before_projection_hash", (trace: CollabReplayTraceV1) => {
+        const step = trace.steps[0]!;
+        if (step.kind !== "semantic-op") throw new Error("fixture step must be semantic");
+        step.before_projection_hash = { ...step.before_projection_hash, encoding: "binary" };
+      }],
+      ["after_projection_hash", (trace: CollabReplayTraceV1) => {
+        const step = trace.steps[0]!;
+        if (step.kind !== "semantic-op") throw new Error("fixture step must be semantic");
+        step.after_projection_hash = { ...step.after_projection_hash, encoding: "binary" };
+      }],
+      ["final_projection_hash", (trace: CollabReplayTraceV1) => {
+        trace.assertions.final_projection_hash = { ...trace.assertions.final_projection_hash, encoding: "binary" };
+      }],
+      ["final_applied_op_ids_hash", (trace: CollabReplayTraceV1) => {
+        trace.assertions.final_applied_op_ids_hash = { ...trace.assertions.final_applied_op_ids_hash, encoding: "binary" };
+      }],
+    ] as const;
+
+    for (const [name, mutate] of cases) {
+      const malformed = structuredClone(fixture());
+      mutate(malformed);
+      expect(() => assertCollabReplayTraceV1(malformed), name).toThrow(/canonical-json-v1/);
+    }
+  });
+
   it("keeps state-vector replay and doc reset as distinct lifecycle events", () => {
     const base = fixture();
     const stateVectorHash = { algorithm: "sha256" as const, encoding: "yjs-state-vector" as const, value: "a".repeat(64) };
+    const binaryHash = { algorithm: "sha256" as const, encoding: "binary" as const, value: "b".repeat(64) };
     const trace: CollabReplayTraceV1 = { ...base, steps: [
-      { step_id: "life-1", kind: "state-vector-replay", arrival_index: 0, workflow_id: "wf-fixture", before_lineage_id: "lineage-1", after_lineage_id: "lineage-1", before_doc_id: "doc-1", after_doc_id: "doc-1", before_state_vector_hash: stateVectorHash, after_state_vector_hash: stateVectorHash, same_document: true, reason: "reconnect" },
+      { step_id: "life-1", kind: "state-vector-replay", arrival_index: 0, workflow_id: "wf-fixture", before_lineage_id: "lineage-1", after_lineage_id: "lineage-1", before_doc_id: "doc-1", after_doc_id: "doc-1", before_state_vector_hash: stateVectorHash, after_state_vector_hash: stateVectorHash, diagnostic: { direction: "host-to-follower", byte_length: 1, hash: binaryHash }, same_document: true, reason: "reconnect" },
       { step_id: "life-2", kind: "doc-reset", arrival_index: 1, workflow_id: "wf-fixture", before_lineage_id: "lineage-1", after_lineage_id: "lineage-2", before_doc_id: "doc-1", after_doc_id: "doc-2", before_state_vector_hash: stateVectorHash, after_state_vector_hash: stateVectorHash, same_document: false, reset_seq: 9, projectors_notified_before_replace: true },
     ] };
     expect(() => assertCollabReplayTraceV1(trace)).not.toThrow();
+
+    const malformedDiagnostic = structuredClone(trace);
+    const diagnosticStep = malformedDiagnostic.steps[0]!;
+    if (diagnosticStep.kind === "semantic-op" || diagnosticStep.diagnostic === undefined) throw new Error("fixture step must have a diagnostic");
+    diagnosticStep.diagnostic.hash.encoding = "canonical-json-v1";
+    expect(() => assertCollabReplayTraceV1(malformedDiagnostic)).toThrow(/binary/);
 
     for (const encoding of ["canonical-json-v1", "binary"] as const) {
       for (const field of ["before_state_vector_hash", "after_state_vector_hash"] as const) {
