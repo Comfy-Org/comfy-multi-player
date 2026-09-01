@@ -92,9 +92,11 @@ describe("clear([]) current-behavior characterization", () => {
     expect(projected.links).toEqual(before.links);
     expect(projected.groups).toEqual([]);
 
+    const afterFirstApply = Y.encodeStateAsUpdate(doc);
     const retry = applyOps(doc, [op], catalog);
     expect(retry.outcomes).toEqual([{ op_id: op.op_id, outcome: "no-op" }]);
     expect(project(doc, catalog)).toEqual(projected);
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(afterFirstApply);
 
     const deleteNode: DeleteNodeOp = {
       op: "delete_node",
