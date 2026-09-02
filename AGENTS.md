@@ -1,5 +1,14 @@
 # Agent guide
 
+## Repository status: read-only history
+
+Do not modify source, tests, dependencies, documentation, or automation in this
+repository. Active development and release ownership have moved to
+[`ComfyUI_frontend/packages/comfy-multi-player`](https://github.com/Comfy-Org/ComfyUI_frontend/tree/main/packages/comfy-multi-player)
+in [ComfyUI_frontend #16644](https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644).
+Open all future work against that canonical path. The guidance below is retained
+only to explain and review historical standalone revisions.
+
 `@comfyorg/comfy-multi-player` is the single shared, pure semantic-op-to-Yjs-document applier for ComfyUI's in-app agent and CRDT workflow state. The browser imports this package, and the server doc host runs the same package in Node. There is no second applier implementation.
 
 ## Load-bearing rules

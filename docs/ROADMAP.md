@@ -19,4 +19,4 @@ These are follow-up behavior/CI tickets. The remaining ones do not change op sem
 
 ## Repository plan
 
-Keep this as a separate repository while the V1 contract stabilizes and parallel tickets #10–#25 land. Migrate the package into the frontend monorepo later if ownership and release operations benefit. Consumers use the identical `@comfyorg/comfy-multi-player` import path either way, so repository placement must not create a second implementation or alter op semantics.
+Completed by [ComfyUI_frontend #16644](https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644): active development and release ownership moved to `ComfyUI_frontend/packages/comfy-multi-player` after the V1 contract stabilized. This repository remains a read-only record of its standalone history, tags, and releases through 0.2.1. The package keeps the identical `@comfyorg/comfy-multi-player` import path; no second writable implementation remains here.
