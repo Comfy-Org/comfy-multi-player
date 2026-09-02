@@ -52,9 +52,8 @@ function winningPresence(): Op {
   };
 }
 
-function seededDoc(): Y.Doc {
-  const doc = mint(workflow, catalog);
-  const connect: Op = {
+function connectOp(): Op {
+  return {
     op: "connect",
     ...envelope("connect", "human:seed", 1),
     link_id: 1,
@@ -64,6 +63,19 @@ function seededDoc(): Y.Doc {
     to_slot: 0,
     link_type: "IMAGE",
   };
+}
+
+/** Document holding live link L1 but no `add_node` presence stamp yet. */
+function linkedDoc(): Y.Doc {
+  const doc = mint(workflow, catalog);
+  expect(applyOps(doc, [connectOp()], catalog).outcomes.map(({ outcome }) => outcome)).toEqual(["applied"]);
+  expect(project(doc, catalog).links).toHaveLength(1);
+  return doc;
+}
+
+function seededDoc(): Y.Doc {
+  const doc = mint(workflow, catalog);
+  const connect = connectOp();
 
   expect(applyOps(doc, [connect, winningPresence()], catalog).outcomes.map(({ outcome }) => outcome)).toEqual([
     "applied",
@@ -171,5 +183,49 @@ describe("delete_node LWW loser removed_links cleanup", () => {
     const bytesAfter = Y.encodeStateAsUpdate(doc);
     expect(applyOps(doc, [op], catalog).outcomes).toEqual([{ op_id: op.op_id, outcome: "no-op" }]);
     expect(Y.encodeStateAsUpdate(doc)).toEqual(bytesAfter);
+  });
+
+  it("does NOT converge across arrival order once a link is installed (known divergence)", () => {
+    // KNOWN DIVERGENCE — characterization of current behavior, not an endorsement.
+    //
+    // The link-free sibling case above asserts the two arrival orders converge.
+    // That assertion only holds because its document has no links: the branch at
+    // `src/applier.ts:1736-1737` scrubs EVERY link incident to the node, but only
+    // when the delete WINS the presence gate. When the delete loses it scrubs just
+    // the links it named. So the set of links removed depends on arrival order:
+    //
+    //   [add_node@9, delete@5] -> delete loses  -> only removed_links scrubbed -> L1 survives
+    //   [delete@5, add_node@9] -> delete wins   -> incident scrub takes L1      -> L1 gone
+    //
+    // Both orders end with node 10 present, so the divergence is confined to the
+    // link register, and it is permanent: link deletion carries no stamp and the
+    // winning re-add does not restore L1. This contradicts vocabulary §6 A7
+    // ("removed_links is the authoritative target set") and the determinism
+    // invariant. Deciding the fix (drop the incident scrub, stamp link deletions,
+    // or restore on re-add) is an applier-semantics call, not a test change.
+    //
+    // If a fix lands, this test SHOULD fail — replace it with a convergence
+    // assertion at that point.
+    const op = losingDelete([999]);
+
+    const forward = linkedDoc();
+    expect(applyOps(forward, [winningPresence(), op], catalog).outcomes.map(({ outcome }) => outcome)).toEqual([
+      "applied",
+      "lww-dropped",
+    ]);
+
+    const reverse = linkedDoc();
+    expect(applyOps(reverse, [op, winningPresence()], catalog).outcomes.map(({ outcome }) => outcome)).toEqual([
+      "applied",
+      "applied",
+    ]);
+
+    // Same op set, same nodes, different links.
+    expect(project(forward, catalog).nodes.map(({ id: nodeId }) => nodeId)).toEqual(
+      project(reverse, catalog).nodes.map(({ id: nodeId }) => nodeId),
+    );
+    expect(project(forward, catalog).links).toHaveLength(1);
+    expect(project(reverse, catalog).links).toEqual([]);
+    expect(project(forward, catalog)).not.toEqual(project(reverse, catalog));
   });
 });
