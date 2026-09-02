@@ -29,8 +29,8 @@ import {
   type WidgetCatalog,
   type WorkflowJSON,
   type WorkflowNode,
-} from "../src/index.js";
-import { canonicalize } from "./helpers.js";
+} from "../../src/index.js";
+import { canonicalize } from "../helpers.js";
 
 const KINDS = [...FROZEN_OPS, ...DEFERRED_OPS];
 const ACTORS = ["agent:perm4:0", "agent:perm4:1", "human:perm4:0", "human:perm4:1"] as const;
