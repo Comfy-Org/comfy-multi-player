@@ -23,8 +23,8 @@ import {
   type Op,
   type WorkflowJSON,
   type WorkflowNode,
-} from "../src/index.js";
-import { canonicalize, loadCatalog } from "./helpers.js";
+} from "../../src/index.js";
+import { canonicalize, loadCatalog } from "../helpers.js";
 
 const catalog = loadCatalog();
 const ACTORS = ["agent:pbt:0", "agent:pbt:1", "human:pbt:0", "human:pbt:1"] as const;

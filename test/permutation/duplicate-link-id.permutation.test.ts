@@ -7,8 +7,8 @@
 import * as Y from "yjs";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { applyOps, mint, project, type ConnectOp, type Op, type WorkflowJSON, type WorkflowNode } from "../src/index.js";
-import { canonicalize, loadCatalog } from "./helpers.js";
+import { applyOps, mint, project, type ConnectOp, type Op, type WorkflowJSON, type WorkflowNode } from "../../src/index.js";
+import { canonicalize, loadCatalog } from "../helpers.js";
 
 const catalog = loadCatalog();
 const LINK_ID_PAIRS = [
@@ -30,7 +30,7 @@ const ENDPOINT_PAIRS = [
   [[103, 200, 0], [101, 201, 1]],
 ] as const;
 const EXPECTED_EXECUTIONS = 12_288;
-const fixture = JSON.parse(readFileSync(new URL("../fixtures/golden-vectors/link-identity.json", import.meta.url), "utf8")) as {
+const fixture = JSON.parse(readFileSync(new URL("../../fixtures/golden-vectors/link-identity.json", import.meta.url), "utf8")) as {
   cases: Array<{ name: string; a: FixtureOp; b: FixtureOp; winner: "a" | "b" }>;
 };
 type FixtureOp = { link_id: number | string; base_version: number; actor: string; envelope_base_version?: number; envelope_actor?: string; op_id: string; endpoint: [number, number, number] };
