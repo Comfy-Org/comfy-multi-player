@@ -10,19 +10,11 @@ const catalog: WidgetCatalog = {
 };
 
 const base = (): WorkflowJSON => ({
-  nodes: [
-    {
-      id: 1,
-      type: "LoadImage",
-      inputs: [],
-      outputs: [{ name: "IMAGE", type: "IMAGE", links: [] }],
-      widgets_values: [],
-    },
-  ],
+  nodes: [],
   links: [],
   groups: [],
   extra: {},
-  last_node_id: 1,
+  last_node_id: 0,
   last_link_id: 0,
 });
 
@@ -54,6 +46,7 @@ describe("R-93 add_node identity boundary", () => {
     const doc = mint(base(), catalog);
     const before = bytes(doc);
 
+    // applyOps converts OpRejectedError into the public rejected outcome.
     const result = applyOps(doc, [addNode(9, 77, "contradictory")], catalog);
 
     expect(result.outcomes[0]).toMatchObject({
@@ -71,7 +64,7 @@ describe("R-93 add_node identity boundary", () => {
       base_version: 2,
       stamp: [2, "human:a"],
       link_id: 90,
-      from_node: 1,
+      from_node: 9,
       from_slot: 0,
       to_node: 9,
       to_slot: 0,
@@ -81,17 +74,17 @@ describe("R-93 add_node identity boundary", () => {
   });
 
   it.each([
-    { label: "matching numeric", nodeId: 10, payloadId: 10 },
+    { label: "matching numeric", nodeId: 10, payloadId: 10, projectedId: 10 },
     { label: "numeric/string normalized", nodeId: 11, payloadId: "11" },
     { label: "absent payload id", nodeId: 12, payloadId: undefined },
-  ])("accepts $label identity", ({ nodeId, payloadId }) => {
+  ])("accepts $label identity", ({ nodeId, payloadId, projectedId }) => {
     const doc = mint(base(), catalog);
 
     const result = applyOps(doc, [addNode(nodeId, payloadId, `accepted-${nodeId}`)], catalog);
 
     expect(result.outcomes[0]).toMatchObject({ outcome: "applied" });
-    if (payloadId !== undefined) {
-      expect(project(doc, catalog).nodes.find((node) => String(node.id) === String(nodeId))).toBeDefined();
+    if (projectedId !== undefined) {
+      expect(project(doc, catalog).nodes[0]?.id).toBe(projectedId);
     }
   });
 });
