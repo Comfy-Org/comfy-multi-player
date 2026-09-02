@@ -409,6 +409,20 @@ function validateEnvelope(op: WireOp): void {
   if (typeof op.op_id !== "string" || op.op_id.length === 0) {
     throw new OpRejectedError("malformed_op", `${op.op}: missing op_id`);
   }
+  if (
+    op.stamp !== undefined &&
+    (!Array.isArray(op.stamp) ||
+      op.stamp.length !== 2 ||
+      typeof op.stamp[0] !== "number" ||
+      !Number.isFinite(op.stamp[0]) ||
+      typeof op.stamp[1] !== "string" ||
+      op.stamp[1].length === 0)
+  ) {
+    throw new OpRejectedError(
+      "malformed_op",
+      `${op.op}: stamp must be [finite_number, non_empty_string]`,
+    );
+  }
 }
 
 type SuccessfulOutcome = "applied" | "no-op" | "lww-dropped";
