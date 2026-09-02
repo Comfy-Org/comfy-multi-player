@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import {
+  appliedOpIds,
   applyOps,
   mint,
   project,
@@ -37,17 +38,17 @@ const workflow: WorkflowJSON = {
 
 const id = (character: string): string => character.repeat(32);
 
-function setSeed(opId: string, value: number, stamp: unknown): Op {
+function setSeed(opId: string, value: number, stamp: unknown): SetWidgetOp {
   return {
     op: "set_widget",
     op_id: opId,
     actor: "human:envelope",
     base_version: 1,
-    stamp,
+    stamp: stamp as SetWidgetOp["stamp"],
     node_id: 1,
     widget: "seed",
     value,
-  } as unknown as Op;
+  };
 }
 
 function fork(snapshot: Uint8Array): Y.Doc {
@@ -69,6 +70,7 @@ function expectMalformedWithoutMutation(doc: Y.Doc, op: Op): void {
   const rejection = rejectedOutcome(applyOps(doc, [op], catalog));
   expect(rejection?.reason.code).toBe("malformed_op");
   expect(bytes(doc)).toEqual(before);
+  expect(appliedOpIds(doc)).not.toContain(op.op_id);
 }
 
 describe("R-92 malformed stamp validation", () => {
@@ -87,8 +89,8 @@ describe("R-92 malformed stamp validation", () => {
 
   it("converges on the higher valid stamp in both arrival orders", () => {
     const snapshot = bytes(mint(workflow, catalog));
-    const lower = setSeed(id("a"), 5, [5, "human:a"]) as SetWidgetOp;
-    const higher = setSeed(id("b"), 10, [10, "human:b"]) as SetWidgetOp;
+    const lower = setSeed(id("a"), 5, [5, "human:a"]);
+    const higher = setSeed(id("b"), 10, [10, "human:b"]);
     const forward = fork(snapshot);
     const reverse = fork(snapshot);
 
@@ -100,6 +102,12 @@ describe("R-92 malformed stamp validation", () => {
     ).toBeUndefined();
     expect(seedValue(forward)).toBe(10);
     expect(project(reverse, catalog)).toEqual(project(forward, catalog));
+
+    // KA-4: re-applying an already-accepted op is a byte-identical no-op.
+    const beforeReapply = bytes(forward);
+    const reapplied = applyOps(forward, [higher], catalog);
+    expect(reapplied.outcomes).toEqual([{ op_id: higher.op_id, outcome: "no-op" }]);
+    expect(bytes(forward)).toEqual(beforeReapply);
   });
 
   it.each(["malformed-first", "malformed-last"])(
