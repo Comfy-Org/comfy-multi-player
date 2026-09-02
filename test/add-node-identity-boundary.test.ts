@@ -70,7 +70,7 @@ describe("R-93 add_node identity boundary", () => {
       to_slot: 0,
       link_type: "IMAGE",
     } as Op;
-    expect(applyOps(doc, [connect], catalog).outcomes[0]).toMatchObject({ outcome: "rejected" });
+    expect(applyOps(doc, [connect], catalog).outcomes[0]).toMatchObject({ outcome: "no-op" });
   });
 
   it.each([

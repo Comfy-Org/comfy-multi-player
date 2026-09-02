@@ -194,14 +194,8 @@ describe("#17 group 1: invalid states the runtime already rejects", () => {
 // the call sites uniform, not about a type this repo can no longer construct.
 // ---------------------------------------------------------------------------
 
-describe("#17 group 2: invalid states the wire still accepts (behaviour pinned, not endorsed)", () => {
-  it("add_node whose node.id differs from node_id stores under node_id and PROJECTS the other id", () => {
-    // The severe one. The doc keys the node by `op.node_id` while the payload
-    // is inserted verbatim, so `project()` emits a node whose `id` is not the
-    // key anything addresses it by — schema §1.1 says the key IS
-    // `String(node.id)`. Every later op still resolves (they use the key), so
-    // the divergence only shows up in the projection, where the link tuple
-    // below points at a node id that no projected node carries.
+describe("#17 group 2: invalid wire states", () => {
+  it("rejects add_node whose payload id differs from node_id", () => {
     const doc = baseDoc();
     const result = applyOps(
       doc,
@@ -219,7 +213,6 @@ describe("#17 group 2: invalid states the wire still accepts (behaviour pinned, 
             outputs: [],
           },
         }),
-        // Addressed at 9 — the key — and it lands.
         wireOp({
           op: "connect",
           ...env(),
@@ -233,17 +226,13 @@ describe("#17 group 2: invalid states the wire still accepts (behaviour pinned, 
       ],
       catalog,
     );
-    expect(result.outcomes.some((o) => o.outcome === "rejected")).toBe(false);
-    expect(result.outcomes.filter((o) => o.outcome === "applied").map((o) => o.op_id)).toHaveLength(2);
+    expect(result.outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "malformed_op" } });
 
     const wf = project(doc, catalog);
     const ids = wf.nodes.map((n) => n.id);
-    expect(ids).toContain(77);
+    expect(ids).not.toContain(77);
     expect(ids).not.toContain(9);
-    // A link whose destination node id exists in NO projected node: the
-    // workflow JSON this produces is internally inconsistent.
-    expect(wf.links).toEqual([[500, 2, 0, 9, 0, "MODEL"]]);
-    expect(ids).not.toContain((wf.links[0] as unknown[])[3]);
+    expect(wf.links).toEqual([]);
   });
 
   it("add_node whose node payload has no id at all projects a node with no id", () => {
