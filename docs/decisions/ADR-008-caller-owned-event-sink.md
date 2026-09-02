@@ -90,8 +90,8 @@ members without breaking ingestion. A breaking field or meaning change increment
 - `op_rejected`: `applyOps` catches `OpRejectedError`; includes malformed/unknown/deferred/frozen
   ops, op-id reuse, catalog/widget/slot/input failures, and validation refusals in `applier.ts`.
 - `applier_error`: the same catch converts a non-`OpRejectedError` into existing `apply_failed`.
-- `op_conflict`: existing successful `lww-dropped` outcomes in `applier.ts`; not wired in this
-  scaffold because they are expected semantic outcomes, not errors.
+- `op_conflict`: successful `lww-dropped` outcomes in `applier.ts`; emitted as a counter-friendly
+  event without changing the successful semantic result.
 - `limit_violation`: the pre-loop `MAX_OPS_PER_BATCH` branch plus `opBoundsRefusal` depth,
   collection, and cost limits from `limits.ts`. The scaffold wires the batch limit; payload-limit
   classification remains a follow-up because it currently surfaces as `OpRejectedError`.
@@ -101,9 +101,9 @@ members without breaking ingestion. A breaking field or meaning change increment
 - `schema_mismatch`: `SchemaVersionError` paths in `schema-version.ts` and `migrate.ts`, including
   absent/unreadable, older, newer, and caller/document-version disagreement.
 
-The initial implementation emits only `op_rejected`, `applier_error`, and the batch
-`limit_violation`. Remaining wiring is deliberately follow-up work, with failure-isolation tests
-required at each entry point.
+The implementation emits `op_rejected`, `applier_error`, `op_conflict`, and the batch
+`limit_violation`. Remaining wiring is follow-up work, with failure-isolation tests required at
+each entry point.
 
 ## Host flow
 

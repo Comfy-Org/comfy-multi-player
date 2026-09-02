@@ -12,8 +12,11 @@ import {
   type Op,
   type WidgetCatalog,
 } from "../src/index.js";
+import { loadCatalog, loadLwwVectors } from "./helpers.js";
 
 const catalog: WidgetCatalog = { types: {} };
+const lwwCatalog = loadCatalog();
+const lww = loadLwwVectors();
 
 const malformed = {
   op: "not_a_real_op",
@@ -26,6 +29,25 @@ const malformed = {
 const validClear = {
   op: "clear", op_id: "00000000000000000000000000000002",
   actor: "agent:event-test", base_version: 2, stamp: [2, "agent:event-test"], removed_nodes: [],
+} as unknown as Op;
+
+const newerWrite = {
+  op: "set_widget",
+  op_id: "00000000000000000000000000000004",
+  actor: "agent:event-test",
+  base_version: 4,
+  stamp: [4, "agent:event-test"],
+  node_id: 3308598398221244,
+  widget: "steps",
+  value: 30,
+} as unknown as Op;
+
+const olderWrite = {
+  ...newerWrite,
+  op_id: "00000000000000000000000000000005",
+  base_version: 3,
+  stamp: [3, "agent:event-test"],
+  value: 20,
 } as unknown as Op;
 
 const applierFailure = {
@@ -104,6 +126,25 @@ describe("caller-owned cmp event sink", () => {
       batch_index: 0,
     }));
     expect(JSON.parse(JSON.stringify(sink.mock.calls[0]![0]))).toEqual(sink.mock.calls[0]![0]);
+  });
+
+  it("emits a conflict counter when LWW drops an operation", () => {
+    const sink = vi.fn((_event: CmpEvent): undefined => undefined);
+    const doc = mint(lww.base_workflow, lwwCatalog);
+
+    const result = applyOps(doc, [newerWrite, olderWrite], lwwCatalog, { eventSink: sink });
+
+    expect(result.outcomes[1]).toEqual({ op_id: olderWrite.op_id, outcome: "lww-dropped" });
+    expect(sink).toHaveBeenCalledOnce();
+    expect(sink).toHaveBeenCalledWith({
+      schema_version: CMP_EVENT_SCHEMA_VERSION,
+      type: "op_conflict",
+      source: "applyOps",
+      code: "lww_dropped",
+      message: "operation lost last-writer-wins conflict",
+      op_id: olderWrite.op_id,
+      batch_index: 1,
+    });
   });
 
   it("lets a host register hooks on its own adapter and pass one sink per call", () => {
