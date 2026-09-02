@@ -145,4 +145,31 @@ describe("delete_node LWW loser removed_links cleanup", () => {
     ]);
     expect(Y.encodeStateAsUpdate(reverse)).toEqual(reverseBytes);
   });
+
+  it("leaves an installed link intact when the losing delete names a different link", () => {
+    // The sibling case above starts from a link-free document, so its empty
+    // `links` projection cannot distinguish "nothing was scrubbed" from
+    // "nothing was there". This case seeds the live link L1, names only the
+    // nonexistent link 999, and pins that a losing delete scrubs exactly the
+    // links it named and nothing else.
+    const doc = seededDoc();
+    const linksBefore = project(doc, catalog).links;
+    const stampBefore = stampsMap(doc).toJSON();
+    const op = losingDelete([999]);
+
+    const result = applyOps(doc, [op], catalog);
+
+    expect(result.outcomes[0]).toEqual({ op_id: op.op_id, outcome: "lww-dropped" });
+    expect(project(doc, catalog).nodes.some(({ id }) => id === 10)).toBe(true);
+    expect(stampsMap(doc).toJSON()).toEqual(stampBefore);
+    expect(project(doc, catalog).links).toEqual(linksBefore);
+    expect(project(doc, catalog).links).toHaveLength(1);
+    expect(appliedMap(doc).has(op.op_id)).toBe(true);
+
+    // KA-4 bookkeeping: the dropped op_id is recorded on first delivery, so a
+    // re-delivery is the byte-identical no-op rather than a second drop.
+    const bytesAfter = Y.encodeStateAsUpdate(doc);
+    expect(applyOps(doc, [op], catalog).outcomes).toEqual([{ op_id: op.op_id, outcome: "no-op" }]);
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(bytesAfter);
+  });
 });
