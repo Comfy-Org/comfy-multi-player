@@ -507,6 +507,12 @@ function applyAddNode(doc: Y.Doc, op: AddNodeOp, catalog?: WidgetCatalog): Succe
   if (op.node_id === undefined || typeof op.node !== "object" || op.node === null) {
     throw new OpRejectedError("malformed_op", "add_node: missing node_id or node payload");
   }
+  if (op.node.id !== undefined && String(op.node_id) !== String(op.node.id)) {
+    throw new OpRejectedError(
+      "malformed_op",
+      `add_node: wire node_id '${String(op.node_id)}' does not match payload node.id '${String(op.node.id)}'`,
+    );
+  }
   const nodes = nodesMap(doc);
   const key = String(op.node_id);
   const stamps = stampsMap(doc);

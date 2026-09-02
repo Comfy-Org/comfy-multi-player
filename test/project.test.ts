@@ -26,7 +26,7 @@
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { createNodeMap, initDoc } from "../src/doc.js";
+import { appliedMap, createNodeMap, initDoc } from "../src/doc.js";
 import { applyOps, mint, nodesMap, project, type Op, type WorkflowJSON } from "../src/index.js";
 import { loadCatalog } from "./helpers.js";
 
@@ -93,19 +93,22 @@ describe("project invalid node input", () => {
     }
   });
 
-  it("keeps a node whose payload id disagrees with its op node_id (applyOps accepted it)", () => {
+  it("does not project a node whose payload id disagrees with its op node_id", () => {
     const doc = mint({ nodes: [{ id: 1, type: "KSampler", widgets_values: [] }], links: [] }, catalog);
+    const before = bytes(doc);
+    const rejected = op({ op: "add_node", node_id: 5, node: { id: 99, type: "KSampler", widgets_values: [] } });
+    const trailing = op({ op: "add_node", node_id: 6, node: { id: 6, type: "KSampler", widgets_values: [] } });
     const result = applyOps(
       doc,
-      [op({ op: "add_node", node_id: 5, node: { id: 99, type: "KSampler", widgets_values: [] } })],
+      [rejected, trailing],
       catalog,
     );
-    expect(result.outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
-    expect(result.outcomes.filter((outcome) => outcome.outcome === "applied")).toHaveLength(1);
-    // Reported applied => visible on read. Anything else is data loss with a
-    // success return, and it also burns node id 5 (add_node's structural
-    // idempotency makes the honest retry a silent no-op).
-    expect(project(doc, catalog).nodes.map((n) => n.id)).toEqual([1, 99]);
+    expect(result.outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "malformed_op" } });
+    expect(result.outcomes[1]).toMatchObject({ outcome: "rejected", reason: { code: "batch_aborted" } });
+    expect(bytes(doc)).toEqual(before);
+    expect(appliedMap(doc).has(rejected.op_id)).toBe(false);
+    expect(appliedMap(doc).has(trailing.op_id)).toBe(false);
+    expect(project(doc, catalog).nodes.map((n) => n.id)).toEqual([1]);
   });
 
   it("never drops a node that applyOps reported as applied (schema §7 totality)", () => {
