@@ -128,13 +128,21 @@ describe("caller-owned cmp event sink", () => {
     expect(JSON.parse(JSON.stringify(sink.mock.calls[0]![0]))).toEqual(sink.mock.calls[0]![0]);
   });
 
-  it("emits a conflict counter when LWW drops an operation", () => {
+  it("emits one conflict counter for an LWW drop across arrival orders and retries", () => {
     const sink = vi.fn((_event: CmpEvent): undefined => undefined);
-    const doc = mint(lww.base_workflow, lwwCatalog);
+    const reverseSink = vi.fn((_event: CmpEvent): undefined => undefined);
+    const seededDoc = mint(lww.base_workflow, lwwCatalog);
+    const doc = new Y.Doc();
+    const reverseDoc = new Y.Doc();
+    const seed = Y.encodeStateAsUpdate(seededDoc);
+    Y.applyUpdate(doc, seed);
+    Y.applyUpdate(reverseDoc, seed);
 
     const result = applyOps(doc, [newerWrite, olderWrite], lwwCatalog, { eventSink: sink });
+    applyOps(reverseDoc, [olderWrite, newerWrite], lwwCatalog, { eventSink: reverseSink });
 
     expect(result.outcomes[1]).toEqual({ op_id: olderWrite.op_id, outcome: "lww-dropped" });
+    expect(readGraph(reverseDoc)).toEqual(readGraph(doc));
     expect(sink).toHaveBeenCalledOnce();
     expect(sink).toHaveBeenCalledWith({
       schema_version: CMP_EVENT_SCHEMA_VERSION,
@@ -145,6 +153,15 @@ describe("caller-owned cmp event sink", () => {
       op_id: olderWrite.op_id,
       batch_index: 1,
     });
+    expect(reverseSink).not.toHaveBeenCalled();
+
+    const retry = applyOps(doc, [newerWrite, olderWrite], lwwCatalog, { eventSink: sink });
+    const reverseRetry = applyOps(reverseDoc, [olderWrite, newerWrite], lwwCatalog, { eventSink: reverseSink });
+
+    expect(retry.outcomes.every((outcome) => outcome.outcome === "no-op")).toBe(true);
+    expect(reverseRetry.outcomes.every((outcome) => outcome.outcome === "no-op")).toBe(true);
+    expect(sink).toHaveBeenCalledOnce();
+    expect(reverseSink).not.toHaveBeenCalled();
   });
 
   it("lets a host register hooks on its own adapter and pass one sink per call", () => {
