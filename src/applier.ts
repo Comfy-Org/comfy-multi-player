@@ -198,6 +198,17 @@ export function applyOps(doc: Y.Doc, ops: Op[], catalog?: WidgetCatalog, context
         mset(bookkeeping, op.op_id, digest);
       }, op.actor);
       outcomes.push({ op_id: op.op_id, outcome });
+      if (outcomes.at(-1)?.outcome === "lww-dropped" && context?.eventSink !== undefined) {
+        emitCmpEvent(context.eventSink, {
+          schema_version: CMP_EVENT_SCHEMA_VERSION,
+          type: "op_conflict",
+          source: "applyOps",
+          code: "lww_dropped",
+          message: "operation lost last-writer-wins conflict",
+          op_id: op.op_id,
+          batch_index: index,
+        });
+      }
     } catch (err) {
       const op_id = opIdentity(op);
       const code = err instanceof OpRejectedError ? err.code : "apply_failed";
