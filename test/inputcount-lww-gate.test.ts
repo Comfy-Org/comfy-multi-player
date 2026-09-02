@@ -76,6 +76,12 @@ function expectApplied(op: ConnectOp | SetWidgetOp, doc: ReturnType<typeof mint>
   expect(applyOps(doc, [op], catalog).outcomes).toEqual([{ op_id: op.op_id, outcome: "applied" }]);
 }
 
+function expectIdempotentReplay(op: ConnectOp, doc: ReturnType<typeof mint>): void {
+  const before = project(doc, catalog);
+  expect(applyOps(doc, [op], catalog).outcomes).toEqual([{ op_id: op.op_id, outcome: "no-op" }]);
+  expect(project(doc, catalog)).toEqual(before);
+}
+
 function projectedNode(doc: ReturnType<typeof mint>) {
   return project(doc, catalog).nodes[0]!;
 }
@@ -93,6 +99,7 @@ describe("current inputcount bump LWW gate behavior", () => {
       expect.objectContaining({ name: "image_1", link: 101, grow_id: 101 }),
     ]);
     expect(stampsMap(doc).get(stampTarget)).toEqual([5, "agent:a", connect.op_id]);
+    expectIdempotentReplay(connect, doc);
   });
 
   it("grows the slot but preserves a higher prior count-widget stamp", () => {
@@ -109,6 +116,13 @@ describe("current inputcount bump LWW gate behavior", () => {
     ]);
     expect(node.widgets_values).toEqual([7]);
     expect(stampsMap(doc).get(stampTarget)).toEqual([10, "agent:a", prior.op_id]);
+
+    const reverse = mint(base, catalog);
+    expectApplied(connect, reverse);
+    expectApplied(prior, reverse);
+    expect(project(reverse, catalog)).toEqual(project(doc, catalog));
+    expectIdempotentReplay(connect, doc);
+    expectIdempotentReplay(connect, reverse);
   });
 
   it("updates the count widget and stamp when the grow has the higher stamp", () => {
@@ -125,5 +139,14 @@ describe("current inputcount bump LWW gate behavior", () => {
     ]);
     expect(node.widgets_values).toEqual([4]);
     expect(stampsMap(doc).get(stampTarget)).toEqual([8, "agent:a", connect.op_id]);
+
+    const reverse = mint(base, catalog);
+    expectApplied(connect, reverse);
+    expect(applyOps(reverse, [prior], catalog).outcomes).toEqual([
+      { op_id: prior.op_id, outcome: "lww-dropped" },
+    ]);
+    expect(project(reverse, catalog)).toEqual(project(doc, catalog));
+    expectIdempotentReplay(connect, doc);
+    expectIdempotentReplay(connect, reverse);
   });
 });
