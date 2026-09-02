@@ -28,6 +28,8 @@
  *    accepts but does not preserve across encode → decode;
  *  - stamp machinery (`compareStampKeys`, `stampKey`, `writeTarget`) for
  *    hosts that need conflict identity or watermark bookkeeping;
+ *  - evidence-only collaboration trace declarations and
+ *    `assertCollabReplayTraceV1` for fail-closed trace reads;
  *  - the ADR-004 follower read surface (`nodesMap`, `linksMap`,
  *    `OPAQUE_WIDGETS_KEY`) for consuming the wire layout without applying ops;
  *  - the safer snapshot surface (`readGraph`, `readMeta`, `docCatalogPin`,
@@ -55,6 +57,7 @@ export {
   type CmpEventSink,
   type CmpEventType,
 } from "./events.js";
+export * from "./collab-trace.js";
 /**
  * ADR-004 follower read-surface. These helpers expose the established wire
  * layout only so the frontend follower can consume host updates. They are
