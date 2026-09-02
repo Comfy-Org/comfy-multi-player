@@ -24,6 +24,7 @@
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
+import { appliedMap } from "../src/doc.js";
 import {
   applyOps,
   mint,
@@ -197,6 +198,7 @@ describe("#17 group 1: invalid states the runtime already rejects", () => {
 describe("#17 group 2: invalid wire states", () => {
   it("rejects add_node whose payload id differs from node_id", () => {
     const doc = baseDoc();
+    const before = Buffer.from(Y.encodeStateAsUpdate(doc));
     const result = applyOps(
       doc,
       [
@@ -214,24 +216,27 @@ describe("#17 group 2: invalid wire states", () => {
           },
         }),
         wireOp({
-          op: "connect",
+          op: "add_node",
           ...env(),
-          link_id: 500,
-          from_node: 2,
-          from_slot: 0,
-          to_node: 9,
-          to_slot: 0,
-          link_type: "MODEL",
+          node_id: 10,
+          class_type: "KSampler",
+          pos: [0, 0],
+          node: { id: 10, type: "KSampler", inputs: [], outputs: [] },
         }),
       ],
       catalog,
     );
     expect(result.outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "malformed_op" } });
+    expect(result.outcomes[1]).toMatchObject({ outcome: "rejected", reason: { code: "batch_aborted" } });
+    expect(Buffer.from(Y.encodeStateAsUpdate(doc))).toEqual(before);
+    expect(appliedMap(doc).has(result.outcomes[0]!.op_id)).toBe(false);
+    expect(appliedMap(doc).has(result.outcomes[1]!.op_id)).toBe(false);
 
     const wf = project(doc, catalog);
     const ids = wf.nodes.map((n) => n.id);
     expect(ids).not.toContain(77);
     expect(ids).not.toContain(9);
+    expect(ids).not.toContain(10);
     expect(wf.links).toEqual([]);
   });
 

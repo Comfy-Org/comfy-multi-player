@@ -1,6 +1,7 @@
 /** R-93: the wire `node_id` is authoritative at the add-node identity boundary. */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
+import { appliedMap } from "../src/doc.js";
 import { applyOps, mint, project, type Op, type WidgetCatalog, type WorkflowJSON } from "../src/index.js";
 
 const catalog: WidgetCatalog = {
@@ -22,6 +23,13 @@ const bytes = (doc: Y.Doc) => Buffer.from(Y.encodeStateAsUpdate(doc));
 const id = (tag: string) => (tag + "0".repeat(32)).slice(0, 32);
 
 function addNode(nodeId: number, payloadId: number | string | undefined, tag: string): Op {
+  const node = {
+    ...(payloadId === undefined ? {} : { id: payloadId }),
+    type: "LoadImage",
+    inputs: [],
+    outputs: [{ name: "IMAGE", type: "IMAGE", links: [] }],
+    widgets_values: [],
+  };
   return {
     op: "add_node",
     op_id: id(tag),
@@ -31,14 +39,8 @@ function addNode(nodeId: number, payloadId: number | string | undefined, tag: st
     node_id: nodeId,
     class_type: "LoadImage",
     pos: [],
-    node: {
-      ...(payloadId === undefined ? {} : { id: payloadId }),
-      type: "LoadImage",
-      inputs: [],
-      outputs: [{ name: "IMAGE", type: "IMAGE", links: [] }],
-      widgets_values: [],
-    },
-  } as Op;
+    node: node as typeof node & { id: number | string },
+  } satisfies Op;
 }
 
 describe("R-93 add_node identity boundary", () => {
@@ -47,13 +49,18 @@ describe("R-93 add_node identity boundary", () => {
     const before = bytes(doc);
 
     // applyOps converts OpRejectedError into the public rejected outcome.
-    const result = applyOps(doc, [addNode(9, 77, "contradictory")], catalog);
+    const rejected = addNode(9, 77, "contradictory");
+    const trailing = addNode(10, 10, "trailing");
+    const result = applyOps(doc, [rejected, trailing], catalog);
 
     expect(result.outcomes[0]).toMatchObject({
       outcome: "rejected",
       reason: { code: "malformed_op" },
     });
+    expect(result.outcomes[1]).toMatchObject({ outcome: "rejected", reason: { code: "batch_aborted" } });
     expect(bytes(doc)).toEqual(before);
+    expect(appliedMap(doc).has(rejected.op_id)).toBe(false);
+    expect(appliedMap(doc).has(trailing.op_id)).toBe(false);
     expect(doc.getMap("nodes").has("9")).toBe(false);
     expect(project(doc, catalog).nodes.some((node) => node.id === 77)).toBe(false);
 
@@ -83,8 +90,9 @@ describe("R-93 add_node identity boundary", () => {
     const result = applyOps(doc, [addNode(nodeId, payloadId, `accepted-${nodeId}`)], catalog);
 
     expect(result.outcomes[0]).toMatchObject({ outcome: "applied" });
-    if (projectedId !== undefined) {
-      expect(project(doc, catalog).nodes[0]?.id).toBe(projectedId);
-    }
+    const projected = project(doc, catalog).nodes[0];
+    if (projectedId !== undefined) expect(projected?.id).toBe(projectedId);
+    if (payloadId === "11") expect(projected?.id).toBe("11");
+    if (payloadId === undefined) expect(projected).not.toHaveProperty("id");
   });
 });
