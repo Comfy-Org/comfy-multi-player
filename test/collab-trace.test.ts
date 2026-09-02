@@ -3,6 +3,7 @@ import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
 import {
   COLLAB_TRACE_SCHEMA,
+  FROZEN_OPS,
   MAX_OPS_PER_BATCH,
   applyOps,
   appliedOpIds,
@@ -240,6 +241,36 @@ const requiredTraceFields = ([
   ["assertions", "failure_step_id"],
 ] satisfies readonly (readonly (string | number)[])[]).map((path) => ({ name: path.join("."), path }));
 
+/**
+ * A `disconnect` op captured from the real applier, over a pre-wired document.
+ *
+ * `disconnect` joined `FROZEN_OPS` in #139, after this contract's payload
+ * validator was written against the five kinds that preceded it. It is the
+ * regression fixture for the terminal-`else` hole: a kind the validator does
+ * not enumerate must not be validated as some other kind's payload shape.
+ */
+const wired: WorkflowJSON = {
+  nodes: [
+    { id: 100, type: "CLIPTextEncode", pos: [20, 20], inputs: [{ name: "clip", type: "CLIP", link: null }], outputs: [{ name: "CONDITIONING", type: "CONDITIONING", links: [9000] }], widgets_values: ["seed"] },
+    { id: 200, type: "KSampler", pos: [320, 20], inputs: [{ name: "positive", type: "CONDITIONING", link: 9000 }], outputs: [{ name: "LATENT", type: "LATENT", links: [] }], widgets_values: [0, "fixed", 20, 8, "euler", "simple", 1] },
+  ],
+  links: [[9000, 100, 0, 200, 0, "CONDITIONING"]],
+  groups: [], extra: {}, last_node_id: 200, last_link_id: 9000, version: 0.4,
+};
+
+const sever: Op = { op: "disconnect", op_id: opId("sever"), actor: "human:sever", base_version: 7, stamp: [7, "human:sever"], link_id: 9000, to_node: 200, to_slot: 0 };
+
+function disconnectFixture(): CollabReplayTraceV1 {
+  const doc = mint(wired, catalog);
+  const steps = [capture(doc, sever, 0, { status: "known", parents: [] })];
+  return {
+    schema: COLLAB_TRACE_SCHEMA,
+    run: { trace_id: hash(steps).value, test: "disconnect-evidence-fixture", seed: 1592594695, source: { cmp_sha: "c543d947e3cb6ddf7570709e88a9eae2de031553", harness_sha: "fixture", fixture_sha: hash(wired).value, catalog_sha: "fixture-catalog", dirty: false, node_version: process.version, yjs_version: "13.6.27" }, workflow_id: "wf-fixture", lineage_id: "lineage-1", ordering_scheme: "explicit-stamp", projection_normalization: "workflow-projection/v1" },
+    steps,
+    assertions: { converged: true, final_projection_hash: hash(normalized(doc)), final_applied_op_ids_hash: hash([...appliedOpIds(doc)].sort()), failure_step_id: null },
+  };
+}
+
 describe("collaboration trace v1 contract and fixture emitter", () => {
   it("emits deterministic facts from the real applier and preserves stamp separately from base_version", () => {
     const a = fixture(), b = fixture();
@@ -266,6 +297,54 @@ describe("collaboration trace v1 contract and fixture emitter", () => {
   });
 
   it("hashes object keys canonically", () => expect(hash({ b: 2, a: 1 })).toEqual(hash({ a: 1, b: 2 })));
+
+  it.each(FROZEN_OPS)("validates a %s payload against its own shape, not a fallback kind's", (op) => {
+    // Strip every kind-specific field, leaving the common envelope, and set the
+    // discriminant. Each kind must then be rejected for a field IT declares.
+    // `removed_nodes` belongs to `clear` alone, so any other kind rejected for
+    // `removed_nodes` is being validated through `clear`'s branch — which is
+    // what a terminal `else` does to every kind it does not enumerate.
+    const trace = disconnectFixture();
+    const step = trace.steps[0]!;
+    if (step.kind !== "semantic-op") throw new Error("fixture step must be a semantic op");
+    for (const field of ["link_id", "to_node", "to_slot"] as const) deletePath(step.payload, [field]);
+    step.verb = op;
+    (step.payload as unknown as Record<string, unknown>)["op"] = op;
+
+    let thrown = "";
+    try {
+      assertCollabReplayTraceV1(trace);
+    } catch (error) {
+      thrown = String(error);
+    }
+    expect(thrown, `${op} must reject an envelope-only payload`).not.toBe("");
+    expect(/removed_nodes/.test(thrown), `${op} rejected for clear's removed_nodes`).toBe(op === "clear");
+  });
+
+  it("accepts real disconnect evidence and pins its required fields", () => {
+    const trace = disconnectFixture();
+    expect(trace.steps[0]).toMatchObject({ verb: "disconnect", outcome: "applied", consumed_op_id: true });
+    expect(trace.steps[0]!.kind === "semantic-op" && trace.steps[0]!.semantic_diff.links_removed).toEqual(["9000"]);
+    expect(() => assertCollabReplayTraceV1(trace)).not.toThrow();
+
+    for (const field of ["link_id", "to_node", "to_slot"] as const) {
+      const malformed: unknown = disconnectFixture();
+      deletePath(malformed, ["steps", 0, "payload", field]);
+      expect(() => assertCollabReplayTraceV1(malformed), `disconnect must require ${field}`).toThrow(new RegExp(field));
+    }
+  });
+
+  it("does not accept a disconnect payload that smuggles clear's removed_nodes in place of its own fields", () => {
+    const smuggled = disconnectFixture();
+    const step = smuggled.steps[0]!;
+    if (step.kind !== "semantic-op") throw new Error("fixture step must be a semantic op");
+    const payload = step.payload as unknown as Record<string, unknown>;
+    payload["removed_nodes"] = [];
+    delete payload["link_id"];
+    delete payload["to_node"];
+    delete payload["to_slot"];
+    expect(() => assertCollabReplayTraceV1(smuggled)).toThrow(/link_id/);
+  });
 
   it("fails closed on unknown schema majors and invalid op identity", () => {
     expect(() => assertCollabReplayTraceV1({ ...fixture(), schema: "comfy.collab-replay/v2" })).toThrow(/unsupported/);
