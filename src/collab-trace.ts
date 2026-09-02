@@ -5,6 +5,7 @@
  * format and intentionally exposes no replay, merge, comparator, Yjs, or mint
  * API. Consumers render captured decisions; they must never recompute them.
  */
+import { assertNever } from "./exhaustive.js";
 import { compareStampKeys } from "./stamps.js";
 import { FROZEN_OPS, type Op, type StampKey } from "./types.js";
 
@@ -404,11 +405,26 @@ function assertOpPayload(value: unknown, context: string) {
       if (hostValues.length <= valueIndex) invalid(`${context}.promoted.host_widgets_values`, "must cover value_index");
       if (Object.hasOwn(promoted, "instance_path")) assertNodeIdArray(promoted["instance_path"], `${context}.promoted.instance_path`);
     }
+  } else if (op === "disconnect") {
+    asNodeId(required(payload, "link_id", context), `${context}.link_id`);
+    asNodeId(required(payload, "to_node", context), `${context}.to_node`);
+    asInteger(required(payload, "to_slot", context), `${context}.to_slot`);
   } else if (op === "delete_node") {
     asNodeId(required(payload, "node_id", context), `${context}.node_id`);
     assertNodeIdArray(required(payload, "removed_links", context), `${context}.removed_links`);
-  } else {
+  } else if (op === "clear") {
     assertNodeIdArray(required(payload, "removed_nodes", context), `${context}.removed_nodes`);
+  } else {
+    // Exhaustiveness guard (issue #21), matching `dispatch` in `applier.ts`:
+    // `op` is narrowed from `FROZEN_OPS`, so with every kind enumerated above
+    // it is `never` here. This arm replaced a terminal `else` that validated
+    // every un-enumerated kind against `clear`'s payload shape — which broke
+    // silently when `disconnect` joined `FROZEN_OPS` in #139, rejecting real
+    // disconnect evidence for a missing `removed_nodes` while never checking
+    // `link_id`, `to_node`, or `to_slot`. Fail-closed reads (KA-11) need the
+    // next added kind to break compilation here, not to be mis-validated at
+    // runtime as some other kind.
+    assertNever(op, `${context}.op`);
   }
 
   return { actor, baseVersion, op, opId, payload, stamp };
