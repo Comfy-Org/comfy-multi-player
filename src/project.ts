@@ -170,12 +170,17 @@ function projectNode(ym: Y.Map<unknown>, catalog: WidgetCatalog): WorkflowNode {
  *
  * That width is the whole design, and an earlier draft of this gate got it
  * wrong in a way worth recording: it also skipped mistyped `flags`/`inputs`/
- * `outputs`, a blank `type`, and an id/key disagreement. Every one of those is
- * reachable through `mint()` and `applyOps` — `createNodeMap` stores a
- * non-plain-object `flags` as a plain clone (§1.1), and `applyAddNode` keys by
- * `op.node_id` without requiring `op.node.id` to match. So the read path
+ * `outputs`, a blank `type`, and an id/key disagreement. Every one of those
+ * WAS reachable through `mint()` and `applyOps` — `createNodeMap` stores a
+ * non-plain-object `flags` as a plain clone (§1.1), and `applyAddNode` keyed
+ * by `op.node_id` without requiring `op.node.id` to match. So the read path
  * silently deleted nodes the write path had accepted and acknowledged. A gate
  * on the read side must never be wider than the throw it is preventing.
+ * (The id/key disagreement alone is no longer writer-reachable: the add-node
+ * identity guard rejects a payload `id` contradicting the wire `node_id` as
+ * `malformed_op` before any mutation, so today that shape arrives only as
+ * corrupt or untrusted doc state — the same door the other passthrough
+ * shapes come in through, and §1.1 still projects it verbatim.)
  *
  * ## Why these two are safe to skip, and what a skip costs
  *
