@@ -566,11 +566,21 @@ function applyAddNode(doc: Y.Doc, op: AddNodeOp, catalog?: WidgetCatalog): Succe
   reconcileNodeLinkRefs(doc, op.node_id, nodeMap);
 
   // last_node_id is a max-register (vocabulary §8.3): write only on increase.
+  // DQ-15 Q2 (Christian, blocked-on-christian#10): node ids are normalized
+  // before this write so numeric vs string forms of the same id ("42" vs 42)
+  // can't skew the counter. A non-numeric string id (e.g. a UUID) leaves the
+  // register untouched, matching the pre-existing numeric-only contract.
   const meta = metaMap(doc);
   const cur = meta.get("last_node_id");
   const curN = typeof cur === "number" ? cur : 0;
-  if (typeof op.node_id === "number" && op.node_id > curN) {
-    mset(meta, "last_node_id", op.node_id);
+  const idN =
+    typeof op.node_id === "number"
+      ? op.node_id
+      : typeof op.node_id === "string" && /^[0-9]+$/.test(op.node_id)
+        ? parseInt(op.node_id, 10)
+        : undefined;
+  if (idN !== undefined && idN > curN) {
+    mset(meta, "last_node_id", idN);
   }
   return "applied";
 }
