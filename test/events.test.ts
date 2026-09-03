@@ -191,6 +191,10 @@ describe("caller-owned cmp event sink", () => {
       undefined,
       { eventSink },
     );
+    const seededConflict = mint(lww.base_workflow, lwwCatalog);
+    const conflictDoc = new Y.Doc();
+    Y.applyUpdate(conflictDoc, Y.encodeStateAsUpdate(seededConflict));
+    applyOps(conflictDoc, [newerWrite, olderWrite], lwwCatalog, { eventSink });
 
     expect(events).toEqual(goldenEvents);
   });
@@ -206,6 +210,22 @@ describe("caller-owned cmp event sink", () => {
     });
     expect(observed).toEqual(baseline);
     expect(observed.outcomes.map((outcome) => outcome.outcome)).toEqual(["no-op", "rejected", "rejected"]);
+    expect(readGraph(observedDoc)).toEqual(readGraph(baselineDoc));
+    expect(appliedOpIds(observedDoc)).toEqual(appliedOpIds(baselineDoc));
+  });
+
+  it("isolates a throwing sink on the conflict path without altering KA-4 outcomes or abort remainder", () => {
+    const baselineDoc = mint(lww.base_workflow, lwwCatalog);
+    const observedDoc = new Y.Doc();
+    Y.applyUpdate(observedDoc, Y.encodeStateAsUpdate(baselineDoc));
+
+    const baseline = applyOps(baselineDoc, [newerWrite, olderWrite], lwwCatalog);
+    const observed = applyOps(observedDoc, [newerWrite, olderWrite], lwwCatalog, {
+      eventSink: () => { throw new Error("host telemetry is down"); },
+    });
+
+    expect(observed).toEqual(baseline);
+    expect(observed.outcomes.map((outcome) => outcome.outcome)).toEqual(["applied", "lww-dropped"]);
     expect(readGraph(observedDoc)).toEqual(readGraph(baselineDoc));
     expect(appliedOpIds(observedDoc)).toEqual(appliedOpIds(baselineDoc));
   });
