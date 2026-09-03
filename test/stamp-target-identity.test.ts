@@ -248,5 +248,23 @@ describe("stamp targets normalize node ids to strings", () => {
     expect(sortedEntries(forward, "__stamps")).toHaveLength(1);
     expect(sortedEntries(forward, "__applied")).toEqual(sortedEntries(reverse, "__applied"));
     expect(sortedEntries(forward, "__applied")).toHaveLength(2);
+
+    // Reapplying an already-applied operation is a no-op in both orders: take
+    // each order's first (losing) op and apply it a second time, then assert
+    // the projection and both ledgers are unchanged.
+    const snapshotOf = (doc: Y.Doc) => ({
+      projection: canonicalize(project(doc, catalog)),
+      stamps: sortedEntries(doc, "__stamps"),
+      applied: sortedEntries(doc, "__applied"),
+    });
+    const forwardAgain = applyOrder([lower, higher]);
+    const forwardBefore = snapshotOf(forwardAgain);
+    expect(applyOps(forwardAgain, [lower], catalog).failed).toBeNull();
+    expect(snapshotOf(forwardAgain)).toEqual(forwardBefore);
+
+    const reverseAgain = applyOrder([higher, lower]);
+    const reverseBefore = snapshotOf(reverseAgain);
+    expect(applyOps(reverseAgain, [higher], catalog).failed).toBeNull();
+    expect(snapshotOf(reverseAgain)).toEqual(reverseBefore);
   });
 });
