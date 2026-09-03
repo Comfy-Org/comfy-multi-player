@@ -10,6 +10,14 @@ Apply this profile to mint, retry, dedupe, stamps, ordering, and LWW conflict ha
 <!-- claim: KA-2 / FC-2: the ordering key is read from op.stamp, not the envelope :: test/ka2-stamp-inside-op.test.ts -->
 - Resolve conflicts by that stamp, never client-id, arrival order, database read order, or a server sequence alone.
 - Verify duplicate `op_id` handling is a true byte-identical no-op. Reuse with different canonical payload/stamp must fail without mutation.
+- **`op_id` reuse itself is resolved by ARRIVAL ORDER, not by stamp** — this is a deliberate exception to
+  the "resolve by stamp" rule above, not a violation of it, and it must stay named as such. The gate in
+  `src/applier.ts:152-186` records a payload digest the first time an `op_id` is seen and rejects any
+  later op reusing that `op_id` with a different digest; a later-stamped op that reuses an `op_id` an
+  earlier-stamped op already claimed is rejected regardless of stamp order (see
+  `test/opid-reuse-order-dependence.test.ts`). Two replicas that apply the same op set in different
+  orders can diverge on which payload survives. When reviewing a change to this gate or its ordering,
+  confirm both-arrival-orders coverage exists, not just the single fixed order most existing suites use.
 - A server may advance scalar `base_version` for V1, but code and contracts must leave room for a logical clock rather than making the scalar the permanent sole authority.
 
 > Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P10 to what that guard's test asserts on, P2 to any tool you ran, and P7 to any run you quote.
