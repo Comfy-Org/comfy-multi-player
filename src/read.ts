@@ -123,6 +123,9 @@ function snapshot(value: unknown, depth: number): unknown {
     // the live type.
     return snapshot(value.toJSON(), depth + 1);
   }
+  if (value instanceof Y.Doc) {
+    return snapshot(value.toJSON(), depth + 1);
+  }
   if (Array.isArray(value)) {
     const out = new Array<unknown>(value.length);
     for (let i = 0; i < value.length; i++) out[i] = snapshot(value[i], depth + 1);

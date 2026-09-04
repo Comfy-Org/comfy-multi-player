@@ -201,10 +201,14 @@ describe("read-only surface — it actually reads the document", () => {
       ],
     };
 
-    const definitions = readSubgraphDefinitions(mint(workflow, catalog, CATALOG_SHA));
+    const doc = mint(workflow, catalog, CATALOG_SHA);
+    doc.getMap<Y.Map<unknown>>(ROOT_DEFINITIONS).get("definition-1")?.set("sub", new Y.Doc());
+
+    const definitions = readSubgraphDefinitions(doc);
 
     expect(definitions).toHaveLength(1);
     expect(definitions[0]?.["id"]).toBe("definition-1");
+    expect(definitions[0]?.["sub"]).toEqual({});
     expect(definitions[0]?.["nodes"]).toEqual([
       expect.objectContaining({
         id: KSAMPLER_ID,
