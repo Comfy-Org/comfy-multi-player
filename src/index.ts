@@ -84,6 +84,8 @@ export {
   readGraph,
   readMeta,
   readStamps,
+  readSubgraphDefinitions,
   type GraphSnapshot,
   type NodeSnapshot,
+  type SubgraphDefinitionSnapshot,
 } from "./read.js";

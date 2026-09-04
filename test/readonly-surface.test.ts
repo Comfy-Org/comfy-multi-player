@@ -38,6 +38,7 @@ import {
   readGraph,
   readMeta,
   readStamps,
+  readSubgraphDefinitions,
   type Op,
   type WorkflowJSON,
 } from "../src/index.js";
@@ -120,6 +121,7 @@ function fixtureDoc(): Y.Doc {
 function readSurfaceResults(doc: Y.Doc): [string, unknown][] {
   return [
     ["readGraph(doc)", readGraph(doc)],
+    ["readSubgraphDefinitions(doc)", readSubgraphDefinitions(doc)],
     ["readMeta(doc)", readMeta(doc)],
     ["docCatalogPin(doc)", docCatalogPin(doc)],
     ["hasNode(doc, id)", hasNode(doc, KSAMPLER_ID)],
@@ -179,6 +181,38 @@ describe("read-only surface — it actually reads the document", () => {
     expect(note[OPAQUE_WIDGETS_KEY]).toEqual(["a sticky note"]);
 
     expect(snap.links["1"]).toEqual([1, KSAMPLER_ID, 0, NOTE_ID, 0, "LATENT"]);
+  });
+
+  it("readSubgraphDefinitions returns mint-ordered definitions with named widgets", () => {
+    const workflow = fixtureWorkflow();
+    workflow["definitions"] = {
+      subgraphs: [
+        {
+          id: "definition-1",
+          name: "Definition",
+          version: 1,
+          revision: 0,
+          state: { lastNodeId: 11, lastLinkId: 0, lastGroupId: 0, lastRerouteId: 0 },
+          inputNode: { id: -10, bounding: [0, 0, 75, 100] },
+          outputNode: { id: -20, bounding: [0, 0, 75, 100] },
+          nodes: [fixtureWorkflow().nodes[0]],
+          links: [],
+        },
+      ],
+    };
+
+    const definitions = readSubgraphDefinitions(mint(workflow, catalog, CATALOG_SHA));
+
+    expect(definitions).toHaveLength(1);
+    expect(definitions[0]?.["id"]).toBe("definition-1");
+    expect(definitions[0]?.["nodes"]).toEqual([
+      expect.objectContaining({
+        id: KSAMPLER_ID,
+        widgets_values_named: expect.objectContaining({ steps: 20 }),
+      }),
+    ]);
+    expect(Object.isFrozen(definitions)).toBe(true);
+    expect(Object.isFrozen(definitions[0]?.["nodes"])).toBe(true);
   });
 
   it("readMeta returns schema/catalog version and the §6 passthrough keys", () => {
@@ -733,6 +767,7 @@ describe("read-only surface — classification", () => {
   ];
   const READ_SURFACE: readonly string[] = [
     "readGraph",
+    "readSubgraphDefinitions",
     "readMeta",
     "docCatalogPin",
     "hasNode",

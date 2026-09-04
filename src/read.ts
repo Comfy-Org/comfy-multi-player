@@ -60,12 +60,14 @@ import * as Y from "yjs";
 import {
   OPAQUE_WIDGETS_KEY,
   ROOT_APPLIED,
+  ROOT_DEFINITIONS,
   ROOT_LINKS,
   ROOT_META,
   ROOT_NODES,
   ROOT_STAMPS,
 } from "./doc.js";
 import { assertReadableSchema } from "./schema-version.js";
+import { NODE_INCARNATION_KEY } from "./types.js";
 
 /**
  * The reserved per-node key holding a whole `widgets_values` array verbatim for
@@ -330,6 +332,9 @@ export interface GraphSnapshot {
   readonly links: Readonly<Record<string, unknown>>;
 }
 
+/** One subgraph definition as plain, deeply frozen frontend-ready data. */
+export type SubgraphDefinitionSnapshot = Readonly<Record<string, unknown>>;
+
 /**
  * Root-graph nodes and links, as deep-frozen plain data.
  *
@@ -358,6 +363,65 @@ export function readGraph(doc: Y.Doc): GraphSnapshot {
   });
 
   return Object.freeze({ nodes: Object.freeze(nodes), links: Object.freeze(links) });
+}
+
+/**
+ * Subgraph definitions as frontend-ready snapshots, preserving mint order.
+ * Named widget values remain name-keyed so a catalog-free follower can restore
+ * them without guessing the catalog that minted the document.
+ */
+export function readSubgraphDefinitions(doc: Y.Doc): readonly SubgraphDefinitionSnapshot[] {
+  assertSnapshotReadable(doc, "readSubgraphDefinitions");
+  const definitions: SubgraphDefinitionSnapshot[] = [];
+  rootMap(doc, ROOT_DEFINITIONS)?.forEach((definition) => {
+    if (!(definition instanceof Y.Map)) return;
+    const out: Record<string, unknown> = {};
+    definition.forEach((value, key) => {
+      if (key === "node_order" || key === "link_order" || key === "__proto__") return;
+      if (key === "nodes" && value instanceof Y.Map) {
+        out[key] = readDefinitionNodes(definition.get("node_order"), value);
+      } else if (key === "links" && value instanceof Y.Map) {
+        out[key] = orderedMapValues(definition.get("link_order"), value);
+      } else {
+        out[key] = snapshot(value, 1);
+      }
+    });
+    definitions.push(Object.freeze(out));
+  });
+  return Object.freeze(definitions);
+}
+
+function orderedKeys(order: unknown, values: Y.Map<unknown>): string[] {
+  const keys = Array.isArray(order)
+    ? order.filter((key): key is string => typeof key === "string")
+    : [...values.keys()].sort();
+  return [...new Set(keys)].filter((key) => values.has(key));
+}
+
+function orderedMapValues(order: unknown, values: Y.Map<unknown>): readonly unknown[] {
+  return Object.freeze(orderedKeys(order, values).map((key) => snapshot(values.get(key), 1)));
+}
+
+function readDefinitionNodes(order: unknown, values: Y.Map<unknown>): readonly unknown[] {
+  const nodes: unknown[] = [];
+  for (const key of orderedKeys(order, values)) {
+    const source = values.get(key);
+    if (!(source instanceof Y.Map)) continue;
+    if (source.has("widgets") && !(source.get("widgets") instanceof Y.Map)) continue;
+    const node: Record<string, unknown> = {};
+    source.forEach((value, field) => {
+      if (field === NODE_INCARNATION_KEY || field === "__proto__") return;
+      if (field === "widgets" && value instanceof Y.Map) {
+        node["widgets_values_named"] = snapshot(value, 1);
+      } else if (field === OPAQUE_WIDGETS_KEY) {
+        node["widgets_values"] = snapshot(value, 1);
+      } else {
+        node[field] = snapshot(value, 1);
+      }
+    });
+    nodes.push(Object.freeze(node));
+  }
+  return Object.freeze(nodes);
 }
 
 // ---------------------------------------------------------------------------
