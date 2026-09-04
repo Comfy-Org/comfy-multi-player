@@ -27,10 +27,11 @@
  * the document before throwing — Yjs does not roll a `transact` body back on
  * throw, so "untouched on reject" is a property of write order inside each
  * handler, and those four validated after their first write. PR #34 hoisted the
- * checks; the rows moved from `KNOWN_KA4_VIOLATIONS` into `CASES` and the block
+ * checks; the rows moved into `CASES` and the block
  * that asserted the bug was deleted, exactly as its own failure message
- * instructed. `KNOWN_KA4_VIOLATIONS` is kept, empty, so a future regression has
- * somewhere to be recorded rather than being bolted on again.
+ * instructed. The empty known-violations placeholder was removed
+ * (issue #154); a future regression should be recorded by asserting the bug,
+ * naming the fix, and letting the assertion go red when it lands.
  *
  * Amendment A9 closes the cloneable-but-unstorable, `connect.link_id`, and
  * `delete_node.removed_links` write-order holes. Amendment A10 closes reference
@@ -416,7 +417,7 @@ const CASES: Row[] = [
         grow: { name: "image_1", type: "X", inputcount: { widget: "inputcount", value: 2 } },
       }) as unknown as Op,
   },
-  // ---- issue #10: MIGRATED from KNOWN_KA4_VIOLATIONS when PR #34 landed -----
+  // ---- issue #10: MIGRATED into CASES when PR #34 landed -----
   // These four validated after their first write until #34 hoisted the checks.
   // They are ordinary rows now; the `KA-4 known violations` block that asserted
   // the bug is gone, exactly as its own failure message instructed.
@@ -456,17 +457,6 @@ const CASES: Row[] = [
   },
 ];
 
-/**
- * Rejections known to violate KA-4. EMPTY since #34 (issue #10) landed: the
- * four `connect` rows it held are ordinary `CASES` rows now.
- *
- * Kept rather than deleted so a future regression has somewhere to be recorded
- * deliberately, with the same discipline #58 used — assert the bug, name the
- * fix, and let the assertion go red when it lands. If you add a row here, add
- * a matching block that asserts it STILL breaks byte-identity today.
- */
-const KNOWN_KA4_VIOLATIONS: readonly string[] = [];
-
 describe("KA-4: a rejected op leaves the doc byte-identical and does not consume its op_id", () => {
   it.each(CASES.map((c) => [`${c.kind}: ${c.why} → ${c.code}`, c] as const))("%s", (_name, row) => {
     const doc = mint(baseWorkflow(), catalog);
@@ -496,8 +486,6 @@ describe("KA-4: a rejected op leaves the doc byte-identical and does not consume
     for (const k of ["envelope", "reset_doc", "clear", "delete_node", "add_node", "set_widget", "connect", "connect+grow"]) {
       expect(kinds.has(k), `no KA-4 rejection row for '${k}'`).toBe(true);
     }
-    // #34 (issue #10) landed: all four former violations are ordinary CASES rows now.
-    expect(KNOWN_KA4_VIOLATIONS.length).toBe(0);
   });
 });
 
