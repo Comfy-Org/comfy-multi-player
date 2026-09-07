@@ -5,6 +5,12 @@
 **Decider:** Christian Byrne
 **Decision queue:** DQ-11, option (c)
 
+> **Mirror note:** This ADR is mirrored from the
+> [`christian-byrne/in-app-agent-program`](https://github.com/christian-byrne/in-app-agent-program)
+> workspace. Paths such as
+> `program/…` and `reports/…` in the text and references below are workspace-repo paths, not
+> paths in this repository; they do not resolve here.
+
 ## Context
 
 The op-based graph model resolves node presence and widget values through separate stamped
@@ -74,11 +80,19 @@ documented.
 
 ## References
 
-- `program/decision-queue.md` — DQ-11 resolution.
-- `program/dq-11-primer.md` — problem and alternatives before the ruling.
-- `reports/spikes/spike-5-merge-suite.md` — minimized failure and required enactment shape.
-- `comfy-multi-player` `docs/multiplayer-schema.md` — Amendment A15.
-- `comfy-multi-player` `docs/INVARIANTS.md` — KA-11 amendment and enforcement mapping.
+- [`program/decision-queue.md`](https://github.com/christian-byrne/in-app-agent-program/blob/main/program/decision-queue.md)
+  — DQ-11 resolution (workspace repo).
+- [`program/dq-11-primer.md`](https://github.com/christian-byrne/in-app-agent-program/blob/main/program/dq-11-primer.md)
+  — problem and alternatives before the ruling (workspace repo).
+- [`reports/spikes/spike-5-merge-suite.md`](https://github.com/christian-byrne/in-app-agent-program/blob/main/reports/spikes/spike-5-merge-suite.md)
+  — minimized failure and required enactment shape (workspace repo).
+- `comfy-multi-player`
+  [`docs/multiplayer-schema.md`, Amendment A16](https://github.com/Comfy-Org/comfy-multi-player/blob/main/docs/multiplayer-schema.md)
+  — the enacted DQ-11 incarnation-namespaced widget stamps amendment (A15 governs promoted
+  subgraph host writes, not DQ-11).
+- `comfy-multi-player`
+  [`docs/INVARIANTS.md`](https://github.com/Comfy-Org/comfy-multi-player/blob/main/docs/INVARIANTS.md)
+  — KA-11 amendment and enforcement mapping.
 
 ## Glossary
 
