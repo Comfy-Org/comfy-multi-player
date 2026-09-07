@@ -507,7 +507,12 @@ function applyAddNode(doc: Y.Doc, op: AddNodeOp, catalog?: WidgetCatalog): Succe
   if (op.node_id === undefined || typeof op.node !== "object" || op.node === null) {
     throw new OpRejectedError("malformed_op", "add_node: missing node_id or node payload");
   }
-  if (op.node.id !== undefined && String(op.node_id) !== String(op.node.id)) {
+  // A payload `id` spelled `null` is the JSON serialization of "unset" and
+  // reads as absent, exactly like the omitted key (JSON.stringify keeps
+  // `{"id": null}` but drops `undefined`): both spellings of "no id" accept.
+  // A PRESENT `null` would otherwise compare as the string "null" and never
+  // match, aborting a minimal producer's whole batch (PR #165 review item 3).
+  if (op.node.id != null && String(op.node_id) !== String(op.node.id)) {
     throw new OpRejectedError(
       "malformed_op",
       `add_node: wire node_id '${String(op.node_id)}' does not match payload node.id '${String(op.node.id)}'`,

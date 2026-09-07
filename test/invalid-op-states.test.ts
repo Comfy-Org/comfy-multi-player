@@ -193,6 +193,16 @@ describe("#17 group 1: invalid states the runtime already rejects", () => {
 // Neither is reachable only from outside this package either — both shapes are
 // valid `Op` literals today, so the `wireOp()` marker on them is about keeping
 // the call sites uniform, not about a type this repo can no longer construct.
+//
+// RECORD OF A THIRD KIND, not an endorsement rollback: this group now OPENS
+// with a rejection (`rejects add_node whose payload id differs from node_id`).
+// That state was ACCEPTED and pinned here before the add-node identity guard
+// (schema Amendment A19, PR #165) re-classified it as `malformed_op`; the case
+// stays in this group so the earlier pin's group membership keeps telling the
+// truth about which wire states this file audits. Per the schema doc's
+// consumer-impact rule, that re-classification is applier-first BY DESIGN —
+// the "needs a comfy-cli counterpart first" note below applies to TIGHTENING
+// an accepted behaviour, while a rejection gate is the sanctioned lead change.
 // ---------------------------------------------------------------------------
 
 describe("#17 group 2: invalid wire states", () => {
