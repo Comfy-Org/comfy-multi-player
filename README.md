@@ -1,13 +1,5 @@
 # @comfyorg/comfy-multi-player
 
-> [!IMPORTANT]
-> Active development and releases have moved to
-> [`ComfyUI_frontend/packages/comfy-multi-player`](https://github.com/Comfy-Org/ComfyUI_frontend/tree/main/packages/comfy-multi-player).
-> This repository is retained as a read-only record of the standalone package's
-> history, tags, and releases through 0.2.1. Open source changes and issues in
-> [`ComfyUI_frontend`](https://github.com/Comfy-Org/ComfyUI_frontend); do not
-> create a second implementation here. Migration: [ComfyUI_frontend #16644](https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644).
-
 One implementation of what an edit does to a workflow document, used
 identically by the ComfyUI frontend and by the server that hosts the document.
 It exists so that an agent and a human can edit the same workflow at the same
