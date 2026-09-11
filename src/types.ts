@@ -161,10 +161,11 @@ export interface AddNodeOp extends OpBase {
  *
  * The MINTER (cloud / cli) remaps template node and link ids so they are
  * collision-free against the live doc before emitting (see
- * `remapWorkflowIds`); the applier only validates and rejects on collision.
- * Subgraph definitions whose id already exists are deduped when identical
- * and forked to `${id}-${hash8}` when different, with the inserted instance
- * nodes retargeted to the fork. Existing instances are never touched.
+ * `remapWorkflowIds`). A collision with seeded content is rejected; racing
+ * insert ops choose the greater op stamp per node/link id so replay converges.
+ * Subgraph definitions whose id already exists are deduped when identical.
+ * Reusing an id for different content is rejected as `definition_conflict`;
+ * definition ids are globally unique across the full nested tree.
  */
 export interface InsertWorkflowOp extends OpBase {
   op: "insert_workflow";

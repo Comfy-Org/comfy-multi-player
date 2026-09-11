@@ -227,6 +227,20 @@ export function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): R
     } else if (k === "links" && v instanceof Y.Map) {
       const order = (dm.get("link_order") as string[] | undefined) ?? [...v.keys()].sort();
       out[k] = order.filter((id) => v.has(id)).map((id) => structuredClone(v.get(id)));
+    } else if (k === "definitions" && v instanceof Y.Map) {
+      const nestedOut: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+      v.forEach((nestedValue, nestedKey) => {
+        if (nestedKey === "subgraph_order") return;
+        if (nestedKey === "subgraphs" && nestedValue instanceof Y.Map) {
+          const order = (v.get("subgraph_order") as string[] | undefined) ?? [...nestedValue.keys()].sort();
+          nestedOut["subgraphs"] = order
+            .filter((id) => nestedValue.has(id))
+            .map((id) => projectDefinition(nestedValue.get(id) as Y.Map<unknown>, catalog));
+        } else {
+          nestedOut[nestedKey] = structuredClone(nestedValue);
+        }
+      });
+      out[k] = nestedOut;
     } else {
       out[k] = structuredClone(v);
     }

@@ -522,6 +522,15 @@ function validateDefinitionTree(subgraphs: unknown[], seen = new Set<string>()):
   }
 }
 
+function collectStoredDefinitionIds(definition: Y.Map<unknown>, ids: Set<string>): void {
+  ids.add(String(definition.get("id")));
+  const container = definition.get("definitions");
+  const nested = container instanceof Y.Map ? container.get("subgraphs") : undefined;
+  if (nested instanceof Y.Map) nested.forEach((child) => {
+    if (child instanceof Y.Map) collectStoredDefinitionIds(child, ids);
+  });
+}
+
 function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetCatalog): SuccessfulOutcome {
   const workflow = scrubPrivateKeys(op.workflow) as unknown;
   if (typeof workflow !== "object" || workflow === null || Array.isArray(workflow)) {
@@ -546,6 +555,8 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
 
   const nodes = nodesMap(doc);
   const links = linksMap(doc);
+  const stamps = stampsMap(doc);
+  const stamp = stampKey(op);
   const seenNodes = new Set<string>();
   for (const candidate of wf["nodes"] as unknown[]) {
     if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
@@ -556,8 +567,16 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
       throw new OpRejectedError("invalid_node_payload", "insert_workflow: every node requires id and type");
     }
     const key = String(node.id);
-    if (nodes.has(key) || seenNodes.has(key)) {
+    if (seenNodes.has(key)) {
       throw new OpRejectedError("node_id_collision", `insert_workflow: node id '${key}' collides`);
+    }
+    const existing = nodes.get(key);
+    if (existing) {
+      const incumbent = stamps.get(JSON.stringify(["insert_workflow_node", key])) as StampKey | undefined;
+      if (incumbent === undefined) {
+        throw new OpRejectedError("node_id_collision", `insert_workflow: node id '${key}' collides`);
+      }
+      if (compareStampKeys(stamp, incumbent) <= 0) return "lww-dropped";
     }
     seenNodes.add(key);
   }
@@ -567,25 +586,45 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
       throw new OpRejectedError("malformed_op", "insert_workflow: every link must be a tuple with an id and two endpoints");
     }
     const key = String(candidate[0]);
-    if (links.has(key) || seenLinks.has(key)) {
+    if (seenLinks.has(key)) {
       throw new OpRejectedError("link_id_collision", `insert_workflow: link id '${key}' collides`);
+    }
+    if (links.has(key)) {
+      const incumbent = stamps.get(JSON.stringify(["insert_workflow_link", key])) as StampKey | undefined;
+      if (incumbent === undefined) {
+        throw new OpRejectedError("link_id_collision", `insert_workflow: link id '${key}' collides`);
+      }
+      if (compareStampKeys(stamp, incumbent) <= 0) return "lww-dropped";
     }
     const source = String(candidate[1]);
     const target = String(candidate[3]);
     if ((!nodes.has(source) && !seenNodes.has(source)) || (!nodes.has(target) && !seenNodes.has(target))) {
-      throw new OpRejectedError("malformed_op", `insert_workflow: link '${key}' references an unknown node`);
+      return "no-op";
     }
     seenLinks.add(key);
   }
 
-  const stamps = stampsMap(doc);
   const targetKey = stampTargetKey(op);
   const prior = stamps.get(targetKey) as StampKey | undefined;
-  const stamp = stampKey(op);
   if (prior != null && compareStampKeys(stamp, prior) <= 0) return "lww-dropped";
 
   const cat = catalog ?? { types: {} };
   const defs = definitionsMap(doc);
+  const storedDefinitionIds = new Set<string>();
+  defs.forEach((definition) => collectStoredDefinitionIds(definition, storedDefinitionIds));
+  const validateAgainstStored = (candidates: unknown[], topLevel: boolean): void => {
+    for (const candidate of candidates) {
+      const definition = candidate as Record<string, unknown>;
+      const id = definitionId(definition["id"])!;
+      if (storedDefinitionIds.has(id) && (!topLevel || !defs.has(id))) {
+        throw new OpRejectedError("definition_conflict", `insert_workflow: definition id '${id}' is already used in the definition tree`);
+      }
+      if (topLevel && defs.has(id)) continue; // whole-tree canonical comparison below decides idempotence/conflict
+      const nested = (definition["definitions"] as { subgraphs?: unknown[] } | undefined)?.subgraphs;
+      if (nested) validateAgainstStored(nested, false);
+    }
+  };
+  validateAgainstStored((subgraphs as unknown[] | undefined) ?? [], true);
   const definitionWrites: Array<[string, Y.Map<unknown>]> = [];
   for (const candidate of (subgraphs as unknown[] | undefined) ?? []) {
     if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
@@ -622,12 +661,15 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
 
   for (const [id, definition] of definitionWrites) mset(defs, id, definition);
   for (const link of (wf["links"] as unknown[] | undefined) ?? []) {
-    mset(links, String((link as unknown[])[0]), cloneForMap(link, "insert_workflow: link"));
+    const key = String((link as unknown[])[0]);
+    mset(links, key, cloneForMap(link, "insert_workflow: link"));
+    mset(stamps, JSON.stringify(["insert_workflow_link", key]), stamp);
   }
   for (const [key, id, nodeMap] of nodeWrites) {
     clearObsoleteWidgetStamps(stamps, key);
     mset(nodeMap, NODE_INCARNATION_KEY, `${op.op_id}:${key}`);
     mset(nodes, key, nodeMap);
+    mset(stamps, JSON.stringify(["insert_workflow_node", key]), stamp);
     mset(stamps, targetKey, stamp);
     reconcileNodeLinkRefs(doc, id, nodeMap);
   }

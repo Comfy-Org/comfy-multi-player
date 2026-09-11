@@ -22,9 +22,11 @@ still cheap. That will not stay true.
 
 **Accepted by ADR-022.** `insert_workflow` carries a complete top-level graph and optional
 `definitions.subgraphs`. The producer remaps top-level node and link ids before dispatch; the
-applier never allocates and rejects collisions with `node_id_collision` or `link_id_collision`.
-Definition ids dedupe by canonical projected content or fork deterministically to `<id>-<hash8>`,
-retargeting only inserted instances. The op is stamped, exact-replay idempotent, and not batchable.
+applier never allocates. Seeded-id collisions are rejected; collisions between insert ops use the
+greater op stamp as a deterministic per-id winner so opposite legal replay orders converge.
+Definition ids dedupe by canonical projected content. Reusing an id for different content is a
+`definition_conflict`; ids are globally unique across the nested definition tree. The op is stamped,
+exact-replay idempotent, and not batchable.
 
 ### D1. Widgets are addressed by name, not by position
 

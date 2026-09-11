@@ -180,6 +180,49 @@ describe("insert_workflow: happy path", () => {
     expect(json).not.toContain("__private");
     expect(json).toContain('"visible":true');
   });
+
+  it("makes colliding concurrent inserts converge in either legal arrival order", () => {
+    const seed = Y.encodeStateAsUpdate(mint(baseWorkflow(), catalog));
+    const run = (ops: Op[]): WorkflowJSON => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, seed);
+      for (const op of ops) applyOps(doc, [op], catalog);
+      return project(doc, catalog);
+    };
+    const lower = insertOp(
+      { nodes: [{ id: 100, type: "Src", title: "lower" }, { id: 101, type: "Sink" }], links: [[200, 100, 0, 101, 0, "lower"]] },
+      { op_id: "a".repeat(32), stamp: [2, "a"] },
+    );
+    const higher = insertOp(
+      { nodes: [{ id: 100, type: "Src", title: "higher" }, { id: 101, type: "Sink" }], links: [[200, 100, 0, 101, 0, "higher"]] },
+      { op_id: "b".repeat(32), stamp: [3, "b"] },
+    );
+
+    expect(run([lower, higher])).toEqual(run([higher, lower]));
+    expect(run([lower, higher]).nodes!.find((node) => node.id === 100)?.title).toBe("higher");
+    expect(run([lower, higher]).links!.find((link) => (link as unknown[])[0] === 200)).toEqual(
+      [200, 100, 0, 101, 0, "higher"],
+    );
+  });
+
+  it("stores nested definitions as addressable maps for later interior set_widget", () => {
+    const doc = mint(baseWorkflow(), catalog);
+    const nested = { id: "nested-def", nodes: [{ id: 9, type: "Inner", widgets_values: ["before"] }], links: [] };
+    const outer = {
+      id: "outer-def", nodes: [{ id: 8, type: "nested-def" }], links: [], definitions: { subgraphs: [nested] },
+    };
+    applyOps(doc, [insertOp({ nodes: [{ id: 100, type: "outer-def" }], links: [], definitions: { subgraphs: [outer] } })], catalog);
+    const edit = {
+      ...env(), op: "set_widget", node_id: 100, path: [100, 8, 9], inner_widget: "text", value: "after",
+    } as unknown as Op;
+
+    expect(applyOps(doc, [edit], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+    const defs = (project(doc, catalog) as { definitions: { subgraphs: Array<Record<string, unknown>> } }).definitions.subgraphs;
+    const projectedOuter = defs.find((definition) => definition.id === "outer-def") as {
+      definitions: { subgraphs: Array<{ nodes: Array<{ widgets_values: unknown[] }> }> };
+    };
+    expect(projectedOuter.definitions.subgraphs[0]!.nodes[0]!.widgets_values).toEqual(["after"]);
+  });
 });
 
 describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from applied)", () => {
@@ -241,15 +284,13 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
     expect(ids(project(doc, catalog))).toEqual([1, 2, 3, 4, 6]);
   });
 
-  it("rejects dangling link endpoints atomically", () => {
+  it("routes dangling link endpoints through the existing unknown-node no-op path", () => {
     const doc = mint(baseWorkflow(), catalog);
-    const before = bytes(doc);
     const op = insertOp({ nodes: [{ id: 100, type: "Src" }], links: [[200, 100, 0, 999, 0, "X"]] });
     const result = applyOps(doc, [op], catalog);
 
-    expect(rejectedOutcomeWithIndex(result)!.code).toBe("malformed_op");
-    expect(bytes(doc).equals(before)).toBe(true);
-    expect(appliedMap(doc).has(op.op_id)).toBe(false);
+    expect(result.outcomes[0]).toMatchObject({ outcome: "no-op" });
+    expect(appliedMap(doc).has(op.op_id)).toBe(true);
   });
 
   it("rejects an id-less nested subgraph atomically", () => {
@@ -266,6 +307,18 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
     expect(rejectedOutcomeWithIndex(applyOps(doc, [op], catalog))!.code).toBe("malformed_op");
     expect(bytes(doc).equals(before)).toBe(true);
     expect(appliedMap(doc).has(op.op_id)).toBe(false);
+  });
+
+  it("rejects a nested definition id that is already used anywhere in the live tree", () => {
+    const doc = mint(baseWorkflow(), catalog);
+    const op = insertOp({
+      nodes: [{ id: 100, type: "outer" }], links: [],
+      definitions: {
+        subgraphs: [{ id: "outer", nodes: [], links: [], definitions: { subgraphs: [{ id: "def-1", nodes: [], links: [] }] } }],
+      },
+    });
+
+    expect(rejectedOutcomeWithIndex(applyOps(doc, [op], catalog))!.code).toBe("definition_conflict");
   });
 
   it("rejects conflicting definitions identically in either arrival order", () => {

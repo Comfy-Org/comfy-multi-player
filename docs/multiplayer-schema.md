@@ -2055,15 +2055,16 @@ This adds an internal `__stamps` key, not a root-layout change, so
 ADR-022 adds the standalone-only `insert_workflow` op. Its payload is one
 authoritative workflow containing top-level `nodes`, `links`, and optional
 `definitions.subgraphs`. The producer allocates top-level ids before dispatch
-with `remapWorkflowIds`; the applier validates and rejects any live or duplicate
-payload collision as `node_id_collision` or `link_id_collision`. Malformed link
-tuples are `malformed_op`.
+with `remapWorkflowIds`; the applier rejects seeded or duplicate-payload
+collisions as `node_id_collision` or `link_id_collision`. Concurrent insert ops
+that collide choose the greater op stamp per node/link id. Malformed link tuples
+are `malformed_op`.
 
 Definitions use projected canonical content as identity. If an incoming id is
 already present with identical content, the definition write is skipped. If
-the content differs, the incoming definition is written as
-`${id}-${sha256(canonical).slice(0,8)}` and only inserted instance-node `type`
-fields are rewritten to that fork. Definition-interior ids are not remapped.
+the content differs, the op is rejected as `definition_conflict`. Definition
+ids are globally unique across ancestors and every nested branch;
+definition-interior node ids remain in their separate namespace.
 
 The whole merge occurs in one Yjs transaction and claims the
 `("insert_workflow", op_id)` stamp target. Exact replay is stopped by the
