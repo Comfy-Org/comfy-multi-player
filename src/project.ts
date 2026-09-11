@@ -214,7 +214,7 @@ function tryProjectNode(value: unknown, catalog: WidgetCatalog): WorkflowNode | 
 }
 
 /** Definition Y.Map → subgraph definition JSON, interior nodes/links in mint order. */
-function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): Record<string, unknown> {
+export function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): Record<string, unknown> {
   const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   dm.forEach((v, k) => {
     if (k === "node_order" || k === "link_order") return; // internal order registers

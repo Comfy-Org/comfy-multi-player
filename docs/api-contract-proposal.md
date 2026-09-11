@@ -18,6 +18,14 @@ still cheap. That will not stay true.
 
 ## Part 1 — decisions to ratify
 
+### D0. Workflow templates insert as one standalone op
+
+**Accepted by ADR-022.** `insert_workflow` carries a complete top-level graph and optional
+`definitions.subgraphs`. The producer remaps top-level node and link ids before dispatch; the
+applier never allocates and rejects collisions with `node_id_collision` or `link_id_collision`.
+Definition ids dedupe by canonical projected content or fork deterministically to `<id>-<hash8>`,
+retargeting only inserted instances. The op is stamped, exact-replay idempotent, and not batchable.
+
 ### D1. Widgets are addressed by name, not by position
 
 **Proposal.** A node's widget values live in a map keyed by widget name. The

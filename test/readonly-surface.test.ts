@@ -730,6 +730,7 @@ describe("read-only surface — classification", () => {
     // exposes no shared-document write, replay, or merge-policy implementation.
     "COLLAB_TRACE_SCHEMA",
     "assertCollabReplayTraceV1",
+    "remapWorkflowIds",
   ];
   const READ_SURFACE: readonly string[] = [
     "readGraph",

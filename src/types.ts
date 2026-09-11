@@ -33,7 +33,15 @@ export const LEGACY_NODE_INCARNATION = "0";
 // ---------------------------------------------------------------------------
 
 /** The implemented op kinds. `apply` rejects anything else loudly. */
-export const FROZEN_OPS = ["add_node", "connect", "disconnect", "set_widget", "delete_node", "clear"] as const;
+export const FROZEN_OPS = [
+  "add_node",
+  "connect",
+  "disconnect",
+  "set_widget",
+  "delete_node",
+  "clear",
+  "insert_workflow",
+] as const;
 
 /** Defined by the vocabulary but deferred (§1.6): rejected until un-deferred by amendment. */
 export const DEFERRED_OPS = ["reset_doc"] as const;
@@ -130,7 +138,7 @@ export interface OpBase {
 }
 
 // ---------------------------------------------------------------------------
-// The seven declared op kinds: six implemented (`Op`) plus the deferred
+// The eight declared op kinds: seven implemented (`Op`) plus the deferred
 // `reset_doc` (`DeferredOp`); together `WireOp`. "Frozen" now means
 // implemented — `FROZEN_OPS` is pinned to `Op["op"]` exactly (issue #17).
 // ---------------------------------------------------------------------------
@@ -145,6 +153,23 @@ export interface AddNodeOp extends OpBase {
   pos: number[];
   /** Full mint-time node snapshot — AUTHORITATIVE, inserted verbatim (vocabulary §8.5). */
   node: WorkflowNode;
+}
+
+/**
+ * Merge a workflow template (nodes, links, `definitions.subgraphs`) into an
+ * existing doc in one transaction (ADR-022; agent-subgraph TDD V1.5).
+ *
+ * The MINTER (cloud / cli) remaps template node and link ids so they are
+ * collision-free against the live doc before emitting (see
+ * `remapWorkflowIds`); the applier only validates and rejects on collision.
+ * Subgraph definitions whose id already exists are deduped when identical
+ * and forked to `${id}-${hash8}` when different, with the inserted instance
+ * nodes retargeted to the fork. Existing instances are never touched.
+ */
+export interface InsertWorkflowOp extends OpBase {
+  op: "insert_workflow";
+  /** The template to merge — AUTHORITATIVE, nodes inserted verbatim after id validation. */
+  workflow: WorkflowJSON;
 }
 
 /** Autogrow slot descriptor carried by a `connect` (vocabulary §1.2 / §8.4). */
@@ -427,7 +452,8 @@ export type Op =
   | DisconnectOp
   | SetWidgetOp
   | DeleteNodeOp
-  | ClearOp;
+  | ClearOp
+  | InsertWorkflowOp;
 
 /**
  * A kind the vocabulary declares but this package refuses to apply
@@ -543,6 +569,7 @@ export interface WorkflowNode {
 export interface WorkflowJSON {
   nodes: WorkflowNode[];
   links: unknown[];
+  definitions?: { subgraphs?: unknown[]; [key: string]: unknown };
   groups?: unknown[];
   extra?: Record<string, unknown>;
   [key: string]: unknown;
