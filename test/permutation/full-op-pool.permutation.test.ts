@@ -7,6 +7,14 @@
  * boundaries. Longer streams are fixed-seed fast-check samples with shrinking
  * left enabled.
  *
+ * Normal budget: 49 kind pairs × 8 preconditions × 2 ordered actor pairs ×
+ * 3 stamp relations × 2 orders × 2 batch modes = 9,408 pair executions, plus
+ * 5,000 sampled streams × 2 orders = 19,408 executions, below 20,000 / 8 min.
+ * CMP_PERMUTATION_PROFILE=extended preserves the historical 200,000-execution
+ * corpus (12 actor pairs, 8 stamp pairs, 24,736 sampled streams), capped at
+ * 30 minutes for the whole file. Neither profile exhausts arbitrary graphs.
+ * Counts describe primary stream executions, excluding retry/rejection probes.
+ *
  * Amendment A6 / docs/decisions/EXCEPTIONS.md and schema §2.5 item 2 are the
  * deliberate state-dependent convergence exceptions. Section 4
  * abort-remainder effects are tracked separately. R-69 output-reference
@@ -17,7 +25,7 @@
  */
 import * as fc from "fast-check";
 import * as Y from "yjs";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
   DEFERRED_OPS,
   FROZEN_OPS,
@@ -33,8 +41,17 @@ import {
 import { canonicalize } from "../helpers.js";
 
 const KINDS = [...FROZEN_OPS, ...DEFERRED_OPS];
-const ACTORS = ["agent:perm4:0", "agent:perm4:1", "human:perm4:0", "human:perm4:1"] as const;
-const VERSION_PAIRS = [[0, 0], [0, 1], [1, 0], [1, 1], [0, 9], [9, 0], [4, 4], [4, 5]] as const;
+const PROFILE = process.env.CMP_PERMUTATION_PROFILE ?? "bounded";
+if (PROFILE !== "bounded" && PROFILE !== "extended") {
+  throw new Error(`Unknown CMP_PERMUTATION_PROFILE: ${PROFILE}`);
+}
+const EXTENDED = PROFILE === "extended";
+const ACTORS = EXTENDED
+  ? ["agent:perm4:0", "agent:perm4:1", "human:perm4:0", "human:perm4:1"] as const
+  : ["agent:perm4:0", "human:perm4:0"] as const;
+const VERSION_PAIRS = EXTENDED
+  ? [[0, 0], [0, 1], [1, 0], [1, 1], [0, 9], [9, 0], [4, 4], [4, 5]] as const
+  : [[0, 0], [0, 1], [1, 0]] as const;
 const PRECONDITIONS = [
   "present-valid",
   "source-missing",
@@ -45,12 +62,23 @@ const PRECONDITIONS = [
   "interior-or-inputcount",
   "promoted-or-autogrow",
 ] as const;
-const PAIR_EXECUTIONS = 150_528;
-const SAMPLED_RUNS = 24_736;
+const PAIR_EXECUTIONS = EXTENDED ? 150_528 : 9_408;
+const SAMPLED_RUNS = EXTENDED ? 24_736 : 5_000;
 const SAMPLED_EXECUTIONS = SAMPLED_RUNS * 2;
 const TOTAL_EXECUTIONS = PAIR_EXECUTIONS + SAMPLED_EXECUTIONS;
+const MAX_EXECUTIONS = EXTENDED ? 200_000 : 20_000;
+const MAX_RUNTIME_MS = (EXTENDED ? 30 : 8) * 60_000;
 const SAMPLE_SEED = 0x4f70504;
 const IDEMPOTENCY_VERIFIED = new Set<Kind>();
+let startedAt = 0;
+let evaluatedExecutions = 0;
+
+function checkBudget(): void {
+  // Vitest's timer cannot interrupt synchronous loops. Check between stream
+  // executions too; a budget failure is a failure, never partial green coverage.
+  expect(evaluatedExecutions, `${PROFILE} execution budget`).toBeLessThanOrEqual(MAX_EXECUTIONS);
+  expect(performance.now() - startedAt, `${PROFILE} runtime budget (ms)`).toBeLessThan(MAX_RUNTIME_MS);
+}
 
 type Kind = (typeof KINDS)[number];
 type Precondition = (typeof PRECONDITIONS)[number];
@@ -221,6 +249,8 @@ function makeOp(
 }
 
 function run(workflow: WorkflowJSON, ops: readonly WireOp[], mode: BatchMode): RunState {
+  evaluatedExecutions++;
+  checkBudget();
   const doc = mint(workflow, catalog);
   const groups = mode === "together" ? [[...ops]] : ops.map((op) => [op]);
   const outcomes: RunState["outcomes"] = [];
@@ -431,6 +461,16 @@ function kindPairs(): Array<readonly [Kind, Kind]> {
 }
 
 describe("full op-pool permutation equivalence", () => {
+  beforeAll(() => {
+    startedAt = performance.now();
+    evaluatedExecutions = 0;
+    IDEMPOTENCY_VERIFIED.clear();
+    const dimensions = KINDS.length ** 2 * PRECONDITIONS.length *
+      ACTORS.length * (ACTORS.length - 1) * VERSION_PAIRS.length * 2 * 2;
+    expect(dimensions).toBe(PAIR_EXECUTIONS);
+    expect(TOTAL_EXECUTIONS).toBeLessThanOrEqual(MAX_EXECUTIONS);
+  });
+
   it("exhausts every declared op-kind pair across state, stamp, order, and batch dimensions", () => {
     let executions = 0;
     let serial = 1;
@@ -476,8 +516,12 @@ describe("full op-pool permutation equivalence", () => {
     // not count-pinned: fixing it must not require weakening this test.
     expect(taxonomy.a6).toBeGreaterThan(0);
     expect(taxonomy.abortBoundary).toBeGreaterThan(0);
-    console.info("perm-4 pair taxonomy", { executions, taxonomy, firstR69, firstRemovedLinkAlias });
-  }, 900_000);
+    checkBudget();
+    console.info("perm-4 pair taxonomy", {
+      profile: PROFILE, executions, elapsedMs: performance.now() - startedAt,
+      taxonomy, firstR69, firstRemovedLinkAlias,
+    });
+  }, MAX_RUNTIME_MS);
 
   it("samples reproducible length-3-to-6 full-vocabulary streams with shrinking enabled", () => {
     let runs = 0;
@@ -529,12 +573,15 @@ describe("full op-pool permutation equivalence", () => {
 
     expect(runs).toBe(SAMPLED_RUNS);
     expect(executions).toBe(SAMPLED_EXECUTIONS);
-    expect(TOTAL_EXECUTIONS).toBe(200_000);
+    expect(TOTAL_EXECUTIONS).toBe(EXTENDED ? 200_000 : 19_408);
     for (const [kind, count] of Object.entries(hits)) expect(count, `${kind} was not sampled`).toBeGreaterThan(0);
     expect(Object.values(taxonomy).reduce((sum, count) => sum + count, 0)).toBe(SAMPLED_RUNS);
+    checkBudget();
     console.info("perm-4 sampled taxonomy", {
+      profile: PROFILE, elapsedMs: performance.now() - startedAt, maxRuntimeMs: MAX_RUNTIME_MS,
+      evaluatedExecutions, maxExecutions: MAX_EXECUTIONS,
       seed: SAMPLE_SEED, runs, executions, hits, taxonomy,
       firstR69, firstInputcountLinkReuse, firstRemovedLinkAlias,
     });
-  }, 900_000);
+  }, MAX_RUNTIME_MS);
 });
