@@ -155,6 +155,31 @@ describe("insert_workflow: happy path", () => {
     expect(wf.nodes!.find((n) => n.id === 300)!.widgets_values).toEqual(["hello"]);
     expect(OPAQUE_WIDGETS_KEY).toBeTruthy();
   });
+
+  it("merges groups deterministically without dropping existing groups", () => {
+    const seeded = { ...baseWorkflow(), groups: [{ title: "Base" }] } as WorkflowJSON;
+    const doc = mint(seeded, catalog);
+    applyOps(doc, [insertOp({ nodes: [], links: [], groups: [{ title: "Inserted" }] })], catalog);
+
+    expect(project(doc, catalog).groups).toEqual([{ title: "Base" }, { title: "Inserted" }]);
+  });
+
+  it("scrubs private __ keys recursively from every inserted payload branch", () => {
+    const doc = mint(baseWorkflow(), catalog);
+    applyOps(doc, [insertOp({
+      nodes: [{ id: 100, type: "Src", properties: { visible: true, __definition_digest: "node-secret" } }],
+      links: [],
+      groups: [{ title: "G", nested: { __private: "group-secret", visible: true } }],
+      definitions: {
+        subgraphs: [{ id: "def-2", nodes: [], links: [], metadata: { __definition_digest: "def-secret", visible: true } }],
+      },
+    })], catalog);
+
+    const json = JSON.stringify(project(doc, catalog));
+    expect(json).not.toContain("__definition_digest");
+    expect(json).not.toContain("__private");
+    expect(json).toContain('"visible":true');
+  });
 });
 
 describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from applied)", () => {
@@ -223,6 +248,22 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
     const result = applyOps(doc, [op], catalog);
 
     expect(rejectedOutcomeWithIndex(result)!.code).toBe("malformed_op");
+    expect(bytes(doc).equals(before)).toBe(true);
+    expect(appliedMap(doc).has(op.op_id)).toBe(false);
+  });
+
+  it("rejects an id-less nested subgraph atomically", () => {
+    const doc = mint(baseWorkflow(), catalog);
+    const before = bytes(doc);
+    const op = insertOp({
+      nodes: [{ id: 100, type: "Src" }],
+      links: [],
+      definitions: {
+        subgraphs: [{ id: "outer", nodes: [], links: [], definitions: { subgraphs: [{ nodes: [], links: [] }] } }],
+      },
+    });
+
+    expect(rejectedOutcomeWithIndex(applyOps(doc, [op], catalog))!.code).toBe("malformed_op");
     expect(bytes(doc).equals(before)).toBe(true);
     expect(appliedMap(doc).has(op.op_id)).toBe(false);
   });

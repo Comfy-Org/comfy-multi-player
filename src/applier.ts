@@ -484,8 +484,46 @@ function numericId(value: unknown): number | undefined {
   return undefined;
 }
 
+function scrubPrivateKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(scrubPrivateKeys);
+  if (typeof value !== "object" || value === null) return value;
+  const clean: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (!key.startsWith("__")) clean[key] = scrubPrivateKeys(child);
+  }
+  return clean;
+}
+
+function definitionId(value: unknown): string | undefined {
+  if (typeof value === "string" && value.length > 0) return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+function validateDefinitionTree(subgraphs: unknown[], seen = new Set<string>()): void {
+  for (const candidate of subgraphs) {
+    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+      throw new OpRejectedError("malformed_op", "insert_workflow: every subgraph definition must be an object");
+    }
+    const sg = candidate as Record<string, unknown>;
+    const id = definitionId(sg["id"]);
+    if (id === undefined) {
+      throw new OpRejectedError("malformed_op", "insert_workflow: every subgraph definition requires a valid id");
+    }
+    if (seen.has(id)) {
+      throw new OpRejectedError("definition_conflict", `insert_workflow: definition id '${id}' is duplicated in the definition tree`);
+    }
+    seen.add(id);
+    const nested = (sg["definitions"] as { subgraphs?: unknown } | undefined)?.subgraphs;
+    if (nested !== undefined && !Array.isArray(nested)) {
+      throw new OpRejectedError("malformed_op", "insert_workflow: nested definitions.subgraphs must be an array");
+    }
+    if (Array.isArray(nested)) validateDefinitionTree(nested, seen);
+  }
+}
+
 function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetCatalog): SuccessfulOutcome {
-  const workflow = op.workflow as unknown;
+  const workflow = scrubPrivateKeys(op.workflow) as unknown;
   if (typeof workflow !== "object" || workflow === null || Array.isArray(workflow)) {
     throw new OpRejectedError("malformed_op", "insert_workflow: workflow must be an object");
   }
@@ -501,6 +539,10 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
   if (subgraphs !== undefined && !Array.isArray(subgraphs)) {
     throw new OpRejectedError("malformed_op", "insert_workflow: definitions.subgraphs must be an array");
   }
+  if (wf["groups"] !== undefined && !Array.isArray(wf["groups"])) {
+    throw new OpRejectedError("malformed_op", "insert_workflow: groups must be an array");
+  }
+  validateDefinitionTree((subgraphs as unknown[] | undefined) ?? []);
 
   const nodes = nodesMap(doc);
   const links = linksMap(doc);
@@ -550,7 +592,7 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
       throw new OpRejectedError("malformed_op", "insert_workflow: every subgraph definition must be an object");
     }
     const sg = candidate as Record<string, unknown>;
-    const id = String(sg["id"]);
+    const id = definitionId(sg["id"])!;
     const scratch = mint({ nodes: [], links: [], definitions: { subgraphs: [sg] } } as unknown as import("./types.js").WorkflowJSON, cat);
     const projected = ((project(scratch, cat).definitions as { subgraphs: Record<string, unknown>[] }).subgraphs)[0]!;
     const canonical = canonicalJson(projected);
@@ -592,6 +634,12 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
   if (nodeWrites.length === 0) mset(stamps, targetKey, stamp);
 
   const meta = metaMap(doc);
+  if (Array.isArray(wf["groups"])) {
+    const currentGroups = Array.isArray(meta.get("groups")) ? meta.get("groups") as unknown[] : [];
+    const merged = new Map<string, unknown>();
+    for (const group of [...currentGroups, ...wf["groups"]]) merged.set(canonicalJson(group), group);
+    mset(meta, "groups", [...merged.entries()].sort(([a], [b]) => codePointCompare(a, b)).map(([, group]) => group));
+  }
   const currentNode = numericId(meta.get("last_node_id")) ?? 0;
   const maxNode = Math.max(currentNode, ...nodeWrites.map(([, id]) => numericId(id) ?? currentNode));
   if (maxNode > currentNode) mset(meta, "last_node_id", maxNode);
