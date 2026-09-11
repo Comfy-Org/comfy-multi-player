@@ -40,7 +40,7 @@ The *rejection* half — "a rejected op leaves the doc untouched", stated in the
 ### KA-5 — IDs are collision-free without coordination
 **Rule:** Use 53-bit random mint; document high-water marks are advisory, never allocators; FE stable IDs must be non-colliding strings.  
 **Why:** Offline peers must create entities without a central allocator.  
-**Enforced by:** `insert_workflow` preserves this boundary: `remapWorkflowIds` allocates in the producer and the applier only validates, rejecting `node_id_collision` or `link_id_collision`. General producer randomness remains **UNGUARDED — see roadmap**.
+**Enforced by:** `insert_workflow` derives scoped node, link, group, and definition ids from the immutable op envelope id plus each original id. It never reads high-water marks or current document state to allocate, so distinct operations remain collision-free and order-independent. General producer randomness remains **UNGUARDED — see roadmap**.
 
 ### KA-6 — Raw struct updates flow host → follower one-way only
 **Rule:** Followers never write the shared doc.  

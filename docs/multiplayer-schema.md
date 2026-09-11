@@ -2053,18 +2053,17 @@ This adds an internal `__stamps` key, not a root-layout change, so
 ## Amendment A19 — 2026-09-11 — atomic workflow-template insertion
 
 ADR-022 adds the standalone-only `insert_workflow` op. Its payload is one
-authoritative workflow containing top-level `nodes`, `links`, and optional
-`definitions.subgraphs`. The producer allocates top-level ids before dispatch
-with `remapWorkflowIds`; the applier rejects seeded or duplicate-payload
-collisions as `node_id_collision` or `link_id_collision`. Concurrent insert ops
-that collide choose the greater op stamp per node/link id. Malformed link tuples
-are `malformed_op`.
+authoritative workflow containing required top-level `nodes` and optional
+`links`, `groups`, and `definitions`. The applier deterministically remaps every
+inserted id from the immutable `op_id`, graph scope, id kind, and original id,
+then rewrites internal references. Producers emit raw payloads. Distinct ops
+cannot collide; exact replay derives the same ids. Duplicate ids within one raw
+payload remain collision errors. Malformed link tuples are `malformed_op`.
 
-Definitions use projected canonical content as identity. If an incoming id is
-already present with identical content, the definition write is skipped. If
-the content differs, the op is rejected as `definition_conflict`. Definition
-ids are globally unique across ancestors and every nested branch;
-definition-interior node ids remain in their separate namespace.
+Definition ids and every nested definition-interior graph id are remapped in
+scoped namespaces. Definition-instance `type` values are rewritten with them,
+so a consumer definition id is never used as a live id and no live-definition
+conflict path remains.
 
 The whole merge occurs in one Yjs transaction and claims the
 `("insert_workflow", op_id)` stamp target. Exact replay is stopped by the

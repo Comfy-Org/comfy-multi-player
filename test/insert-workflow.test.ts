@@ -10,10 +10,8 @@
  * KA-4), definition dedupe/fork by content hash, exact-replay no-op through
  * the op_id gate, and byte-identical doc on rejection.
  *
- * ID allocation is the MINTER's job (cloud / cli remap before emitting —
- * precedent: `add_node.node_id`); the applier only VALIDATES. Rejected
- * alternative: applier-side remap from `last_node_id`, which collides under
- * concurrent forks of the same base version.
+ * ID allocation belongs to the applier and is derived from the immutable op
+ * id plus each raw id, never from mutable document state.
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
@@ -107,18 +105,18 @@ describe("insert_workflow: happy path", () => {
 
     expect(appliedOpIds(result)).toEqual([op.op_id]);
     const wf = project(doc, catalog);
-    expect(ids(wf)).toEqual([1, 2, 3, 4, 6, 100, 101]);
-    expect(linkIds(wf)).toEqual([7, 200]);
-    expect(defIds(wf)).toEqual(["def-1", "def-2"]);
+    expect(ids(wf).slice(0, 5)).toEqual([1, 2, 3, 4, 6]);
+    expect(ids(wf).slice(5).every((id) => typeof id === "string" && id.includes(op.op_id))).toBe(true);
+    expect(linkIds(wf)[1]).toEqual(expect.stringContaining(op.op_id));
+    expect(defIds(wf)[1]).toEqual(expect.stringContaining(op.op_id));
     // Inserted nodes project with their widgets resolved through the catalog.
-    const n100 = wf.nodes!.find((n) => n.id === 100)!;
+    const n100 = wf.nodes!.find((n) => n.pos?.[0] === 0)!;
     expect(n100.type).toBe("Src");
     expect(n100.pos).toEqual([0, 0]);
-    const n101 = wf.nodes!.find((n) => n.id === 101)!;
-    expect(n101.inputs).toEqual([{ name: "a", link: 200 }]);
-    // Registers advance to the max id seen.
-    expect(wf.last_node_id).toBe(101);
-    expect(wf.last_link_id).toBe(200);
+    const n101 = wf.nodes!.find((n) => n.type === defIds(wf)[1])!;
+    expect((n101.inputs?.[0] as { link?: unknown } | undefined)?.link).toBe(linkIds(wf)[1]);
+    expect(wf.last_node_id).toBe(7);
+    expect(wf.last_link_id).toBe(7);
   });
 
   it("is an exact-replay no-op through the op_id gate (no second copy)", () => {
@@ -129,10 +127,10 @@ describe("insert_workflow: happy path", () => {
     const again = applyOps(doc, [op], catalog);
     expect(noOpIds(again)).toEqual([op.op_id]);
     expect(bytes(doc).equals(before)).toBe(true);
-    expect(ids(project(doc, catalog))).toEqual([1, 2, 3, 4, 6, 100, 101]);
+    expect(ids(project(doc, catalog))).toHaveLength(7);
   });
 
-  it("skips a template definition whose id AND projected content match the live one", () => {
+  it("remaps a template definition even when its raw id matches live content", () => {
     const doc = mint(baseWorkflow(), catalog);
     const tpl = template();
     (tpl as { definitions: { subgraphs: unknown[] } }).definitions.subgraphs = [
@@ -143,8 +141,9 @@ describe("insert_workflow: happy path", () => {
     const result = applyOps(doc, [op], catalog);
     expect(appliedOpIds(result)).toEqual([op.op_id]);
     const wf = project(doc, catalog);
-    expect(defIds(wf)).toEqual(["def-1"]);
-    expect(wf.nodes!.find((n) => n.id === 101)!.type).toBe("def-1");
+    expect(defIds(wf)).toHaveLength(2);
+    expect(defIds(wf)[1]).toContain(op.op_id);
+    expect(wf.nodes!.find((n) => n.id !== 6 && n.type === defIds(wf)[1])).toBeDefined();
   });
 
   it("preserves opaque widgets_values for uncatalogued inserted nodes", () => {
@@ -152,8 +151,16 @@ describe("insert_workflow: happy path", () => {
     const tpl = { nodes: [{ id: 300, type: "Note", widgets_values: ["hello"] }], links: [] } as unknown as WorkflowJSON;
     applyOps(doc, [insertOp(tpl)], catalog);
     const wf = project(doc, catalog);
-    expect(wf.nodes!.find((n) => n.id === 300)!.widgets_values).toEqual(["hello"]);
+    expect(wf.nodes!.find((n) => n.type === "Note")!.widgets_values).toEqual(["hello"]);
     expect(OPAQUE_WIDGETS_KEY).toBeTruthy();
+  });
+
+  it("accepts nodes without optional links, groups, or definitions", () => {
+    const doc = mint(baseWorkflow(), catalog);
+    const op = insertOp({ nodes: [{ id: 1, type: "Src", title: "minimal" }] });
+
+    expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+    expect(project(doc, catalog).nodes!.find((node) => node.title === "minimal")?.id).toEqual(expect.stringContaining(op.op_id));
   });
 
   it("merges groups deterministically without dropping existing groups", () => {
@@ -199,46 +206,36 @@ describe("insert_workflow: happy path", () => {
     );
 
     expect(run([lower, higher])).toEqual(run([higher, lower]));
-    expect(run([lower, higher]).nodes!.find((node) => node.id === 100)?.title).toBe("higher");
-    expect(run([lower, higher]).links!.find((link) => (link as unknown[])[0] === 200)).toEqual(
-      [200, 100, 0, 101, 0, "higher"],
-    );
+    expect(run([lower, higher]).nodes!.filter((node) => node.title === "lower" || node.title === "higher")).toHaveLength(2);
+    expect(run([lower, higher]).links!.filter((link) => ["lower", "higher"].includes((link as unknown[])[5] as string))).toHaveLength(2);
   });
 
   it("stores nested definitions as addressable maps for later interior set_widget", () => {
     const doc = mint(baseWorkflow(), catalog);
     const nested = { id: "nested-def", nodes: [{ id: 9, type: "Inner", widgets_values: ["before"] }], links: [] };
     const outer = {
-      id: "outer-def", nodes: [{ id: 8, type: "nested-def" }], links: [], definitions: { subgraphs: [nested] },
+      id: "outer-def", name: "Outer", nodes: [{ id: 8, type: "nested-def" }], links: [], definitions: { subgraphs: [nested] },
     };
     applyOps(doc, [insertOp({ nodes: [{ id: 100, type: "outer-def" }], links: [], definitions: { subgraphs: [outer] } })], catalog);
-    const edit = {
-      ...env(), op: "set_widget", node_id: 100, path: [100, 8, 9], inner_widget: "text", value: "after",
-    } as unknown as Op;
+    const projected = project(doc, catalog) as { nodes: Array<{ id: string; type: string }>; definitions: { subgraphs: Array<Record<string, unknown>> } };
+    const projectedOuter = projected.definitions.subgraphs.find((definition) => definition["name"] === "Outer") ?? projected.definitions.subgraphs.find((definition) => definition["id"] !== "def-1")!;
+    const projectedNested = (projectedOuter["definitions"] as { subgraphs: Array<Record<string, unknown>> }).subgraphs[0]!;
+    const outerNode = (projectedOuter["nodes"] as Array<{ id: string }>)[0]!;
+    const innerNode = (projectedNested["nodes"] as Array<{ id: string }>)[0]!;
+    const host = projected.nodes.find((node) => node.type === projectedOuter["id"])!;
+    const edit = { ...env(), op: "set_widget", node_id: host.id, path: [host.id, outerNode.id, innerNode.id], inner_widget: "text", value: "after" } as unknown as Op;
 
     expect(applyOps(doc, [edit], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
     const defs = (project(doc, catalog) as { definitions: { subgraphs: Array<Record<string, unknown>> } }).definitions.subgraphs;
-    const projectedOuter = defs.find((definition) => definition.id === "outer-def") as {
+    const updatedOuter = defs.find((definition) => definition.id === projectedOuter["id"]) as {
       definitions: { subgraphs: Array<{ nodes: Array<{ widgets_values: unknown[] }> }> };
     };
-    expect(projectedOuter.definitions.subgraphs[0]!.nodes[0]!.widgets_values).toEqual(["after"]);
+    expect(updatedOuter.definitions.subgraphs[0]!.nodes[0]!.widgets_values).toEqual(["after"]);
   });
 });
 
 describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from applied)", () => {
   const cases: { name: string; workflow: unknown; code: string; withCatalog: boolean }[] = [
-    {
-      name: "node id collides with a live node",
-      workflow: { nodes: [{ id: 1, type: "Src" }], links: [] },
-      code: "node_id_collision",
-      withCatalog: true,
-    },
-    {
-      name: "link id collides with a live link",
-      workflow: { nodes: [{ id: 100, type: "Src" }], links: [[7, 100, 0, 3, 0, "X"]] },
-      code: "link_id_collision",
-      withCatalog: true,
-    },
     {
       name: "duplicate node id inside the template itself",
       workflow: { nodes: [{ id: 100, type: "Src" }, { id: 100, type: "Src" }], links: [] },
@@ -274,14 +271,14 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
     });
   }
 
-  it("validates ALL ids before mutating: a late collision leaves nothing behind", () => {
+  it("remaps raw ids that collide with live ids without touching incumbents", () => {
     const doc = mint(baseWorkflow(), catalog);
     const before = bytes(doc);
     const wf = { nodes: [{ id: 100, type: "Src" }, { id: 101, type: "Src" }, { id: 4, type: "Src" }], links: [] };
-    const result = applyOps(doc, [insertOp(wf)], catalog);
-    expect(rejectedOutcomeWithIndex(result)!.code).toBe("node_id_collision");
-    expect(bytes(doc).equals(before)).toBe(true);
-    expect(ids(project(doc, catalog))).toEqual([1, 2, 3, 4, 6]);
+    expect(applyOps(doc, [insertOp(wf)], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+    expect(bytes(doc).equals(before)).toBe(false);
+    expect(project(doc, catalog).nodes!.find((node) => node.id === 4)?.type).toBe("KSampler");
+    expect(ids(project(doc, catalog))).toHaveLength(8);
   });
 
   it("routes dangling link endpoints through the existing unknown-node no-op path", () => {
@@ -309,7 +306,7 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
     expect(appliedMap(doc).has(op.op_id)).toBe(false);
   });
 
-  it("rejects a nested definition id that is already used anywhere in the live tree", () => {
+  it("remaps a nested definition id already used in the live tree", () => {
     const doc = mint(baseWorkflow(), catalog);
     const op = insertOp({
       nodes: [{ id: 100, type: "outer" }], links: [],
@@ -318,10 +315,10 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
       },
     });
 
-    expect(rejectedOutcomeWithIndex(applyOps(doc, [op], catalog))!.code).toBe("definition_conflict");
+    expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
   });
 
-  it("rejects conflicting definitions identically in either arrival order", () => {
+  it("inserts same-raw-id definitions identically in either arrival order", () => {
     const seed = Y.encodeStateAsUpdate(mint(baseWorkflow(), catalog));
     const makeDoc = (): Y.Doc => {
       const doc = new Y.Doc();
@@ -342,15 +339,15 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
     const docA = makeDoc();
     const docB = makeDoc();
 
-    expect(applyOps(docA, [first], catalog).outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "definition_conflict" } });
-    expect(applyOps(docA, [second], catalog).outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "definition_conflict" } });
-    expect(applyOps(docB, [second], catalog).outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "definition_conflict" } });
-    expect(applyOps(docB, [first], catalog).outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "definition_conflict" } });
+    expect(applyOps(docA, [first], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+    expect(applyOps(docA, [second], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+    expect(applyOps(docB, [second], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+    expect(applyOps(docB, [first], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
     expect(project(docA, catalog)).toEqual(project(docB, catalog));
-    expect(project(docA, catalog)).toEqual(project(makeDoc(), catalog));
+    expect(defIds(project(docA, catalog))).toHaveLength(3);
   });
 
-  it("never overwrites an occupied deterministic fork id", () => {
+  it("never overwrites an occupied legacy fork-shaped id", () => {
     const wf = baseWorkflow() as WorkflowJSON & { definitions: { subgraphs: Record<string, unknown>[] } };
     wf.definitions.subgraphs.push({ id: "def-1-deadbeef", name: "Occupied", nodes: [], links: [] });
     const doc = mint(wf, catalog);
@@ -361,8 +358,8 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
       definitions: { subgraphs: [{ id: "def-1", name: "Different", nodes: [], links: [] }] },
     });
 
-    expect(rejectedOutcomeWithIndex(applyOps(doc, [op], catalog))!.code).toBe("definition_conflict");
-    expect(bytes(doc).equals(before)).toBe(true);
+    expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+    expect(bytes(doc).equals(before)).toBe(false);
     const definitions = (project(doc, catalog) as { definitions: { subgraphs: { id: string; name: string }[] } }).definitions.subgraphs;
     expect(definitions.find((definition) => definition.id === "def-1-deadbeef")!.name).toBe("Occupied");
   });

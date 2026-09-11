@@ -101,6 +101,7 @@ import {
   stampsMap,
   widgetStorageOf,
 } from "./doc.js";
+import { remapInsertedWorkflowIds } from "./remap.js";
 import { sha256Hex } from "./digest.js";
 import { CMP_EVENT_SCHEMA_VERSION, emitCmpEvent, type CmpCallContext } from "./events.js";
 import { mint, mintDefinition } from "./mint.js";
@@ -536,7 +537,7 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
   if (typeof workflow !== "object" || workflow === null || Array.isArray(workflow)) {
     throw new OpRejectedError("malformed_op", "insert_workflow: workflow must be an object");
   }
-  const wf = workflow as Record<string, unknown>;
+  let wf = workflow as Record<string, unknown>;
   if (!Array.isArray(wf["nodes"]) || (wf["links"] !== undefined && !Array.isArray(wf["links"]))) {
     throw new OpRejectedError("malformed_op", "insert_workflow: nodes and links must be arrays");
   }
@@ -552,6 +553,9 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
     throw new OpRejectedError("malformed_op", "insert_workflow: groups must be an array");
   }
   validateDefinitionTree((subgraphs as unknown[] | undefined) ?? []);
+  wf = remapInsertedWorkflowIds(wf as unknown as import("./types.js").WorkflowJSON, op.op_id) as unknown as Record<string, unknown>;
+  const remappedDefinitions = wf["definitions"] as { subgraphs?: unknown[] } | undefined;
+  const remappedSubgraphs = remappedDefinitions?.subgraphs ?? [];
 
   const nodes = nodesMap(doc);
   const links = linksMap(doc);
@@ -624,9 +628,9 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
       if (nested) validateAgainstStored(nested, false);
     }
   };
-  validateAgainstStored((subgraphs as unknown[] | undefined) ?? [], true);
+  validateAgainstStored(remappedSubgraphs, true);
   const definitionWrites: Array<[string, Y.Map<unknown>]> = [];
-  for (const candidate of (subgraphs as unknown[] | undefined) ?? []) {
+  for (const candidate of remappedSubgraphs) {
     if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
       throw new OpRejectedError("malformed_op", "insert_workflow: every subgraph definition must be an object");
     }

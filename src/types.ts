@@ -159,18 +159,21 @@ export interface AddNodeOp extends OpBase {
  * Merge a workflow template (nodes, links, `definitions.subgraphs`) into an
  * existing doc in one transaction (ADR-022; agent-subgraph TDD V1.5).
  *
- * The MINTER (cloud / cli) remaps template node and link ids so they are
- * collision-free against the live doc before emitting (see
- * `remapWorkflowIds`). A collision with seeded content is rejected; racing
- * insert ops choose the greater op stamp per node/link id so replay converges.
- * Subgraph definitions whose id already exists are deduped when identical.
- * Reusing an id for different content is rejected as `definition_conflict`;
- * definition ids are globally unique across the full nested tree.
+ * The applier remaps every carried id deterministically from `op_id` and the
+ * original id. Exact replay therefore chooses the same ids, while distinct
+ * insert ops cannot collide or depend on document state. `links`, `groups`,
+ * and `definitions` are optional and default to empty.
  */
 export interface InsertWorkflowOp extends OpBase {
   op: "insert_workflow";
   /** The template to merge — AUTHORITATIVE, nodes inserted verbatim after id validation. */
-  workflow: WorkflowJSON;
+  workflow: {
+    nodes: WorkflowNode[];
+    links?: unknown[];
+    groups?: unknown[];
+    definitions?: { subgraphs?: unknown[]; [key: string]: unknown };
+    [key: string]: unknown;
+  };
 }
 
 /** Autogrow slot descriptor carried by a `connect` (vocabulary §1.2 / §8.4). */

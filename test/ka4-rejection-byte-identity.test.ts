@@ -190,24 +190,24 @@ const CASES: Row[] = [
   // ---- insert_workflow ----------------------------------------------------
   {
     kind: "insert_workflow",
-    why: "inserted node id collides with a live node",
+    why: "duplicate raw node ids are ambiguous before deterministic remapping",
     code: "node_id_collision",
-    build: () => ({ op: "insert_workflow", ...env(), workflow: { nodes: [{ id: 1, type: "Src" }], links: [] } }) as Op,
+    build: () => ({ op: "insert_workflow", ...env(), workflow: { nodes: [{ id: 1, type: "Src" }, { id: 1, type: "Src" }] } }) as Op,
   },
   {
     kind: "insert_workflow",
-    why: "inserted link id collides with a live link",
+    why: "duplicate raw link ids are ambiguous before deterministic remapping",
     code: "link_id_collision",
-    build: () => ({ op: "insert_workflow", ...env(), workflow: { nodes: [], links: [[7, 2, 0, 3, 0, "X"]] } }) as Op,
+    build: () => ({ op: "insert_workflow", ...env(), workflow: { nodes: [], links: [[7, 2, 0, 3, 0, "X"], [7, 2, 0, 3, 0, "X"]] } }) as Op,
   },
   {
     kind: "insert_workflow",
-    why: "inserted definition conflicts with a live definition",
+    why: "duplicate raw definition ids are ambiguous before deterministic remapping",
     code: "definition_conflict",
     build: () => ({
       op: "insert_workflow",
       ...env(),
-      workflow: { nodes: [], links: [], definitions: { subgraphs: [{ id: "def-1", name: "different", nodes: [], links: [] }] } },
+      workflow: { nodes: [], definitions: { subgraphs: [{ id: "d", nodes: [], links: [] }, { id: "d", nodes: [], links: [] }] } },
     }) as Op,
   },
 

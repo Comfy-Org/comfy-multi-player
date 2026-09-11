@@ -20,13 +20,11 @@ still cheap. That will not stay true.
 
 ### D0. Workflow templates insert as one standalone op
 
-**Accepted by ADR-022.** `insert_workflow` carries a complete top-level graph and optional
-`definitions.subgraphs`. The producer remaps top-level node and link ids before dispatch; the
-applier never allocates. Seeded-id collisions are rejected; collisions between insert ops use the
-greater op stamp as a deterministic per-id winner so opposite legal replay orders converge.
-Definition ids dedupe by canonical projected content. Reusing an id for different content is a
-`definition_conflict`; ids are globally unique across the nested definition tree. The op is stamped,
-exact-replay idempotent, and not batchable.
+**Accepted by ADR-022.** `insert_workflow` requires `nodes`; `links`, `groups`, and `definitions`
+are optional and default to empty. Producers send raw workflows. The applier remaps every carried
+id and internal reference deterministically from the op envelope id plus the original id and graph
+scope. Different ops therefore cannot collide or depend on arrival order, while exact replay derives
+the same ids and is idempotent. The op is stamped and not batchable.
 
 ### D1. Widgets are addressed by name, not by position
 
