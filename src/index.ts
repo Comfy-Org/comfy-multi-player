@@ -2,7 +2,7 @@
  * @comfyorg/comfy-multi-player — shared workflow-document package.
  *
  * One implementation of op→doc semantics, used identically by the browser
- * and the server doc host. The op vocabulary is frozen at six kinds; the
+ * and the server doc host. The op vocabulary is frozen at seven kinds; the
  * normative contract is comfy-cli's `docs/op-vocabulary-v1.md` and the stamp
  * shapes minted by `comfy_cli/workflow_ops.py` (`_new_op`), both pinned at
  * comfy-cli commit `7e732242d971daf0d2d30f22f997abfacd78986e` — by SHA and
@@ -58,6 +58,7 @@ export {
   type CmpEventType,
 } from "./events.js";
 export * from "./collab-trace.js";
+export * from "./remap.js";
 /**
  * ADR-004 follower read-surface. These helpers expose the established wire
  * layout only so the frontend follower can consume host updates. They are

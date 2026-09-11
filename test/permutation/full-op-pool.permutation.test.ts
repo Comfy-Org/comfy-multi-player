@@ -50,8 +50,8 @@ const PRECONDITIONS = [
   "interior-or-inputcount",
   "promoted-or-autogrow",
 ] as const;
-// 8² kind pairs × 8 preconditions × 2 actor classes × 4 stamp relations ×
-// 2 batch modes × 2 arrival orders = 16,384 executions (<20,000).
+// The bounded exhaustive subset remains below the normal-suite case budget;
+// additional kind combinations are covered by deterministic sampling below.
 const PAIR_EXECUTIONS = 16_384;
 const SAMPLED_RUNS = 1_696;
 const SAMPLED_EXECUTIONS = SAMPLED_RUNS * 2;
@@ -235,6 +235,8 @@ function makeOp(
           links: [],
         },
       };
+    case "insert_workflow":
+      return { ...env, op: "insert_workflow", workflow: { nodes: [node(140 + serial, "Aux", [], [], [value])], links: [] } };
     case "reset_doc":
       return { ...env, op: "reset_doc", workflow: { nodes: [], links: [] } };
   }
