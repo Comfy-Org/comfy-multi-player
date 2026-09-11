@@ -127,6 +127,16 @@ function assertCoherentGraph(wf: WorkflowJSON, owner: ConnectOp, repro: string):
   const live = new Set(tupleIds);
   const refs: string[] = [];
   for (const node of wf.nodes) {
+    // Counting two live refs alone would also accept refs on the wrong ports.
+    // Every non-owner port must be empty, including the displaced writer's.
+    for (const [slot, input] of ((node.inputs ?? []) as Array<{ link?: unknown }>).entries()) {
+      const ownsInput = node.id === owner.to_node && slot === owner.to_slot;
+      expect(input.link == null ? null : String(input.link), repro).toBe(ownsInput ? "700" : null);
+    }
+    for (const [slot, output] of ((node.outputs ?? []) as Array<{ links?: unknown[] }>).entries()) {
+      const ownsOutput = node.id === owner.from_node && slot === owner.from_slot;
+      expect((output.links ?? []).map(String), repro).toEqual(ownsOutput ? ["700"] : []);
+    }
     for (const input of (node.inputs ?? []) as Array<{ link?: unknown }>) if (input.link != null) {
       refs.push(String(input.link));
       expect(live.has(String(input.link)), repro).toBe(true);
