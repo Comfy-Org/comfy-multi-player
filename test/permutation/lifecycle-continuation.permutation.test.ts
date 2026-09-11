@@ -189,6 +189,45 @@ describe("lifetime continuations and snapshot-delta recovery", () => {
 });
 
 describe("precise rejection vs consumed no-op and batch abort", () => {
+  // https://github.com/Comfy-Org/comfy-multi-player/pull/184#discussion_r3993662324
+  // The matrix below cannot compare whole-batch bytes when a valid prefix
+  // changes the document. Isolate the rejected suffix after that same prefix.
+  it("preserves post-deletion bytes across a rejected suffix and its retry", () => {
+    const doc = mint({
+      ...base,
+      nodes: [...base.nodes, { ...base.nodes[0]!, id: 2, widgets_values: ["untouched"] }],
+      last_node_id: 2,
+    }, catalog);
+    const deletion: Op = { op: "delete_node", ...envelope(20, 10), node_id: 1, removed_links: [] };
+    const candidate = { ...write(21, 20, "candidate", "0"), widget: null } as unknown as Op;
+    const suffix: Op = { ...write(22, 30, "suffix", "0"), node_id: 2 };
+    try {
+      expect(applyOps(doc, [deletion], catalog).outcomes).toEqual([
+        { op_id: deletion.op_id, outcome: "applied" },
+      ]);
+      expect(project(doc, catalog).nodes.map((node) => node.id)).toEqual([2]);
+      const before = Y.encodeStateAsUpdate(doc);
+      const rootNames = [...doc.share.keys()].sort();
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = applyOps(doc, [candidate, suffix], catalog);
+        expect(result.outcomes).toEqual([
+          { op_id: candidate.op_id, outcome: "rejected", reason: expect.objectContaining({ code: "malformed_op" }) },
+          { op_id: suffix.op_id, outcome: "rejected", reason: expect.objectContaining({ code: "batch_aborted" }) },
+        ]);
+        expect(Y.encodeStateAsUpdate(doc), `rejected suffix attempt ${attempt}`).toEqual(before);
+        expect([...doc.share.keys()].sort()).toEqual(rootNames);
+        expect([...doc.getMap("__applied").keys()]).toEqual([deletion.op_id]);
+      }
+      // The aborted suffix is still eligible on a subsequent independent call.
+      expect(applyOps(doc, [suffix], catalog).outcomes).toEqual([
+        { op_id: suffix.op_id, outcome: "applied" },
+      ]);
+      expect(project(doc, catalog).nodes[0]?.widgets_values).toEqual(["suffix"]);
+    } finally {
+      doc.destroy();
+    }
+  });
+
   // A6's document-dependent unknown-widget rejection is intentionally NOT
   // conflated with op-only malformed shape. Include the valid neighbor so an
   // implementation rejecting every candidate cannot satisfy this matrix.
