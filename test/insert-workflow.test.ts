@@ -147,41 +147,6 @@ describe("insert_workflow: happy path", () => {
     expect(wf.nodes!.find((n) => n.id === 101)!.type).toBe("def-1");
   });
 
-  it("forks a template definition whose id collides but content differs, rewriting inserted instance types", () => {
-    const doc = mint(baseWorkflow(), catalog);
-    const tpl = template();
-    (tpl as { definitions: { subgraphs: unknown[] } }).definitions.subgraphs = [
-      { id: "def-1", name: "D-changed", nodes: [{ id: 27, type: "Inner", widgets_values: ["other"] }], links: [] },
-    ];
-    tpl.nodes![1] = { id: 101, type: "def-1", inputs: [{ name: "a", link: 200 }] };
-    const op = insertOp(tpl);
-    const result = applyOps(doc, [op], catalog);
-    expect(appliedOpIds(result)).toEqual([op.op_id]);
-    const wf = project(doc, catalog);
-    const forked = defIds(wf).filter((id) => id !== "def-1");
-    expect(forked).toHaveLength(1);
-    expect(forked[0]).toMatch(/^def-1-[0-9a-f]{8}$/);
-    // Live definition untouched; existing instance (node 6) keeps pointing at it.
-    const live = (wf as { definitions: { subgraphs: { id: string; name: string }[] } }).definitions.subgraphs;
-    expect(live.find((s) => s.id === "def-1")!.name).toBe("D");
-    expect(wf.nodes!.find((n) => n.id === 6)!.type).toBe("def-1");
-    // Inserted instance points at the fork.
-    expect(wf.nodes!.find((n) => n.id === 101)!.type).toBe(forked[0]);
-  });
-
-  it("forks deterministically: the same content always gets the same fork id", () => {
-    const tplA = template();
-    (tplA as { definitions: { subgraphs: unknown[] } }).definitions.subgraphs = [
-      { id: "def-1", name: "Z", nodes: [{ id: 27, type: "Inner", widgets_values: ["z"] }], links: [] },
-    ];
-    tplA.nodes![1] = { id: 101, type: "def-1" };
-    const docA = mint(baseWorkflow(), catalog);
-    const docB = mint(baseWorkflow(), catalog);
-    applyOps(docA, [insertOp(structuredClone(tplA))], catalog);
-    applyOps(docB, [insertOp(structuredClone(tplA))], catalog);
-    expect(defIds(project(docA, catalog))).toEqual(defIds(project(docB, catalog)));
-  });
-
   it("preserves opaque widgets_values for uncatalogued inserted nodes", () => {
     const doc = mint(baseWorkflow(), catalog);
     const tpl = { nodes: [{ id: 300, type: "Note", widgets_values: ["hello"] }], links: [] } as unknown as WorkflowJSON;
@@ -249,6 +214,63 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
     expect(rejectedOutcomeWithIndex(result)!.code).toBe("node_id_collision");
     expect(bytes(doc).equals(before)).toBe(true);
     expect(ids(project(doc, catalog))).toEqual([1, 2, 3, 4, 6]);
+  });
+
+  it("rejects dangling link endpoints atomically", () => {
+    const doc = mint(baseWorkflow(), catalog);
+    const before = bytes(doc);
+    const op = insertOp({ nodes: [{ id: 100, type: "Src" }], links: [[200, 100, 0, 999, 0, "X"]] });
+    const result = applyOps(doc, [op], catalog);
+
+    expect(rejectedOutcomeWithIndex(result)!.code).toBe("malformed_op");
+    expect(bytes(doc).equals(before)).toBe(true);
+    expect(appliedMap(doc).has(op.op_id)).toBe(false);
+  });
+
+  it("rejects conflicting definitions identically in either arrival order", () => {
+    const seed = Y.encodeStateAsUpdate(mint(baseWorkflow(), catalog));
+    const makeDoc = (): Y.Doc => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, seed);
+      return doc;
+    };
+    const makeConflict = (name: string, nodeId: number, opId: string): Op =>
+      insertOp(
+        {
+          nodes: [{ id: nodeId, type: "def-1" }],
+          links: [],
+          definitions: { subgraphs: [{ id: "def-1", name, nodes: [], links: [] }] },
+        },
+        { op_id: opId },
+      );
+    const first = makeConflict("A", 100, "a".repeat(32));
+    const second = makeConflict("B", 101, "b".repeat(32));
+    const docA = makeDoc();
+    const docB = makeDoc();
+
+    expect(applyOps(docA, [first], catalog).outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "definition_conflict" } });
+    expect(applyOps(docA, [second], catalog).outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "definition_conflict" } });
+    expect(applyOps(docB, [second], catalog).outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "definition_conflict" } });
+    expect(applyOps(docB, [first], catalog).outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "definition_conflict" } });
+    expect(project(docA, catalog)).toEqual(project(docB, catalog));
+    expect(project(docA, catalog)).toEqual(project(makeDoc(), catalog));
+  });
+
+  it("never overwrites an occupied deterministic fork id", () => {
+    const wf = baseWorkflow() as WorkflowJSON & { definitions: { subgraphs: Record<string, unknown>[] } };
+    wf.definitions.subgraphs.push({ id: "def-1-deadbeef", name: "Occupied", nodes: [], links: [] });
+    const doc = mint(wf, catalog);
+    const before = bytes(doc);
+    const op = insertOp({
+      nodes: [{ id: 100, type: "def-1" }],
+      links: [],
+      definitions: { subgraphs: [{ id: "def-1", name: "Different", nodes: [], links: [] }] },
+    });
+
+    expect(rejectedOutcomeWithIndex(applyOps(doc, [op], catalog))!.code).toBe("definition_conflict");
+    expect(bytes(doc).equals(before)).toBe(true);
+    const definitions = (project(doc, catalog) as { definitions: { subgraphs: { id: string; name: string }[] } }).definitions.subgraphs;
+    expect(definitions.find((definition) => definition.id === "def-1-deadbeef")!.name).toBe("Occupied");
   });
 });
 

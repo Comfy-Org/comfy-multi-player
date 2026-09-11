@@ -521,12 +521,17 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
   }
   const seenLinks = new Set<string>();
   for (const candidate of (wf["links"] as unknown[] | undefined) ?? []) {
-    if (!Array.isArray(candidate) || candidate[0] === undefined) {
-      throw new OpRejectedError("malformed_op", "insert_workflow: every link must be a tuple with an id");
+    if (!Array.isArray(candidate) || candidate[0] === undefined || candidate[1] === undefined || candidate[3] === undefined) {
+      throw new OpRejectedError("malformed_op", "insert_workflow: every link must be a tuple with an id and two endpoints");
     }
     const key = String(candidate[0]);
     if (links.has(key) || seenLinks.has(key)) {
       throw new OpRejectedError("link_id_collision", `insert_workflow: link id '${key}' collides`);
+    }
+    const source = String(candidate[1]);
+    const target = String(candidate[3]);
+    if ((!nodes.has(source) && !seenNodes.has(source)) || (!nodes.has(target) && !seenNodes.has(target))) {
+      throw new OpRejectedError("malformed_op", `insert_workflow: link '${key}' references an unknown node`);
     }
     seenLinks.add(key);
   }
@@ -540,7 +545,6 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
   const cat = catalog ?? { types: {} };
   const defs = definitionsMap(doc);
   const definitionWrites: Array<[string, Y.Map<unknown>]> = [];
-  const typeRewrites = new Map<string, string>();
   for (const candidate of (subgraphs as unknown[] | undefined) ?? []) {
     if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
       throw new OpRejectedError("malformed_op", "insert_workflow: every subgraph definition must be an object");
@@ -550,21 +554,17 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
     const scratch = mint({ nodes: [], links: [], definitions: { subgraphs: [sg] } } as unknown as import("./types.js").WorkflowJSON, cat);
     const projected = ((project(scratch, cat).definitions as { subgraphs: Record<string, unknown>[] }).subgraphs)[0]!;
     const canonical = canonicalJson(projected);
-    let writeId = id;
     const live = defs.get(id);
     if (live) {
       if (canonicalJson(projectDefinition(live, cat)) === canonical) continue;
-      writeId = `${id}-${sha256Hex(canonical).slice(0, 8)}`;
-      typeRewrites.set(id, writeId);
+      throw new OpRejectedError("definition_conflict", `insert_workflow: definition id '${id}' has different content`);
     }
-    const rewritten = { ...sg, id: writeId };
-    definitionWrites.push([writeId, mintDefinition(rewritten, cat)]);
+    definitionWrites.push([id, mintDefinition(sg, cat)]);
   }
 
   const nodeWrites: Array<[string, unknown, Y.Map<unknown>]> = [];
   for (const candidate of wf["nodes"] as import("./types.js").WorkflowNode[]) {
     const node = structuredClone(candidate);
-    node.type = typeRewrites.get(node.type) ?? node.type;
     const wv = node.widgets_values;
     const entry = catalogEntry(catalog, node.type);
     if (!catalog && Array.isArray(wv) && wv.length > 0) {

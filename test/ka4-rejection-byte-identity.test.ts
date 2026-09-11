@@ -200,6 +200,16 @@ const CASES: Row[] = [
     code: "link_id_collision",
     build: () => ({ op: "insert_workflow", ...env(), workflow: { nodes: [], links: [[7, 2, 0, 3, 0, "X"]] } }) as Op,
   },
+  {
+    kind: "insert_workflow",
+    why: "inserted definition conflicts with a live definition",
+    code: "definition_conflict",
+    build: () => ({
+      op: "insert_workflow",
+      ...env(),
+      workflow: { nodes: [], links: [], definitions: { subgraphs: [{ id: "def-1", name: "different", nodes: [], links: [] }] } },
+    }) as Op,
+  },
 
   // ---- set_widget ----------------------------------------------------------
   {
@@ -649,6 +659,7 @@ const ALL_REJECTION_CODES = [
   "invalid_node_payload",
   "node_id_collision",
   "link_id_collision",
+  "definition_conflict",
   "unknown_widget",
   "opaque_widgets",
   "widget_out_of_range",
