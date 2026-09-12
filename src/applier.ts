@@ -585,6 +585,7 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
     seenNodes.add(key);
   }
   const seenLinks = new Set<string>();
+  const linkWrites: unknown[][] = [];
   for (const candidate of (wf["links"] as unknown[] | undefined) ?? []) {
     if (!Array.isArray(candidate) || candidate[0] === undefined || candidate[1] === undefined || candidate[3] === undefined) {
       throw new OpRejectedError("malformed_op", "insert_workflow: every link must be a tuple with an id and two endpoints");
@@ -600,12 +601,13 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
       }
       if (compareStampKeys(stamp, incumbent) <= 0) return "lww-dropped";
     }
+    seenLinks.add(key);
     const source = String(candidate[1]);
     const target = String(candidate[3]);
     if ((!nodes.has(source) && !seenNodes.has(source)) || (!nodes.has(target) && !seenNodes.has(target))) {
-      return "no-op";
+      continue;
     }
-    seenLinks.add(key);
+    linkWrites.push(candidate);
   }
 
   const targetKey = stampTargetKey(op);
@@ -664,7 +666,7 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
   }
 
   for (const [id, definition] of definitionWrites) mset(defs, id, definition);
-  for (const link of (wf["links"] as unknown[] | undefined) ?? []) {
+  for (const link of linkWrites) {
     const key = String((link as unknown[])[0]);
     mset(links, key, cloneForMap(link, "insert_workflow: link"));
     mset(stamps, JSON.stringify(["insert_workflow_link", key]), stamp);
@@ -690,9 +692,11 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
   const maxNode = Math.max(currentNode, ...nodeWrites.map(([, id]) => numericId(id) ?? currentNode));
   if (maxNode > currentNode) mset(meta, "last_node_id", maxNode);
   const currentLink = numericId(meta.get("last_link_id")) ?? 0;
-  const maxLink = Math.max(currentLink, ...((wf["links"] as unknown[] | undefined) ?? []).map((link) => numericId((link as unknown[])[0]) ?? currentLink));
+  const maxLink = Math.max(currentLink, ...linkWrites.map((link) => numericId(link[0]) ?? currentLink));
   if (maxLink > currentLink) mset(meta, "last_link_id", maxLink);
-  return "applied";
+  return nodeWrites.length > 0 || linkWrites.length > 0 || definitionWrites.length > 0 || ((wf["groups"] as unknown[] | undefined)?.length ?? 0) > 0
+    ? "applied"
+    : "no-op";
 }
 
 // ---------------------------------------------------------------------------

@@ -210,6 +210,34 @@ describe("insert_workflow: happy path", () => {
     expect(run([lower, higher]).links!.filter((link) => ["lower", "higher"].includes((link as unknown[])[5] as string))).toHaveLength(2);
   });
 
+  it("keeps valid inserted content when a carried link endpoint was concurrently deleted", () => {
+    const seed = Y.encodeStateAsUpdate(mint(baseWorkflow(), catalog));
+    const insert = insertOp({
+      nodes: [{ id: 100, type: "Src", title: "inserted source" }, { id: 101, type: "Sink", title: "inserted sink" }],
+      links: [[200, 100, 0, 101, 0, "valid"], [201, 100, 0, 1, 0, "missing endpoint"]],
+      groups: [{ title: "Inserted group" }],
+      definitions: { subgraphs: [{ id: "inserted-def", nodes: [], links: [] }] },
+    });
+    const remove = {
+      ...env(), op: "delete_node", node_id: 1, removed_links: [], stamp: [2, "b"],
+    } as unknown as Op;
+    const run = (ops: Op[]): WorkflowJSON => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, seed);
+      for (const op of ops) applyOps(doc, [op], catalog);
+      return project(doc, catalog);
+    };
+
+    const deleteThenInsert = run([remove, insert]);
+    const insertThenDelete = run([insert, remove]);
+    expect(deleteThenInsert).toEqual(insertThenDelete);
+    expect(deleteThenInsert.nodes!.filter((node) => typeof node.title === "string" && node.title.startsWith("inserted"))).toHaveLength(2);
+    expect(deleteThenInsert.links!.filter((link) => (link as unknown[])[5] === "valid")).toHaveLength(1);
+    expect(deleteThenInsert.links!.some((link) => (link as unknown[])[5] === "missing endpoint")).toBe(false);
+    expect(deleteThenInsert.groups).toContainEqual({ title: "Inserted group" });
+    expect(defIds(deleteThenInsert).some((id) => id.includes(insert.op_id))).toBe(true);
+  });
+
   it("stores nested definitions as addressable maps for later interior set_widget", () => {
     const doc = mint(baseWorkflow(), catalog);
     const nested = { id: "nested-def", nodes: [{ id: 9, type: "Inner", widgets_values: ["before"] }], links: [] };
@@ -283,7 +311,7 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
 
   it("routes dangling link endpoints through the existing unknown-node no-op path", () => {
     const doc = mint(baseWorkflow(), catalog);
-    const op = insertOp({ nodes: [{ id: 100, type: "Src" }], links: [[200, 100, 0, 999, 0, "X"]] });
+    const op = insertOp({ nodes: [], links: [[200, 100, 0, 999, 0, "X"]] });
     const result = applyOps(doc, [op], catalog);
 
     expect(result.outcomes[0]).toMatchObject({ outcome: "no-op" });
