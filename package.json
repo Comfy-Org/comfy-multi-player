@@ -18,8 +18,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Comfy-Org/ComfyUI_frontend.git",
-    "directory": "packages/comfy-multi-player"
+    "url": "git+https://github.com/Comfy-Org/comfy-multi-player.git"
   },
   "publishConfig": {
     "access": "public"
