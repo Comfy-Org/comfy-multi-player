@@ -4,7 +4,9 @@ import {
   applyOps,
   mint,
   project,
+  readLinkState,
   type AddNodeOp,
+  type ClearOp,
   type ConnectOp,
   type DeleteNodeOp,
   type DisconnectOp,
@@ -87,6 +89,21 @@ function applyAccepted(ops: Op[]) {
   return project(doc, catalog);
 }
 
+function applyToDoc(ops: Op[]) {
+  const doc = fork();
+  const result = applyOps(doc, ops, catalog);
+  expect(result.outcomes).toHaveLength(ops.length);
+  expect(result.outcomes).not.toContainEqual(expect.objectContaining({ outcome: "rejected" }));
+  return doc;
+}
+
+function permutations<T>(values: T[]): T[][] {
+  if (values.length <= 1) return [values];
+  return values.flatMap((value, index) =>
+    permutations(values.filter((_, candidate) => candidate !== index)).map(rest => [value, ...rest]),
+  );
+}
+
 const promotedConnect = (linkId: 911 | 912, serial: number, version: number): ConnectOp => ({
   op: "connect",
   ...envelope(serial, version),
@@ -160,9 +177,94 @@ describe("ADR-022 bounded durable-link acceptance", () => {
       op: "disconnect", ...envelope(0xb, 0), link_id: 101, to_node: 20, to_slot: 0,
     };
     const winner: ConnectOp = { ...first, ...envelope(0xc, 0) };
-    const left = applyAccepted([first, sever, winner]);
-    const right = applyAccepted([winner, first, sever]);
-    expect(left).toEqual(right);
-    expect(left.links).toEqual([[100, 10, 0, 20, 0, "IMAGE"]]);
+    const arrivals = permutations([first, sever, winner]);
+    expect(arrivals).toHaveLength(6);
+    const projections = arrivals.map((arrival, index) => {
+      const out = applyAccepted(arrival);
+      expect(out.links, `permutation ${index}: ${arrival.map(op => op.op_id).join(",")}`).toEqual([
+        [100, 10, 0, 20, 0, "IMAGE"],
+      ]);
+      return out;
+    });
+    for (const [index, out] of projections.entries()) {
+      expect(out, `full projection permutation ${index}`).toEqual(projections[0]);
+    }
   });
+
+  it("restores operation-owned autogrow metadata, reconstructed slot, and exact endpoint references", () => {
+    const grow = { name: "images.image0", type: "IMAGE", widget: "upload" };
+    const connect: ConnectOp = {
+      op: "connect", ...envelope(0xe1, 1), link_id: 913, from_node: 10, from_slot: 0,
+      to_node: 20, link_type: "IMAGE", grow,
+    };
+    const remove: DeleteNodeOp = { op: "delete_node", ...envelope(0xe2, 2), node_id: 20, removed_links: [] };
+    const readd: AddNodeOp = { op: "add_node", ...envelope(0xe3, 3), node_id: 20, class_type: concreteTarget.type, pos: [], node: concreteTarget };
+    const doc = applyToDoc([connect, remove]);
+    expect(readLinkState(doc)["913"]).toMatchObject({
+      authority: { kind: "operation" }, tuple: [913, 10, 0, 20, 1, "IMAGE"],
+      destination: {
+        kind: "autogrow", to_slot: 1, request: grow,
+        slot: { name: "images.image0", type: "IMAGE", link: 913, grow_id: 913, widget: { name: "upload" } },
+      },
+    });
+    expect(applyOps(doc, [readd], catalog).outcomes[0]?.outcome).not.toBe("rejected");
+    const out = project(doc, catalog);
+    expect(out.links).toEqual([[913, 10, 0, 20, 1, "IMAGE"]]);
+    expect(out.nodes.find(node => node.id === 10)).toMatchObject({ outputs: [{ links: [913] }] });
+    expect(out.nodes.find(node => node.id === 20)).toMatchObject({
+      inputs: [
+        { name: "images", link: null },
+        { name: "images.image0", type: "IMAGE", link: 913, grow_id: 913, widget: { name: "upload" } },
+      ],
+    });
+  });
+
+  it("clear strands durable intent without retiring it and re-add restores the link", () => {
+    const connect: ConnectOp = {
+      op: "connect", ...envelope(0xf1, 1), link_id: 914, from_node: 10, from_slot: 0,
+      to_node: 20, to_slot: 0, link_type: "IMAGE",
+    };
+    const clear: ClearOp = { op: "clear", ...envelope(0xf2, 2), removed_nodes: [20] };
+    const readd: AddNodeOp = { op: "add_node", ...envelope(0xf3, 3), node_id: 20, class_type: concreteTarget.type, pos: [], node: concreteTarget };
+    const doc = applyToDoc([connect, clear]);
+    expect(project(doc, catalog).links).toEqual([]);
+    expect(readLinkState(doc)["914"]).toBeDefined();
+    expect(applyOps(doc, [readd], catalog).outcomes[0]?.outcome).not.toBe("rejected");
+    expect(project(doc, catalog).links).toEqual([[914, 10, 0, 20, 0, "IMAGE"]]);
+    expect(readLinkState(doc)["914"]).toBeDefined();
+  });
+
+  const lifecycleKinds = [
+    { name: "concrete", connect: { op: "connect", ...envelope(0x201, 1), link_id: 921, from_node: 10, from_slot: 0, to_node: 20, to_slot: 0, link_type: "IMAGE" } as ConnectOp, target: concreteTarget },
+    { name: "promoted", connect: promotedConnect(911, 0x202, 1), target: promotedInstance },
+    { name: "autogrow", connect: { op: "connect", ...envelope(0x203, 1), link_id: 923, from_node: 10, from_slot: 0, to_node: 20, link_type: "IMAGE", grow: { name: "images.image0", type: "IMAGE" } } as ConnectOp, target: concreteTarget },
+  ];
+  const retirementModes = ["restore", "disconnect", "explicit removed_links"] as const;
+
+  it.each(lifecycleKinds.flatMap(kind => retirementModes.map(mode => ({ ...kind, mode }))))(
+    "$name durable intent: $mode",
+    ({ connect, target, mode }) => {
+      const targetId = target.id;
+      const remove: DeleteNodeOp = { op: "delete_node", ...envelope(0x210, 2), node_id: targetId, removed_links: [] };
+      const doc = applyToDoc([connect, remove]);
+      const descriptor = readLinkState(doc)[String(connect.link_id)] as { destination: { to_slot: number } };
+      expect(descriptor).toBeDefined();
+      if (mode === "disconnect") {
+        const disconnect: DisconnectOp = { op: "disconnect", ...envelope(0x211, 3), link_id: connect.link_id, to_node: targetId, to_slot: descriptor.destination.to_slot };
+        expect(applyOps(doc, [disconnect], catalog).outcomes[0]?.outcome).not.toBe("rejected");
+      } else if (mode === "explicit removed_links") {
+        const retire: DeleteNodeOp = { op: "delete_node", ...envelope(0x212, 3), node_id: targetId, removed_links: [connect.link_id] };
+        expect(applyOps(doc, [retire], catalog).outcomes[0]?.outcome).not.toBe("rejected");
+      }
+      const readd: AddNodeOp = { op: "add_node", ...envelope(0x213, 4), node_id: targetId, class_type: target.type, pos: [], node: target };
+      expect(applyOps(doc, [readd], catalog).outcomes[0]?.outcome).not.toBe("rejected");
+      if (mode === "restore") {
+        expect(project(doc, catalog).links).toEqual([[connect.link_id, 10, 0, targetId, descriptor.destination.to_slot, "IMAGE"]]);
+        expect(readLinkState(doc)[String(connect.link_id)]).toBeDefined();
+      } else {
+        expect(project(doc, catalog).links).toEqual([]);
+        expect(readLinkState(doc)[String(connect.link_id)]).toBeUndefined();
+      }
+    },
+  );
 });
