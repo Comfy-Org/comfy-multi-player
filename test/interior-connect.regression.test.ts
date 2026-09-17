@@ -189,6 +189,44 @@ describe("interior connect regression", () => {
     expect(Y.encodeStateAsUpdate(doc)).toEqual(afterFirstApply);
   });
 
+  // Recovery PR 198 must preserve KA-4 for independent links, not just one contested input.
+  it("regression: independent interior connects project identically in both arrival orders", () => {
+    const independent = structuredClone(workflow);
+    const definitions = independent.definitions as {
+      subgraphs: Array<{ nodes: WorkflowJSON["nodes"] }>;
+    };
+    definitions.subgraphs[0]!.nodes.push({
+      id: 3,
+      type: "Sink",
+      inputs: [{ name: "text", type: "STRING", link: null }],
+      outputs: [],
+    });
+    const seed = mint(independent, catalog);
+    const snapshot = Y.encodeStateAsUpdate(seed);
+    const first = connect();
+    const second = connect({
+      op_id: "independentconnect0000000000002",
+      stamp: [2, "human:b"],
+      actor: "human:b",
+      link_id: 42,
+      to_node: 3,
+    });
+    const projections = [[first, second], [second, first]].map((order) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      expect(applyOps(doc, order, catalog).outcomes.map(({ outcome }) => outcome)).toEqual([
+        "applied",
+        "applied",
+      ]);
+      const projection = definitionOf(doc);
+      expect(projection.links.map(({ id }) => id).sort()).toEqual([41, 42]);
+      expect(projection.nodes.find(({ id }) => id === 2)?.inputs?.[0]?.link).toBe(41);
+      expect(projection.nodes.find(({ id }) => id === 3)?.inputs?.[0]?.link).toBe(42);
+      return project(doc, catalog);
+    });
+    expect(projections[0]).toEqual(projections[1]);
+  });
+
   it("keeps top-level and interior bookkeeping distinct when link ids collide", () => {
     const withRootGraph = structuredClone(workflow) as unknown as WorkflowJSON;
     withRootGraph.nodes.push(
