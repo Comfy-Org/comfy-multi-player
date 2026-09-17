@@ -541,23 +541,54 @@ describe("define_subgraph application", () => {
     expect(projected.definitions.subgraphs[0]!.nodes[0]!.widgets_values).toEqual([80])
   })
 
-  it("restores an instance-ID-addressed widget edit after a digest-winning replacement", () => {
-    const incumbent = definition(subgraphId, 1)
-    const replacement = winningReplacement(incumbent, definition(subgraphId, 2))
-    const doc = empty()
-    applyOps(doc, [{ ...define(), subgraph_definition: incumbent }], catalog)
-    applyOps(doc, [{
-      op: "add_node", ...envelope(), node_id: 1, class_type: subgraphId, pos: [0, 0],
-      node: { id: 1, type: subgraphId, inputs: [], outputs: [] },
-    }], catalog)
-    applyOps(doc, [{
+  it("restores an instance-ID-addressed widget edit across a digest-winning replacement in both legal orders", () => {
+    const incumbent = definition(subgraphId, 2)
+    const replacement = winningReplacement(incumbent, definition(subgraphId, 4))
+    const incumbentOp = { ...define(), subgraph_definition: incumbent }
+    const replacementOp = { ...define(), subgraph_definition: replacement }
+    const edit = {
       op: "set_widget", ...envelope(), node_id: 10, path: ["1", "10"],
       inner_widget: "value", widget: "value", value: 9,
-    }], catalog)
+    } as Op
 
-    expect(applyOps(doc, [{ ...define(), subgraph_definition: replacement }], catalog).outcomes[0]?.outcome).toBe("applied")
-    const projected = (project(doc, catalog).definitions as { subgraphs: Array<{ nodes: Array<{ widgets_values: unknown[] }> }> }).subgraphs[0]!
+    const projections = [[incumbentOp, edit, replacementOp], [replacementOp, edit, incumbentOp]].map((ops) => {
+      const doc = mint({
+        nodes: [{ id: 1, type: subgraphId, inputs: [], outputs: [] }],
+        links: [],
+      } as unknown as WorkflowJSON, catalog)
+      for (const op of ops) applyOps(doc, [op], catalog)
+      return project(doc, catalog)
+    })
+
+    expect(projections[0]).toEqual(projections[1])
+    const projected = (projections[0]!.definitions as { subgraphs: Array<{ nodes: Array<{ widgets_values: unknown[] }> }> }).subgraphs[0]!
     expect(projected.nodes[0]!.widgets_values).toEqual([9])
+  })
+
+  it.each([
+    ["number", 7],
+    ["object", { forged: "digest" }],
+  ])("narrows a malformed replicated %s definition digest before deterministic comparison", (_kind, malformedDigest) => {
+    const results = [[1, 2], [2, 1]].map(([firstValue, secondValue]) => {
+      const doc = empty()
+      applyOps(doc, [define(subgraphId, firstValue)], catalog)
+      metaMap(doc).set("__definition_digests", { [subgraphId]: malformedDigest })
+
+      let outcome: string | undefined
+      expect(() => {
+        outcome = applyOps(doc, [define(subgraphId, secondValue)], catalog).outcomes[0]?.outcome
+      }).not.toThrow()
+      return {
+        outcome,
+        projection: project(doc, catalog),
+        digest: (metaMap(doc).get("__definition_digests") as Record<string, unknown>)[subgraphId],
+      }
+    })
+
+    expect(results[0]!.projection).toEqual(results[1]!.projection)
+    expect((results[0]!.projection.definitions as { subgraphs: unknown[] }).subgraphs).toEqual([definition(subgraphId, 1)])
+    expect(results.map(({ outcome }) => outcome)).toEqual(["no-op", "applied"])
+    expect(typeof results[1]!.digest).toBe("string")
   })
 
   it("rejects an edit to a node that exists only in the replaced definition", () => {
@@ -630,6 +661,25 @@ describe("define_subgraph application", () => {
     expect(applyOps(doc, [{ ...define(), subgraph_definition: outer }], catalog).outcomes[0]?.outcome).toBe("applied")
     const projected = (project(doc, catalog).definitions as { subgraphs: Array<Record<string, unknown>> }).subgraphs[0]!
     expect(projected.definitions).toEqual({ subgraphs: [nested] })
+  })
+
+  it("projects only the valid nested definition beside a malformed scalar child", () => {
+    const nestedId = "abcdefab-cdef-4abc-8def-abcdefabcdef"
+    const malformedId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    const nested = definition(nestedId, 4)
+    const outer = { ...definition(), definitions: { subgraphs: [nested] } }
+    const doc = empty()
+    applyOps(doc, [{ ...define(), subgraph_definition: outer }], catalog)
+    const storedOuter = definitionsMap(doc).get(subgraphId)!
+    const storedDefinitions = storedOuter.get("definitions") as Y.Map<unknown>
+    const storedSubgraphs = storedDefinitions.get("subgraphs") as Y.Map<unknown>
+    storedSubgraphs.set(malformedId, "malformed replicated child")
+    storedDefinitions.set("subgraph_order", [malformedId, nestedId])
+
+    const projected = (project(doc, catalog).definitions as {
+      subgraphs: Array<{ definitions: { subgraphs: unknown[] } }>
+    }).subgraphs[0]!
+    expect(projected.definitions.subgraphs).toEqual([nested])
   })
 
   it("rejects fresh reuse of an identical nested definition id while exact replay stays idempotent", () => {
