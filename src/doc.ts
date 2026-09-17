@@ -804,17 +804,7 @@ export function createNodeMap(node: WorkflowNode, widgetOrder?: readonly string[
  * never resolve).
  */
 export function resolveDefinition(doc: Y.Doc, key: string): Y.Map<unknown> | null {
-  const defs = definitionsMap(doc);
-  const all: Y.Map<unknown>[] = [];
-  const visit = (definition: Y.Map<unknown>): void => {
-    all.push(definition);
-    const container = definition.get("definitions");
-    const nested = container instanceof Y.Map ? container.get("subgraphs") : undefined;
-    if (nested instanceof Y.Map) nested.forEach((child) => {
-      if (child instanceof Y.Map) visit(child);
-    });
-  };
-  defs.forEach(visit);
+  const all = allDefinitions(doc);
   const byId = all.find((definition) => String(definition.get("id")) === key);
   if (byId) return byId;
   let found: Y.Map<unknown> | null = null;
@@ -826,6 +816,20 @@ export function resolveDefinition(doc: Y.Doc, key: string): Y.Map<unknown> | nul
     }
   });
   return count === 1 ? found : null;
+}
+
+function allDefinitions(doc: Y.Doc): Y.Map<unknown>[] {
+  const all: Y.Map<unknown>[] = [];
+  const visit = (definition: Y.Map<unknown>): void => {
+    all.push(definition);
+    const container = definition.get("definitions");
+    const nested = container instanceof Y.Map ? container.get("subgraphs") : undefined;
+    if (nested instanceof Y.Map) nested.forEach((child) => {
+      if (child instanceof Y.Map) visit(child);
+    });
+  };
+  definitionsMap(doc).forEach(visit);
+  return all;
 }
 
 /**
@@ -869,7 +873,7 @@ function definitionAliases(doc: Y.Doc, defId: string, catalog?: WidgetCatalog): 
   if (!catalog) return aliases; // no catalogue to ask: cannot verify, so not an alias
   if (Object.prototype.hasOwnProperty.call(catalog.types, name)) return aliases; // a node class
   let sameName = 0;
-  defs.forEach((dm) => {
+  allDefinitions(doc).forEach((dm) => {
     if (String(dm.get("name") ?? "") === name) sameName++;
   });
   if (sameName === 1) aliases.add(name);

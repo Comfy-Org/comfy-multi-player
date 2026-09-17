@@ -56,11 +56,12 @@ function touchedNodes(op: WireOp): string[] {
     case "clear":
     case "delete_node":
     case "reset_doc":
-    case "define_subgraph":
       // Graph-wide / unbounded ops. `reorderableWindows` treats them as window
       // breakers and never calls this helper for them; listed explicitly so
       // the guard below is a guard and not a catch-all (#21).
       return [];
+    case "define_subgraph":
+      return [String(op.subgraph_id)];
     default:
       return assertNever(op, "convergence.touchedNodes");
   }
@@ -97,6 +98,22 @@ function reorderableWindows(ops: Op[]): Op[][] {
 }
 
 describe("two-doc convergence through the single-applier discipline", () => {
+  it("keeps define_subgraph and an interior edit to that definition in separate windows", () => {
+    const definitionId = "12345678-1234-4123-8123-123456789abc";
+    const define = {
+      op: "define_subgraph", op_id: "10000000000000000000000000000000", actor: "agent:test",
+      base_version: 1, stamp: [1, "agent:test"], subgraph_id: definitionId,
+      subgraph_definition: { id: definitionId, name: "One", inputs: [], outputs: [], nodes: [], links: [] },
+    } as Op;
+    const edit = {
+      op: "set_widget", op_id: "20000000000000000000000000000000", actor: "agent:test",
+      base_version: 2, stamp: [2, "agent:test"], node_id: 10, path: [definitionId, "10"],
+      widget: "value", inner_widget: "value", value: 2,
+    } as Op;
+
+    expect(reorderableWindows([define, edit])).toEqual([[define], [edit]]);
+  });
+
   for (const file of sessionFiles()) {
     const { header, ops } = loadSession(file);
     const windows = reorderableWindows(ops);

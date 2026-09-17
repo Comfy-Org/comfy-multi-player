@@ -12,7 +12,7 @@ import {
   type WidgetCatalog,
   type WorkflowJSON,
 } from "../src/index.js"
-import { definitionsMap, metaMap, stampsMap } from "../src/doc.js"
+import { appliedMap, definitionsMap, metaMap, stampsMap } from "../src/doc.js"
 import { stampKey } from "../src/stamps.js"
 
 const catalog: WidgetCatalog = {
@@ -29,6 +29,10 @@ const envelope = () => {
 }
 
 const subgraphId = "12345678-1234-4123-8123-123456789abc"
+const catalogClassId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+const collisionCatalog: WidgetCatalog = {
+  types: { ...catalog.types, [catalogClassId]: { widget_order: [] } },
+}
 const definition = (id = subgraphId, value = 1) => ({
   id,
   name: "One",
@@ -78,11 +82,74 @@ describe("define_subgraph schema", () => {
 
   it.each(forbidden)("rejects %s", (_name, fields) => {
     const op = { ...fields, ...envelope() } as unknown as Op
-    expect(rejectionCode(empty(), op)).toBeDefined()
+    const doc = empty()
+    const before = Y.encodeStateAsUpdate(doc)
+    expect(rejectionCode(doc, op)).toBeDefined()
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before)
+    expect(appliedMap(doc).has(op.op_id)).toBe(false)
+  })
+
+  it("aborts the batch suffix after a rejected definition operation", () => {
+    const doc = empty()
+    const rejected = { ...define(), subgraph_id: "not-a-uuid" }
+    const suffix = {
+      op: "add_node", ...envelope(), node_id: 99, class_type: "Other", pos: [0, 0],
+      node: { id: 99, type: "Other", inputs: [], outputs: [] },
+    } as Op
+
+    expect(applyOps(doc, [rejected, suffix], catalog).outcomes).toEqual([
+      expect.objectContaining({ op_id: rejected.op_id, outcome: "rejected" }),
+      expect.objectContaining({ op_id: suffix.op_id, outcome: "rejected", reason: expect.objectContaining({ code: "batch_aborted" }) }),
+    ])
+    expect(appliedMap(doc).has(rejected.op_id)).toBe(false)
+    expect(appliedMap(doc).has(suffix.op_id)).toBe(false)
+    expect(project(doc, catalog).nodes).toEqual([])
+  })
+
+  it.each([
+    ["top-level", definition(catalogClassId)],
+    ["nested", {
+      ...definition(),
+      definitions: { subgraphs: [definition(catalogClassId)] },
+    }],
+  ])("atomically rejects a %s definition id that shadows a UUID-shaped catalog class", (_name, collidingDefinition) => {
+    const doc = empty()
+    const before = Y.encodeStateAsUpdate(doc)
+    const op = { ...define(), subgraph_definition: collidingDefinition, subgraph_id: String(collidingDefinition.id) }
+
+    expect(applyOps(doc, [op], collisionCatalog).outcomes[0]?.outcome).toBe("rejected")
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before)
+    expect(appliedMap(doc).has(op.op_id)).toBe(false)
+  })
+
+  it("accepts a distinct UUID definition while a catalog node retains its class meaning", () => {
+    const doc = empty()
+    const addCatalogNode = {
+      op: "add_node", ...envelope(), node_id: 1, class_type: catalogClassId, pos: [0, 0],
+      node: { id: 1, type: catalogClassId, inputs: [], outputs: [] },
+    } as Op
+
+    expect(applyOps(doc, [addCatalogNode, define()], collisionCatalog).outcomes.map(({ outcome }) => outcome)).toEqual(["applied", "applied"])
+    expect(project(doc, collisionCatalog).nodes[0]?.type).toBe(catalogClassId)
+    expect(definitionsMap(doc).has(subgraphId)).toBe(true)
+    expect(definitionsMap(doc).has(catalogClassId)).toBe(false)
   })
 })
 
 describe("define_subgraph application", () => {
+  it("digests accepted private metadata using the same public definition representation as fallback reads", () => {
+    const doc = empty()
+    const withPrivateMetadata = { ...definition(), __source: "private" }
+    const op = { ...define(), subgraph_definition: withPrivateMetadata }
+
+    expect(applyOps(doc, [op], catalog).outcomes[0]?.outcome).toBe("applied")
+    const expected = createHash("sha256").update(JSON.stringify(definition(), (_key, child: unknown) =>
+      child && typeof child === "object" && !Array.isArray(child)
+        ? Object.fromEntries(Object.entries(child).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+        : child)).digest("hex")
+    expect((metaMap(doc).get("__definition_digests") as Record<string, string>)[subgraphId]).toBe(expected)
+  })
+
   it("matches the independently derived fixed definition digest and winner vector", () => {
     const seed = Y.encodeStateAsUpdate(empty())
     const winner = define(subgraphId, 1)
@@ -158,6 +225,38 @@ describe("define_subgraph application", () => {
     expect(project(doc, catalog).nodes.map((node) => node.id)).toContain(99)
   })
 
+  it("replays a projected-output definition imported without a private digest as an identity-preserving no-op", () => {
+    const importedDefinition = {
+      id: subgraphId,
+      name: "One2",
+      inputs: [],
+      outputs: [],
+      nodes: [{
+        id: 10,
+        type: "Inner",
+        inputs: [],
+        outputs: [{ name: "out", type: "X", links: [9, 3] }],
+        widgets_values: [1],
+      }],
+      links: [],
+    }
+    const doc = mint({
+      nodes: [],
+      links: [],
+      definitions: { subgraphs: [importedDefinition] },
+    } as unknown as WorkflowJSON, catalog)
+    const storedDefinition = definitionsMap(doc).get(subgraphId)!
+    const storedNode = (storedDefinition.get("nodes") as Y.Map<Y.Map<unknown>>).get("10")!
+    const replay = {
+      ...define(),
+      subgraph_definition: importedDefinition,
+    } as DefineSubgraphOp
+
+    expect(applyOps(doc, [replay], catalog).outcomes[0]?.outcome).toBe("no-op")
+    expect(definitionsMap(doc).get(subgraphId)).toBe(storedDefinition)
+    expect((storedDefinition.get("nodes") as Y.Map<Y.Map<unknown>>).get("10")).toBe(storedNode)
+  })
+
   it("treats instance-ID and definition-ID widget paths as one LWW register", () => {
     const seeded = mint({
       nodes: [{ id: 1, type: subgraphId, inputs: [], outputs: [] }],
@@ -194,6 +293,109 @@ describe("define_subgraph application", () => {
       ["higher-instance-path"],
     ])
     expect(results.map(({ stamps }) => stamps)).toEqual([[stampKey(higher)], [stampKey(higher)]])
+  })
+
+  it("retains an instance-routed canonical edit across concurrent deletion in both legal orders", () => {
+    const instanceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    const seeded = mint({
+      nodes: [{ id: instanceId, type: subgraphId, inputs: [], outputs: [] }],
+      links: [],
+      definitions: { subgraphs: [definition()] },
+    } as unknown as WorkflowJSON, catalog)
+    const snapshot = Y.encodeStateAsUpdate(seeded)
+    const concurrent = (op: Partial<Op>, actor: string, opId: string) => ({
+      ...op, op_id: opId, actor, base_version: 3, stamp: [3, actor],
+    }) as Op
+    const remove = concurrent(
+      { op: "delete_node", node_id: instanceId, removed_links: [] },
+      "human:delete",
+      "d0000000000000000000000000000000",
+    )
+    const edit = concurrent(
+      { op: "set_widget", node_id: 10, path: [instanceId, "10"], inner_widget: "value", widget: "value", value: 7 },
+      "agent:edit",
+      "e0000000000000000000000000000000",
+    )
+    const retainedRouteKey = JSON.stringify(["interior_route", instanceId, "0"])
+
+    const results = [[remove, edit], [edit, remove]].map((ops) => {
+      let doc = new Y.Doc()
+      Y.applyUpdate(doc, snapshot)
+      const outcomes = [applyOps(doc, [ops[0]!], catalog).outcomes[0]?.outcome]
+      if (ops[0] === remove) {
+        const replayed = new Y.Doc()
+        Y.applyUpdate(replayed, Y.encodeStateAsUpdate(doc))
+        doc = replayed
+      }
+      outcomes.push(applyOps(doc, [ops[1]!], catalog).outcomes[0]?.outcome)
+      const projection = project(doc, catalog)
+      const retainedValue = (projection.definitions as {
+        subgraphs: Array<{ nodes: Array<{ widgets_values: unknown[] }> }>
+      }).subgraphs[0]!.nodes[0]!.widgets_values
+      return { outcomes, projection, retainedValue, retainedRoute: stampsMap(doc).get(retainedRouteKey) }
+    })
+
+    expect(results.map(({ outcomes }) => outcomes)).toEqual([["applied", "applied"], ["applied", "applied"]])
+    expect(results[0]!.projection).toEqual(results[1]!.projection)
+    expect(results.map(({ retainedValue }) => retainedValue)).toEqual([[7], [7]])
+    expect(results.every(({ projection }) => projection.nodes.length === 0)).toBe(true)
+    expect(results.map(({ retainedRoute }) => retainedRoute)).toEqual([subgraphId, subgraphId])
+  })
+
+  it("shares the canonical register between a retained instance route and a direct definition path", () => {
+    const instanceId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    const doc = mint({
+      nodes: [{ id: instanceId, type: subgraphId, inputs: [], outputs: [] }],
+      links: [], definitions: { subgraphs: [definition()] },
+    } as unknown as WorkflowJSON, catalog)
+    const remove = { op: "delete_node", ...envelope(), node_id: instanceId, removed_links: [] } as Op
+    expect(applyOps(doc, [remove], catalog).outcomes[0]?.outcome).toBe("applied")
+    const routed = {
+      op: "set_widget", op_id: "61000000000000000000000000000000", actor: "agent:route",
+      base_version: 61, stamp: [61, "agent:route"], node_id: 10,
+      path: [instanceId, "10"], inner_widget: "value", widget: "value", value: "route",
+    } as Op
+    const direct = {
+      ...routed, op_id: "62000000000000000000000000000000", actor: "agent:direct",
+      base_version: 62, stamp: [62, "agent:direct"], path: [subgraphId, "10"], value: "direct",
+    } as Op
+
+    expect(applyOps(doc, [routed, direct], catalog).outcomes.map(({ outcome }) => outcome)).toEqual(["applied", "applied"])
+    const retained = (project(doc, catalog).definitions as {
+      subgraphs: Array<{ nodes: Array<{ widgets_values: unknown[] }> }>
+    }).subgraphs[0]!.nodes[0]!.widgets_values
+    expect(retained).toEqual(["direct"])
+  })
+
+  it("does not let an unrelated deletion or a delete/re-add retarget a retained route", () => {
+    const instanceId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    const unrelatedId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    const doc = mint({
+      nodes: [
+        { id: instanceId, type: subgraphId, inputs: [], outputs: [] },
+        { id: unrelatedId, type: "Other", inputs: [], outputs: [] },
+      ],
+      links: [], definitions: { subgraphs: [definition()] },
+    } as unknown as WorkflowJSON, catalog)
+    expect(applyOps(doc, [{ op: "delete_node", ...envelope(), node_id: unrelatedId, removed_links: [] } as Op], catalog).outcomes[0]?.outcome).toBe("applied")
+    const edit = {
+      op: "set_widget", ...envelope(), node_id: 10, path: [instanceId, "10"],
+      inner_widget: "value", widget: "value", value: 8,
+    } as Op
+    expect(applyOps(doc, [edit], catalog).outcomes[0]?.outcome).toBe("applied")
+
+    expect(applyOps(doc, [{ op: "delete_node", ...envelope(), node_id: instanceId, removed_links: [] } as Op], catalog).outcomes[0]?.outcome).toBe("applied")
+    const readd = {
+      op: "add_node", ...envelope(), node_id: instanceId, node_incarnation: "replacement",
+      class_type: "Other", pos: [0, 0], node: { id: instanceId, type: "Other", inputs: [], outputs: [] },
+    } as Op
+    expect(applyOps(doc, [readd], catalog).outcomes[0]?.outcome).toBe("applied")
+    const stale = { ...edit, ...envelope(), value: 9 } as Op
+    expect(applyOps(doc, [stale], catalog).outcomes[0]?.outcome).toBe("rejected")
+    const retained = (project(doc, catalog).definitions as {
+      subgraphs: Array<{ nodes: Array<{ widgets_values: unknown[] }> }>
+    }).subgraphs[0]!.nodes[0]!.widgets_values
+    expect(retained).toEqual([8])
   })
 
   it("uses the final owning definition and node as nested alias identity without conflating equal leaf IDs", () => {
@@ -570,6 +772,27 @@ describe("define_subgraph application", () => {
       { op: "add_node", ...envelope(), node_id: 2, class_type: subgraphId, pos: [0, 0], node: { id: 2, type: subgraphId, inputs: [], outputs: [] } },
     ], catalog)
     expect(rejectionCode(doc, { op: "set_widget", ...envelope(), node_id: 10, path: [subgraphId, "10"], inner_widget: "value", widget: "value", value: 9 })).toBe("shared_definition_unforked")
+  })
+
+  it("does not treat a name shared by a root and nested definition as an instance alias", () => {
+    const nestedId = "abcdefab-cdef-4abc-8def-abcdefabcdef"
+    const root = {
+      ...definition(), name: "Shared",
+      definitions: { subgraphs: [{ ...definition(nestedId), name: "Shared" }] },
+    }
+    const doc = mint({
+      nodes: [
+        { id: 1, type: subgraphId, inputs: [], outputs: [] },
+        { id: 2, type: "Shared", inputs: [], outputs: [] },
+      ],
+      links: [], definitions: { subgraphs: [root] },
+    } as unknown as WorkflowJSON, catalog)
+    const edit = {
+      op: "set_widget", ...envelope(), node_id: 10, path: [subgraphId, "10"],
+      inner_widget: "value", widget: "value", value: 9,
+    } as Op
+
+    expect(applyOps(doc, [edit], catalog).outcomes[0]?.outcome).toBe("applied")
   })
 
   it("rejects an edit when instances occur recursively three definition levels down", () => {

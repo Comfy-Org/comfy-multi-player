@@ -129,6 +129,7 @@ import {
   type Op,
   type SetWidgetOp,
   type StampKey,
+  type SubgraphDefinition,
   type WidgetCatalog,
   type WireOp,
 } from "./types.js";
@@ -508,13 +509,13 @@ function applyDefineSubgraph(
   if (!catalog) {
     throw new OpRejectedError("catalog_required", "define_subgraph: the pinned catalog is required to encode interior nodes");
   }
-  const digest = sha256Hex(canonicalJson(op.subgraph_definition));
   validateDefinitionWidgets(op.subgraph_definition, catalog);
+  const digest = definitionDigest(op.subgraph_definition, catalog);
   const definitions = definitionsMap(doc);
   const existing = definitions.get(op.subgraph_id);
   if (existing !== undefined) {
     const digests = definitionDigests(doc);
-    const existingDigest = digests[op.subgraph_id] ?? sha256Hex(canonicalJson(projectDefinition(existing, catalog)));
+    const existingDigest = digests[op.subgraph_id] ?? definitionDigest(existing, catalog);
     if (existingDigest === digest) return "no-op";
     if (digest > existingDigest) {
       assertDefinitionIdsAvailable(doc, op.subgraph_definition, op.subgraph_id);
@@ -552,6 +553,30 @@ function applyDefineSubgraph(
   mset(definitions, op.subgraph_id, definition);
   setDefinitionDigest(doc, op.subgraph_id, digest);
   return "applied";
+}
+
+function definitionDigest(definition: SubgraphDefinition | Y.Map<unknown>, catalog: WidgetCatalog): string {
+  return sha256Hex(canonicalJson(canonicalDefinitionValue(definition, catalog)));
+}
+
+/** One digest representation for submitted JSON and stored definitions: their public projection. */
+function canonicalDefinitionValue(
+  definition: SubgraphDefinition | Y.Map<unknown>,
+  catalog: WidgetCatalog,
+): Record<string, unknown> {
+  if (definition instanceof Y.Map) return projectDefinition(definition, catalog);
+
+  // Projection reads attached Y types (not preliminary content on unattached
+  // maps), so integrate the temporary mint before using the authoritative
+  // mint/project normalization for widgets, outputs, and nested definitions.
+  const temporary = new Y.Doc();
+  try {
+    const minted = mintDefinition(definition, catalog);
+    temporary.getMap<Y.Map<unknown>>("definitions").set(String(definition.id), minted);
+    return projectDefinition(minted, catalog);
+  } finally {
+    temporary.destroy();
+  }
 }
 
 function definitionDigests(doc: Y.Doc): Record<string, string> {
@@ -770,6 +795,12 @@ function assertUniqueNormalizedIds(values: unknown[], path: string, required = f
 }
 
 function validateDefinitionWidgets(definition: Record<string, unknown>, catalog: WidgetCatalog): void {
+  if (typeof definition.id === "string" && Object.hasOwn(catalog.types, definition.id)) {
+    throw new OpRejectedError(
+      "malformed_op",
+      `define_subgraph: definition id '${definition.id}' shadows a catalog class`,
+    );
+  }
   (definition.nodes as unknown[]).forEach((candidate) => {
     if (!isPlainRecord(candidate)) {
       throw new OpRejectedError("malformed_op", "define_subgraph: every interior node must be an object");
@@ -1220,8 +1251,14 @@ function applyPromotedHostWrite(
   key: StampKey,
   catalog?: WidgetCatalog,
 ): SuccessfulOutcome {
-  const resolution = resolveInteriorNode(doc, promoted.instancePath, catalog);
-  if (resolution === null) return "no-op"; // head instance concurrently deleted → no-op (delete wins)
+  const resolution = resolveInteriorNode(
+    doc,
+    promoted.instancePath,
+    catalog,
+    op.node_incarnation ?? LEGACY_NODE_INCARNATION,
+    false,
+  );
+  if (resolution === null) return "no-op"; // no live or retained canonical route
   const target = resolution.node;
   const storage = hostWriteStorage(target, catalog);
   switch (storage) {
@@ -1279,7 +1316,12 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
   // separate stamp key. `writeTarget` remains the public op-only identity.
   const interiorResolution = interior === null
     ? null
-    : resolveInteriorNode(doc, interior.path.map(String), catalog);
+    : resolveInteriorNode(
+      doc,
+      interior.path.map(String),
+      catalog,
+      op.node_incarnation ?? LEGACY_NODE_INCARNATION,
+    );
   if (interior !== null && interiorResolution === null) return "no-op";
 
   // LWW gate next (comfy-cli `_apply_set_widget`): a lower-or-equal stamp is
@@ -1369,13 +1411,35 @@ interface InteriorResolution {
   canonicalPath: string[];
 }
 
-function resolveInteriorNode(doc: Y.Doc, path: string[], catalog?: WidgetCatalog): InteriorResolution | null {
+function interiorRouteKey(instanceId: string, incarnation: string): string {
+  return JSON.stringify(["interior_route", instanceId, incarnation]);
+}
+
+function resolveInteriorNode(
+  doc: Y.Doc,
+  path: string[],
+  catalog?: WidgetCatalog,
+  incarnation = LEGACY_NODE_INCARNATION,
+  allowRetainedRoute = true,
+): InteriorResolution | null {
   const head = nodesMap(doc).get(path[0]!);
   if (!head) {
-    const definition = resolveDefinition(doc, path[0]!);
-    if (!definition || String(definition.get("id")) !== path[0]) return null;
+    const directDefinition = resolveDefinition(doc, path[0]!);
+    const retainedDefinitionId = allowRetainedRoute
+      ? stampsMap(doc).get(interiorRouteKey(path[0]!, incarnation))
+      : undefined;
+    const definition = directDefinition && String(directDefinition.get("id")) === path[0]
+      ? directDefinition
+      : typeof retainedDefinitionId === "string"
+        ? resolveDefinition(doc, retainedDefinitionId)
+        : null;
+    if (!definition) return null;
     const definitionId = String(definition.get("id"));
-    const instances = countDefinitionInstances(doc, definitionId, catalog);
+    // A retained route represents the deleted routing instance for authority
+    // purposes. Otherwise delete-first could evade the shared-definition
+    // guard that edit-first observes.
+    const instances = countDefinitionInstances(doc, definitionId, catalog)
+      + (typeof retainedDefinitionId === "string" ? 1 : 0);
     if (instances > 1) {
       throw new OpRejectedError(
         "shared_definition_unforked",
@@ -2157,6 +2221,17 @@ function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp): SuccessfulOutcome {
   const presenceWon = prior == null || compareStampKeys(stamp, prior) > 0;
   const nodeWasPresent = nodes.has(key);
   if (presenceWon) {
+    const node = nodes.get(key);
+    if (node instanceof Y.Map) {
+      const definition = resolveDefinition(doc, String(node.get("type") ?? ""));
+      if (definition) {
+        mset(
+          stamps,
+          interiorRouteKey(key, nodeIncarnation(node)),
+          String(definition.get("id")),
+        );
+      }
+    }
     mset(stamps, targetKey, stamp);
     if (nodes.has(key)) mdel(nodes, key); // absent target → no-op-with-cleanup (delete wins)
   }

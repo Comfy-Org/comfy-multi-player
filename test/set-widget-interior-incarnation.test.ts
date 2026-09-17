@@ -88,7 +88,9 @@ describe("set_widget interior incarnation guard (current-behavior characterizati
       { op_id: op.op_id, outcome: "applied" },
     ]);
     expect(interiorValue(doc)).toBe("value-1");
-    expect(Object.values(readStamps(doc))).toEqual([stampKey(op)]);
+    expect(readStamps(doc)).toEqual({
+      [JSON.stringify(["widget", [DEFINITION_ID, String(INTERIOR_NODE_ID)], REPLACEMENT_INCARNATION, "text"])]: stampKey(op),
+    });
   });
 
   it("makes a mismatched-incarnation write a graph no-op without recording a stamp", () => {
@@ -125,7 +127,9 @@ describe("set_widget interior incarnation guard (current-behavior characterizati
       { op_id: op.op_id, outcome: "applied" },
     ]);
     expect(interiorValue(doc)).toBe("value-3");
-    expect(Object.values(readStamps(doc))).toEqual([stampKey(op)]);
+    expect(readStamps(doc)).toEqual({
+      [JSON.stringify(["widget", [DEFINITION_ID, String(INTERIOR_NODE_ID)], LEGACY_NODE_INCARNATION, "text"])]: stampKey(op),
+    });
   });
 
   it("makes an absent-incarnation write a no-op for a non-legacy target", () => {
