@@ -57,9 +57,9 @@ interface SubgraphDef {
  *   map through `catalog` — schema §1.2);
  * - `definitions.subgraphs` into the first-class `definitions` root map
  *   (schema §5.1), with interior node/link mint order preserved in plain
- *   `node_order`/`link_order` registers (interior order is static in v1 —
- *   only `set_widget` is subgraph-scoped); non-`subgraphs` keys of the
- *   definitions container are kept in the internal `__definitions_extra`
+ *   `node_order`/`link_order` registers; later interior links retain this
+ *   imported prefix and project in deterministic stamp order;
+ *   non-`subgraphs` keys of the definitions container are kept in the internal `__definitions_extra`
  *   meta key and merged back at projection;
  * - every other top-level key into meta as opaque passthrough (schema §6);
  * - `schema_version` + the pinned `catalogVersion` into meta.
