@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,14 +47,18 @@ describe("portable harness regressions", () => {
     expect(command).toBeDefined();
     expect(command).not.toContain("npm i");
     const bin = temp("sonar-command-");
+    const ambientBin = temp("hostile-ambient-node-");
     writeFileSync(join(bin, "npx"), `#!/bin/sh\nprintf '%s' '${output}'\nexit ${eslintStatus}\n`);
+    symlinkSync(process.execPath, join(bin, "node"));
+    writeFileSync(join(ambientBin, "node"), "#!/bin/sh\necho hostile ambient node >&2\nexit 127\n");
     chmodSync(join(bin, "npx"), 0o755);
+    chmodSync(join(ambientBin, "node"), 0o755);
     const run = spawnSync("bash", ["-c", command!.replace("<changed_files>", "fixture.ts")], {
       encoding: "utf8",
       cwd: bin,
-      env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
+      env: { ...process.env, PATH: `${bin}:${ambientBin}:/usr/bin:/bin` },
     });
-    expect(run.status).toBe(expected);
+    expect(run.status, `documented command stderr:\n${run.stderr}`).toBe(expected);
     expect(run.stdout).toContain(`eslint exit: ${eslintStatus}`);
     if (name === "findings") {
       expect(run.stdout).toContain('"severity":2');
