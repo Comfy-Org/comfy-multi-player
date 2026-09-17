@@ -1076,6 +1076,16 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
     }
   }
 
+  const importedLinkStates = new Map<string, ReturnType<typeof importedLinkState>>();
+  for (const link of linkWrites) {
+    const key = String(link[0]);
+    try {
+      importedLinkStates.set(key, importedLinkState(link, wf as unknown as import("./types.js").WorkflowJSON));
+    } catch (err) {
+      throw new OpRejectedError("malformed_op", `insert_workflow: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   for (const [id, definition, digest] of definitionWrites) {
     mset(defs, id, definition);
     setDefinitionDigest(doc, id, digest);
@@ -1083,7 +1093,7 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
   for (const link of linkWrites) {
     const key = String((link as unknown[])[0]);
     mset(links, key, cloneForMap(link, "insert_workflow: link"));
-    const state = importedLinkState(link, wf as unknown as import("./types.js").WorkflowJSON);
+    const state = importedLinkStates.get(key) ?? null;
     if (state !== null) mset(linkStateMap(doc), key, cloneForMap(state, `insert_workflow: link state ${key}`));
     mset(stamps, JSON.stringify(["insert_workflow_link", key]), stamp);
   }
