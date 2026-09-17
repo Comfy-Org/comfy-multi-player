@@ -27,6 +27,7 @@ import type {
   GrowConnectOp,
   InteriorSetWidgetOp,
   Op,
+  OpKind,
   ResetDocOp,
   SetWidgetOp,
   TopLevelSetWidgetOp,
@@ -195,6 +196,13 @@ const resetAsOp: Op = reset;
 declare function applyOpsSignature(ops: Op[]): void;
 // @ts-expect-error #17: the applier cannot be handed an op it always refuses.
 applyOpsSignature([reset]);
+
+// The public vocabulary projection accepts every declared kind and no value
+// outside the wire union. This is an external-consumer check through index.ts.
+const okImplementedKind: OpKind = "add_node";
+const okDeferredKind: OpKind = "reset_doc";
+// @ts-expect-error #21: undeclared operation kinds are not public OpKind values.
+const unknownKind: OpKind = "unknown_op";
 
 // ---------------------------------------------------------------------------
 // Positive controls — these MUST compile, or the gate above is vacuous
