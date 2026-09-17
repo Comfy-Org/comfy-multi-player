@@ -1,6 +1,6 @@
 # ADR-022: Preserve durable link intent across node-presence races
 
-- **Status:** Accepted
+- **Status:** Proposed
 - **Date:** 2026-09-03
 - **Depends on:** [Amendment A7](../multiplayer-schema.md#amendment-a7--2026-08-21--stamp-gated-node-presence-canonical-autogrow-naming-scoped-clear-issue-11) (node presence), [Amendment A18](../multiplayer-schema.md#amendment-a18--2026-08-30--normalized-stamped-link-identity) (normalized link identity)
 
