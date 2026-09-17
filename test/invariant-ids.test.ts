@@ -60,11 +60,10 @@ function definedIds(): Set<string> {
   return new Set(Array.from(register.matchAll(HEADING), (match) => captured(match, 1)));
 }
 
-/** file → sorted ids cited in it, for every tracked text file outside the register. */
+/** file → sorted ids cited in it, for every tracked text file including the register. */
 function citationsByFile(): Map<string, string[]> {
   const found = new Map<string, string[]>();
   for (const file of trackedTextFiles()) {
-    if (file === REGISTER) continue;
     const cited = new Set(
       Array.from(readFileSync(join(root, file), "utf8").matchAll(CITATION), (match) => captured(match, 0)).filter(
         (id) => !PLACEHOLDER.test(id),
