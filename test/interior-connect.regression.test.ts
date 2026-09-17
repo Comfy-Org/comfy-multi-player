@@ -302,6 +302,25 @@ describe("interior connect regression", () => {
     expect(definitionOf(doc).nodes.find(({ id }) => id === 1)?.outputs?.[0]?.links).toEqual([7, 41]);
   });
 
+  // https://github.com/Comfy-Org/comfy-multi-player/pull/198
+  it("regression: prototype-named imported link ids retain their original order", () => {
+    const imported = {
+      ...workflow,
+      definitions: {
+        subgraphs: [{
+          id: "definition-1",
+          nodes: [],
+          links: [
+            { id: "constructor", origin_id: 1, origin_slot: 0, target_id: 2, target_slot: 0, type: "STRING" },
+            { id: "ordinary", origin_id: 1, origin_slot: 0, target_id: 3, target_slot: 0, type: "STRING" },
+          ],
+        }],
+      },
+    } as unknown as WorkflowJSON;
+    expect(definitionOf(mint(imported, catalog)).links.map(({ id }) => id))
+      .toEqual(["constructor", "ordinary"]);
+  });
+
   it("keeps top-level and interior bookkeeping distinct when link ids collide", () => {
     const withRootGraph = structuredClone(workflow) as unknown as WorkflowJSON;
     withRootGraph.nodes.push(
