@@ -87,25 +87,31 @@ Two corrections recorded by MUT-GLOB-KA4-1, both measured on this tree rather th
 **Why:** One implementation must run identically in a browser bundle, at a peer or edge, and in a bare Node doc-host serving many documents from one process, so restart and reconnect reseed from committed document state rather than package-owned persistence and two documents in one process cannot leak into each other. **This is not an alias of KA-3, and the overlap is the reason it reads like one:** KA-3 constrains the *dependency surface* (portability), KA-13 constrains *state ownership*. They coincide only on the framework-import ban, which is why `scripts/check-stateless.mjs` cites both and why the framework rules in the strict config are labelled `KA-3/KA-13`.  
 **Enforced by:** `scripts/check-stateless.mjs` (`npm run check:stateless`), which lints every `src/**/*.ts` file against the `statelessRules` set in [`eslint.strict.config.js`](../.agents/checks/eslint.strict.config.js) under `CMP_STATELESS_ONLY=1` and then runs the colocated `test/stateless.test.ts` probe — no state shared between documents in one module instance, identical public behavior from fresh module registries, and a fresh Node process. The gate exits 2 (INCONCLUSIVE, never a pass) when a precondition or the per-file lint floor is missing, and it is merge-blocking in fact rather than by convention: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs it on every push and pull request. `test/invariant-ids.test.ts` holds this register itself — every `KA-*`/`FC-*` id cited anywhere in the package must resolve to a heading in this file, which is the guard that was missing while this entry was ([comfy-multi-player #152](https://github.com/Comfy-Org/comfy-multi-player/issues/152)).
 
-### KA-11 amendment — DQ-11 incarnation namespace (schema v2)
-**Rule:** A node lifetime has a durable `__incarnation` token. Imported nodes use
+### KA-11 amendment — DQ-11 incarnation namespace (historical schema-v2 context)
+**Historical rule:** A node lifetime has a durable `__incarnation` token. Imported nodes use
 `"0"`; a modern winning `add_node` carries its immutable `op_id` as the token
 (legacy adds without the field remain life `"0"`). Node-scoped widget ops
 carry that token, and `__stamps` keys include it. A write for a non-current
 incarnation is a consumed no-op. The v1→v2 migration translates missing tokens
-and legacy widget keys to life `"0"`.
+and legacy widget keys to life `"0"`. This records the schema-v2 amendment;
+the current schema is v3 and does not run that migration for an old document.
+Old private-alpha layouts are refused without mutation and source workflows
+are re-minted, with no compatibility reader or relabelling path.
 
 **Why:** A delete followed by same-ID re-add must not let a life-1 widget stamp
 defeat a valid life-2 write (DQ-11, KEEP-ALIVE 4). The package regression is
 `test/incarnation-stamps.test.ts`; the schema and protocol implications are
 recorded in Amendment A16 of `docs/multiplayer-schema.md`.
 
-### KA-2 amendment — DQ-10 direct Lamport counter semantics
-**Rule:** In the single private-alpha op format, `base_version` is minted as a
+### KA-2 amendment — DQ-10 direct Lamport counter semantics (historical schema-v2 context)
+**Historical rule:** In the single private-alpha op format, `base_version` is minted as a
 creator-owned Lamport counter. The winner remains the tuple-generic
 `[counter, actor, op_id]`; DQ-11's A16 incarnation-qualified target keys and
-the already-shipped legacy incarnation token `"0"` remain unchanged. There is
-no schema-v3, migration, legacy shim, or dual-format reader.
+the already-shipped legacy incarnation token `"0"` remain unchanged. At that
+decision point there was no schema-v3, migration, legacy shim, or dual-format
+reader. The current schema-v3 release preserves the ordering decision but
+refuses old layouts; it re-mints source workflows rather than providing a
+compatibility reader or relabelling an old document.
 
 **Enforced by:** `test/clock.test.ts`, the existing LWW/convergence suites, the
 four-family merge harness, and [`ADR-0005`](adr/0005-lamport-ordering-v1-migration.md).

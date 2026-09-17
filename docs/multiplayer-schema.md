@@ -615,7 +615,8 @@ Added-link ordering stamps use the internal `__stamps` key
 same-ID rewrite refreshes that stamp; rewriting a still-present imported link
 does not reclassify it as an addition. Definition IDs identify unique
 definitions. These are additional internal stamp entries, not a new root or
-scalar-array layout; as with Amendment A18, `SCHEMA_VERSION` remains 2.
+scalar-array layout, so the interior-order metadata did not itself trigger an
+additional version bump. The combined current document schema is v3.
 
 ### 5.2 Addressing: three forms, one write target
 
