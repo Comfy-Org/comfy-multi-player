@@ -161,9 +161,11 @@ function projectNode(ym: Y.Map<unknown>, catalog: WidgetCatalog): WorkflowNode {
  * ## The gate is exactly as wide as "projecting this entry would throw"
  *
  * Two conditions, and no more. An entry that is not a `Y.Map` cannot be
- * iterated by {@link projectNode}; an entry whose `widgets` slot is not a
- * `Y.Map` cannot be walked by {@link widgetsToPositional}. Everything else a
- * node can carry projects verbatim under schema §1.1's passthrough rule — a
+ * iterated by {@link projectNode}; an entry whose authoritative named
+ * `widgets` slot is not a `Y.Map` cannot be walked by
+ * {@link widgetsToPositional}. Opaque storage remains authoritative when stale
+ * named storage is malformed. Everything else a node can carry projects
+ * verbatim under schema §1.1's passthrough rule — a
  * `flags` that is not an object, an `inputs` that is not an array, a blank or
  * absent `type`, an `id` that disagrees with its map key. Those are odd, but
  * they are READABLE, and this function must not have an opinion about them.
@@ -209,7 +211,13 @@ function projectNode(ym: Y.Map<unknown>, catalog: WidgetCatalog): WorkflowNode {
  */
 function tryProjectNode(value: unknown, catalog: WidgetCatalog): WorkflowNode | null {
   if (!(value instanceof Y.Map)) return null;
-  if (value.has("widgets") && !(value.get("widgets") instanceof Y.Map)) return null;
+  if (
+    widgetStorageOf(value) === "named" &&
+    value.has("widgets") &&
+    !(value.get("widgets") instanceof Y.Map)
+  ) {
+    return null;
+  }
   return projectNode(value, catalog);
 }
 
@@ -279,7 +287,7 @@ export function project(doc: Y.Doc, catalog: WidgetCatalog): WorkflowJSON {
   });
 
   const nodes: WorkflowNode[] = [];
-  nodesMap(doc).forEach((ym, id) => {
+  nodesMap(doc).forEach((ym) => {
     const node = tryProjectNode(ym, catalog);
     if (node) nodes.push(node);
   });
