@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const fixtures: string[] = [];
 
-function runReport(contents: string) {
+function runReport(contents: string | null) {
   const fixture = mkdtempSync(join(tmpdir(), "mutation-report-"));
   fixtures.push(fixture);
   mkdirSync(join(fixture, "scripts"));
@@ -20,7 +20,8 @@ function runReport(contents: string) {
   const scriptPath = join(fixture, "scripts", "check-mutation-report.mjs");
   copyFileSync(join(root, "scripts", "check-mutation-report.mjs"), scriptPath);
   const reportPath = join(fixture, "reports", "mutation", "mutation.json");
-  writeFileSync(reportPath, contents);
+  if (contents === null) mkdirSync(reportPath);
+  else writeFileSync(reportPath, contents);
   return spawnSync(process.execPath, [scriptPath], {
     encoding: "utf8",
   });
@@ -44,6 +45,13 @@ describe("mutation report CLI", () => {
     expect(run.status).toBe(2);
     expect(run.stderr).toContain("mutation report INCONCLUSIVE: could not read or parse report");
     expect(run.stderr).not.toContain("SyntaxError");
+  });
+
+  it("classifies a report file-read failure as INCONCLUSIVE", () => {
+    const run = runReport(null);
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain("mutation report INCONCLUSIVE: could not read or parse report");
+    expect(run.stderr).toContain("EISDIR");
   });
 
   it("passes a valid report at or above its score threshold", () => {
