@@ -130,6 +130,32 @@ describe("incarnation-namespaced widget stamps (DQ-11)", () => {
     }
   }
 
+  for (const insertionOrder of ["legacy-first", "incumbent-first"] as const) {
+    it.each([
+      ["counter", [9, "human:a", id("aaa")], [8, "human:z", id("zzz")]],
+      ["actor", [8, "human:z", id("aaa")], [8, "human:a", id("zzz")]],
+      ["op_id", [8, "human:a", id("zzz")], [8, "human:a", id("aaa")]],
+      ["counter (legacy wins)", [8, "human:z", id("zzz")], [9, "human:a", id("aaa")]],
+      ["actor (legacy wins)", [8, "human:a", id("zzz")], [8, "human:z", id("aaa")]],
+      ["op_id (legacy wins)", [8, "human:a", id("aaa")], [8, "human:a", id("zzz")]],
+    ] as const)(`preserves the greater stamp against a normalized incumbent at the %s tier (${insertionOrder})`, (tier, incumbent, legacy) => {
+      const doc = mint(base(), catalog);
+      const stamps = doc.getMap<unknown>("__stamps");
+      const oldKey = JSON.stringify(["widget", 1, "text"]);
+      const migratedKey = JSON.stringify(["widget", "1", LEGACY_NODE_INCARNATION, "text"]);
+      const entries = insertionOrder === "legacy-first"
+        ? [[oldKey, legacy], [migratedKey, incumbent]] as const
+        : [[migratedKey, incumbent], [oldKey, legacy]] as const;
+      for (const [key, stamp] of entries) stamps.set(key, stamp);
+      doc.getMap("meta").set("schema_version", 1);
+
+      migrate(doc, 1);
+
+      expect(stamps.get(migratedKey)).toEqual(tier.endsWith("(legacy wins)") ? legacy : incumbent);
+      expect(stamps.has(oldKey)).toBe(false);
+    });
+  }
+
   it.each([
     ["null node id", ["widget", null, "text"]],
     ["boolean node id", ["widget", true, "text"]],
