@@ -21,7 +21,21 @@ afterEach(() => {
 
 describe("portable harness regressions", () => {
   it.each([
-    { name: "clean", eslintStatus: 0, output: '[{"filePath":"fixture.ts","messages":[]}]', expected: 0 },
+    {
+      name: "clean complete report",
+      eslintStatus: 0,
+      output: '[{"filePath":"fixture.ts","messages":[]},{"filePath":"path with spaces.ts","messages":[]}]',
+      expected: 0,
+      selectedFiles: ["fixture.ts", "path with spaces.ts"],
+    },
+    {
+      name: "partial report",
+      eslintStatus: 0,
+      output: '[{"filePath":"fixture.ts","messages":[]}]',
+      expected: 2,
+      selectedFiles: ["fixture.ts", "path with spaces.ts"],
+    },
+    { name: "omitted inputs", eslintStatus: 0, output: "", expected: 2, selectedFiles: [] },
     {
       name: "findings",
       eslintStatus: 1,
@@ -39,7 +53,7 @@ describe("portable harness regressions", () => {
       output: '[{"filePath":"fixture.ts","messages":{}}]',
       expected: 2,
     },
-  ])("the documented SonarJS command classifies $name", ({ name, eslintStatus, output, expected }) => {
+  ])("the documented SonarJS command classifies $name", ({ name, eslintStatus, output, expected, selectedFiles = ["fixture.ts"] }) => {
     const profile = readFileSync(join(repoRoot, ".agents/checks/sonarjs-lint.md"), "utf8");
     const command = [...profile.matchAll(/```bash\n([\s\S]*?)\n\s*```/g)]
       .map((match) => match[1])
@@ -48,18 +62,24 @@ describe("portable harness regressions", () => {
     expect(command).not.toContain("npm i");
     const bin = temp("sonar-command-");
     const ambientBin = temp("hostile-ambient-node-");
-    writeFileSync(join(bin, "npx"), `#!/bin/sh\nprintf '%s' '${output}'\nexit ${eslintStatus}\n`);
+    writeFileSync(join(bin, "npx"), `#!/bin/sh\nprintf '%s\\n' "$@" > eslint-arguments\nprintf '%s' '${output}'\nexit ${eslintStatus}\n`);
     symlinkSync(process.execPath, join(bin, "node"));
     writeFileSync(join(ambientBin, "node"), "#!/bin/sh\necho hostile ambient node >&2\nexit 127\n");
     chmodSync(join(bin, "npx"), 0o755);
     chmodSync(join(ambientBin, "node"), 0o755);
-    const run = spawnSync("bash", ["-c", command!.replace("<changed_files>", "fixture.ts")], {
+    const run = spawnSync("bash", ["-c", command!, "sonarjs-lint-test", ...selectedFiles], {
       encoding: "utf8",
       cwd: bin,
       env: { ...process.env, PATH: `${bin}:${ambientBin}:/usr/bin:/bin` },
     });
     expect(run.status, `documented command stderr:\n${run.stderr}`).toBe(expected);
-    expect(run.stdout).toContain(`eslint exit: ${eslintStatus}`);
+    if (selectedFiles.length > 0) expect(run.stdout).toContain(`eslint exit: ${eslintStatus}`);
+    else expect(run.stderr).toContain("INDETERMINATE: no selected files");
+    expect(run.stderr).not.toContain("hostile ambient node");
+    if (selectedFiles.length > 0) {
+      const eslintArguments = readFileSync(join(bin, "eslint-arguments"), "utf8").trimEnd().split("\n");
+      expect(eslintArguments.slice(-selectedFiles.length)).toEqual(selectedFiles);
+    }
     if (name === "findings") {
       expect(run.stdout).toContain('"severity":2');
       expect(run.stdout).toContain('"ruleId":"sonarjs/no-identical-expressions"');
