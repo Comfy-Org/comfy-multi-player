@@ -103,6 +103,33 @@ function defIds(wf: WorkflowJSON): string[] {
 }
 
 describe("insert_workflow: happy path", () => {
+  it("maps one explicit raw group id differently for two fixed operation ids", () => {
+    // Independently derived with Node 22.22.2, without importing the production remapper:
+    // node -e 'for(const op of ["c641df0c31f9440b9385ac8e01e099b2","0123456789abcdef0123456789abcdef"]) console.log(`insert:${op}:root:group:${encodeURIComponent(JSON.stringify("raw-group"))}`)'
+    const vectors = [
+      [
+        "c641df0c31f9440b9385ac8e01e099b2",
+        "insert:c641df0c31f9440b9385ac8e01e099b2:root:group:%22raw-group%22",
+      ],
+      [
+        "0123456789abcdef0123456789abcdef",
+        "insert:0123456789abcdef0123456789abcdef:root:group:%22raw-group%22",
+      ],
+    ] as const;
+
+    for (const [opId, expectedGroupId] of vectors) {
+      const doc = mint({ nodes: [], links: [] }, catalog);
+      const op = insertOp(
+        { nodes: [], links: [], groups: [{ id: "raw-group", title: "Pinned group" }] },
+        { op_id: opId },
+      );
+      seq--;
+
+      expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+      expect(project(doc, catalog).groups).toEqual([{ id: expectedGroupId, title: "Pinned group" }]);
+    }
+  });
+
   it("maps the frozen CLI asymmetric raw-ID fixture to exact operation-derived IDs", () => {
     const doc = mint({ nodes: [], links: [] }, catalog);
     const op = {
@@ -516,6 +543,40 @@ describe("insert_workflow: happy path", () => {
     expect(defIds(deleteThenInsert).some((id) => id !== "def-1" && /^[0-9a-f-]{36}$/.test(id))).toBe(true);
   });
 
+  it("drops both boundary directions and retains only the sibling link and its exact slot references", () => {
+    const opId = "0123456789abcdef0123456789abcdef";
+    const siblingLinkId = "insert:0123456789abcdef0123456789abcdef:root:link:903";
+    const sourceNodeId = "insert:0123456789abcdef0123456789abcdef:root:node:701";
+    const sinkNodeId = "insert:0123456789abcdef0123456789abcdef:root:node:702";
+    const doc = mint({ nodes: [], links: [] }, catalog);
+    const op = insertOp(
+      {
+        nodes: [
+          { id: 701, type: "Src", title: "boundary source", outputs: [{ name: "out", links: [901, 903] }] },
+          { id: 702, type: "Sink", title: "boundary sink", inputs: [{ name: "in", link: 902 }, { name: "sibling", link: 903 }] },
+        ],
+        links: [
+          [901, 701, 0, 999, 0, "inserted-to-external"],
+          [902, 999, 0, 702, 0, "external-to-inserted"],
+          [903, 701, 0, 702, 1, "sibling"],
+        ],
+      },
+      { op_id: opId },
+    );
+    seq--;
+
+    expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+    const workflow = project(doc, catalog);
+    expect(workflow.links).toEqual([[siblingLinkId, sourceNodeId, 0, sinkNodeId, 1, "sibling"]]);
+    expect(workflow.nodes).toEqual([
+      expect.objectContaining({ id: sourceNodeId, outputs: [{ name: "out", links: [siblingLinkId] }] }),
+      expect.objectContaining({
+        id: sinkNodeId,
+        inputs: [{ name: "in", link: null }, { name: "sibling", link: siblingLinkId }],
+      }),
+    ]);
+  });
+
   it("rejects a remapped definition id already present anywhere in the stored tree", () => {
     const op = insertOp(template());
     const remapped = remapInsertedWorkflowIds(template(), op.op_id);
@@ -713,6 +774,60 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
     expect(project(doc, catalog).nodes!.find((node) => node.id === 4)?.type).toBe("KSampler");
     expect(ids(project(doc, catalog))).toHaveLength(8);
   });
+
+  const occupiedIdVectors = [
+    {
+      kind: "node",
+      code: "node_id_collision",
+      seed: {
+        nodes: [{ id: "insert:c641df0c31f9440b9385ac8e01e099b2:root:node:701", type: "Src", title: "incumbent node" }],
+        links: [],
+      },
+    },
+    {
+      kind: "link",
+      code: "link_id_collision",
+      seed: {
+        nodes: [{ id: 1, type: "Src" }, { id: 2, type: "Sink" }],
+        links: [["insert:c641df0c31f9440b9385ac8e01e099b2:root:link:901", 1, 0, 2, 0, "incumbent link"]],
+      },
+    },
+    {
+      kind: "definition",
+      code: "definition_conflict",
+      seed: {
+        nodes: [],
+        links: [],
+        definitions: {
+          subgraphs: [{ id: "c7d70ff1-6dca-4b80-83ee-351b8510f528", name: "incumbent definition", nodes: [], links: [] }],
+        },
+      },
+    },
+  ] as const;
+
+  for (const vector of occupiedIdVectors) {
+    it(`refuses an independently occupied derived ${vector.kind} id byte-identically`, () => {
+      // Fixed values were independently produced with Node 22.22.2 node:crypto:
+      // node --input-type=module -e 'import{createHash}from"node:crypto";const op="c641df0c31f9440b9385ac8e01e099b2",raw="def-asym",s=`insert:${op}:root:definition:${encodeURIComponent(JSON.stringify(raw))}`,h=createHash("sha256").update(s).digest("hex");console.log(`insert:${op}:root:node:701`,`insert:${op}:root:link:901`,`${h.slice(0,8)}-${h.slice(8,12)}-4${h.slice(13,16)}-8${h.slice(17,20)}-${h.slice(20,32)}`)'
+      const doc = mint(vector.seed as unknown as WorkflowJSON, catalog);
+      const beforeBytes = bytes(doc);
+      const incumbent = project(doc, catalog);
+      const op = insertOp(
+        {
+          nodes: [{ id: 701, type: "def-asym" }, { id: 702, type: "Sink" }],
+          links: [[901, 701, 0, 702, 0, "candidate link"]],
+          definitions: { subgraphs: [{ id: "def-asym", name: "candidate definition", nodes: [], links: [] }] },
+        },
+        { op_id: "c641df0c31f9440b9385ac8e01e099b2" },
+      );
+      seq--;
+
+      expect(rejectedOutcomeWithIndex(applyOps(doc, [op], catalog))).toMatchObject({ index: 0, code: vector.code });
+      expect(bytes(doc).equals(beforeBytes)).toBe(true);
+      expect(project(doc, catalog)).toEqual(incumbent);
+      expect(appliedMap(doc).has(op.op_id)).toBe(false);
+    });
+  }
 
   it("routes dangling link endpoints through the existing unknown-node no-op path", () => {
     const doc = mint(baseWorkflow(), catalog);

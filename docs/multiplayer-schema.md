@@ -45,7 +45,7 @@ Normative inputs, in precedence order:
    exported catalog, machine-captured findings). Every DECISION below cites
    the spike finding that forced it.
 3. **ADR-022 / ADR-T8** — the local decision and accepted in-app-agent program
-   TDD add `insert_workflow` as the seventh implemented op without moving the
+   TDD add `insert_workflow` as the eighth implemented op without moving the
    pinned comfy-cli vocabulary.
 
 ---
