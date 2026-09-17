@@ -54,6 +54,29 @@ describe("mutation report CLI", () => {
     expect(run.stderr).toContain("EISDIR");
   });
 
+  // Preserved request: https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#discussion_r3926236086
+  it.each(["CompileError", "RuntimeError", "Ignored"])("refuses 500 %s mutants with no valid result", (status) => {
+    const run = runReport(JSON.stringify({
+      files: { "src/example.ts": { mutants: Array.from({ length: 500 }, () => ({ status })) } },
+      thresholds: { break: 90 },
+    }));
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain("mutation report INCONCLUSIVE: the report contains 0 valid mutants");
+    expect(run.stdout).not.toContain("PASSED");
+  });
+
+  it("scores a valid survivor as failure even when all other mutants were ignored", () => {
+    const run = runReport(JSON.stringify({
+      files: { "src/example.ts": { mutants: [
+        ...Array.from({ length: 499 }, () => ({ status: "Ignored" })),
+        { status: "Survived" },
+      ] } },
+      thresholds: { break: 90 },
+    }));
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("mutation report FAILED: 0.00%");
+  });
+
   it("passes a valid report at or above its score threshold", () => {
     const run = runReport(report(450, 50, 90));
     expect(run.status).toBe(0);

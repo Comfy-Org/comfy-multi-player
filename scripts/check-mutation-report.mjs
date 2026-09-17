@@ -66,6 +66,7 @@ if (total < MIN_MUTANTS) {
 
 const detected = counts.Killed + counts.Timeout;
 const valid = detected + counts.Survived + counts.NoCoverage;
+if (valid === 0) inconclusive("the report contains 0 valid mutants");
 const score = (detected / valid) * 100;
 // The same run scored with every Timeout treated as a survivor: the floor the
 // score cannot fall below no matter how the timeouts are really classified.
