@@ -11,7 +11,7 @@
  * "assume fine" when the network is absent is worse than no test.
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,6 +61,75 @@ const REQUIRED_SITES = ["src/index.ts", "src/types.ts", "docs/multiplayer-schema
 const VOCABULARY_PIN = "7e732242d971daf0d2d30f22f997abfacd78986e";
 
 describe("FC-10 — upstream citations are pinned by SHA, not by branch", () => {
+  it.each(["repo", "path", "valid"])("regression: remote verification checks valid pins alongside %s input", (field) => {
+    // Source: https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#discussion_r3914401911
+    const fixture = mkdtempSync(join(tmpdir(), "pins-remote-"));
+    try {
+      mkdirSync(join(fixture, "docs"));
+      mkdirSync(join(fixture, "bin"));
+      const commit = "a".repeat(40);
+      const citedBy = ["citation-1.md", "citation-2.md", "citation-3.md", "citation-4.md"];
+      const basePin = {
+        commit,
+        repo: "https://github.com/example/upstream",
+        path: "README.md",
+        established_by: "resolved from an immutable upstream revision with audit evidence",
+        sections_cited: ["1"],
+        cited_by: citedBy,
+      };
+      writeFileSync(
+        join(fixture, "docs", "upstream-pins.json"),
+        JSON.stringify({
+          pins: {
+            ...(field === "valid" ? {} : { malformed: { ...basePin, [field]: null } }),
+            valid: basePin,
+          },
+        }),
+      );
+      for (const site of citedBy) writeFileSync(join(fixture, site), `Pinned at ${commit}.\n`);
+      for (let index = 0; index < 20; index += 1) writeFileSync(join(fixture, `tracked-${index}.md`), `fixture ${index}\n`);
+
+      const ghLog = join(fixture, "gh.log");
+      const fakeGh = join(fixture, "bin", "gh");
+      writeFileSync(
+        fakeGh,
+        `#!/bin/sh\nprintf '%s\\n' "$*" >> "$GH_TEST_LOG"\n` +
+          `if [ "$1" = "--version" ]; then echo 'gh version test'; exit 0; fi\n` +
+          `case "$2" in\n` +
+          `  rate_limit) echo '{}';;\n` +
+          `  repos/example/upstream/commits/*) echo '{}';;\n` +
+          `  repos/example/upstream/contents/README.md?ref=*) printf '%s\\n' '{"content":"IyAxIFRpdGxlCg==","encoding":"base64"}';;\n` +
+          `  *) echo "unexpected endpoint: $2" >&2; exit 9;;\n` +
+          `esac\n`,
+      );
+      chmodSync(fakeGh, 0o755);
+      expect(spawnSync("git", ["init", "--quiet"], { cwd: fixture }).status).toBe(0);
+      expect(spawnSync("git", ["add", "."], { cwd: fixture }).status).toBe(0);
+
+      const run = spawnSync(process.execPath, [join(root, "scripts", "check-pins.mjs"), "--verify-remote"], {
+        encoding: "utf8",
+        env: { ...process.env, PINS_ROOT: fixture, PATH: `${join(fixture, "bin")}:${process.env.PATH}`, GH_TEST_LOG: ghLog },
+      });
+      expect(run.status, run.stderr).toBe(field === "valid" ? 0 : 1);
+      if (field === "valid") {
+        expect(run.stdout).toContain("pin check PASSED");
+        expect(run.stderr).toBe("");
+      } else {
+        expect(run.stderr).toContain("pin check FAILED: 1 violation(s)");
+        expect(run.stderr).toContain(`malformed: ${field} must`);
+        expect(run.stderr).not.toContain("TypeError");
+      }
+      expect(readFileSync(ghLog, "utf8").trim().split("\n")).toEqual([
+        "--version",
+        "api rate_limit",
+        `api repos/example/upstream/commits/${commit}`,
+        `api repos/example/upstream/contents/README.md?ref=${commit}`,
+      ]);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("makes the production gate fail on a planted moving upstream citation", () => {
     const fixture = mkdtempSync(join(tmpdir(), "pins-"));
     try {
