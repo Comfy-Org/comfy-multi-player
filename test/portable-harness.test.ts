@@ -22,11 +22,24 @@ afterEach(() => {
 describe("portable harness regressions", () => {
   it.each([
     { name: "clean", eslintStatus: 0, output: '[{"filePath":"fixture.ts","messages":[]}]', expected: 0 },
-    { name: "findings", eslintStatus: 1, output: '[{"filePath":"fixture.ts","messages":[{"severity":2}]}]', expected: 1 },
+    {
+      name: "findings",
+      eslintStatus: 1,
+      output:
+        '[{"filePath":"fixture.ts","messages":[{"severity":2,"ruleId":"sonarjs/no-identical-expressions","line":17,"message":"Correct one of the identical sub-expressions on both sides of operator."}]}]',
+      expected: 1,
+    },
     { name: "execution error", eslintStatus: 2, output: '[{"filePath":"fixture.ts","messages":[]}]', expected: 2 },
     { name: "malformed JSON", eslintStatus: 0, output: '{', expected: 2 },
     { name: "empty output", eslintStatus: 0, output: '', expected: 2 },
-  ])("the documented SonarJS command classifies $name", ({ eslintStatus, output, expected }) => {
+    { name: "malformed result row", eslintStatus: 0, output: '[{}]', expected: 2 },
+    {
+      name: "non-array messages",
+      eslintStatus: 0,
+      output: '[{"filePath":"fixture.ts","messages":{}}]',
+      expected: 2,
+    },
+  ])("the documented SonarJS command classifies $name", ({ name, eslintStatus, output, expected }) => {
     const profile = readFileSync(join(repoRoot, ".agents/checks/sonarjs-lint.md"), "utf8");
     const command = [...profile.matchAll(/```bash\n([\s\S]*?)\n\s*```/g)]
       .map((match) => match[1])
@@ -43,6 +56,12 @@ describe("portable harness regressions", () => {
     });
     expect(run.status).toBe(expected);
     expect(run.stdout).toContain(`eslint exit: ${eslintStatus}`);
+    if (name === "findings") {
+      expect(run.stdout).toContain('"severity":2');
+      expect(run.stdout).toContain('"ruleId":"sonarjs/no-identical-expressions"');
+      expect(run.stdout).toContain('"line":17');
+      expect(run.stdout).toContain('"message":"Correct one of the identical sub-expressions on both sides of operator."');
+    }
   });
 
   it("the driver's root calculation decodes a URL-encoded checkout path", () => {

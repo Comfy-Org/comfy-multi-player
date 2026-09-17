@@ -20,10 +20,11 @@ Run `eslint-plugin-sonarjs` on changed files for SonarQube-grade bug and code-sm
      --no-warn-ignored --format json <changed_files> >"$report" || status=$?
    echo "eslint exit: $status"
    parse_status=0
-   node -e 'const fs=require("node:fs"); try { const result=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (!Array.isArray(result) || result.length === 0) throw new Error("empty ESLint result"); } catch (error) { console.error(`INDETERMINATE: ${error.message}`); process.exit(2); }' "$report" || parse_status=$?
+   node -e 'const fs=require("node:fs"); try { const result=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (!Array.isArray(result) || result.length === 0) throw new Error("empty ESLint result"); if (result.some((row) => !row || typeof row !== "object" || !Array.isArray(row.messages))) throw new Error("malformed ESLint result row"); } catch (error) { console.error(`INDETERMINATE: ${error.message}`); process.exit(2); }' "$report" || parse_status=$?
    if [ "$parse_status" -ne 0 ]; then
      exit 2
    fi
+   cat "$report"
    exit "$status"
    ```
    ESLint exits `1` when it reports problems and `2` on a config/execution error. Treat exit `2`, a parse error, or empty/no output as **indeterminate** (report the failure), never as "no issues found".
