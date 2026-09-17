@@ -85,6 +85,39 @@ try {
   process.exit(2);
 }
 
+if (
+  typeof report !== "object" ||
+  report === null ||
+  typeof report.summary !== "object" ||
+  report.summary === null ||
+  !Number.isInteger(report.summary.totalCruised) ||
+  report.summary.totalCruised < 0 ||
+  !Number.isInteger(report.summary.totalDependenciesCruised) ||
+  report.summary.totalDependenciesCruised < 0 ||
+  !Array.isArray(report.summary.violations) ||
+  report.summary.violations.some(
+    (violation) =>
+      typeof violation !== "object" ||
+      violation === null ||
+      typeof violation.from !== "string" ||
+      (violation.to !== undefined && typeof violation.to !== "string") ||
+      typeof violation.rule !== "object" ||
+      violation.rule === null ||
+      typeof violation.rule.name !== "string" ||
+      typeof violation.rule.severity !== "string" ||
+      (violation.cycle !== undefined &&
+        (!Array.isArray(violation.cycle) ||
+          violation.cycle.some(
+            (segment) =>
+              typeof segment !== "string" &&
+              (typeof segment !== "object" || segment === null || typeof segment.name !== "string"),
+          ))),
+  )
+) {
+  console.error("import-graph check INCONCLUSIVE: dependency-cruiser report has no valid summary");
+  process.exit(2);
+}
+
 const { totalCruised, totalDependenciesCruised, violations } = report.summary;
 
 // --------------------------------------------------------------------------

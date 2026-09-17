@@ -64,11 +64,18 @@ if (findings.length > 0) {
   process.exit(1);
 }
 
+const vitest = join(root, "node_modules/.bin/vitest");
+const statelessProbe = join(root, "test/stateless.test.ts");
+if (!existsSync(vitest)) inconclusive("vitest is not installed; run npm ci");
+if (!existsSync(statelessProbe)) inconclusive("test/stateless.test.ts is missing");
+
 const probe = spawnSync(
-  join(root, "node_modules/.bin/vitest"),
+  vitest,
   ["run", "test/stateless.test.ts", "--reporter=dot"],
   { cwd: root, encoding: "utf8", stdio: "inherit" },
 );
+if (probe.error) inconclusive(`could not run the stateless probe: ${probe.error.message}`);
+if (probe.signal) inconclusive(`stateless probe terminated by signal ${probe.signal}`);
 if (probe.status !== 0) process.exit(probe.status ?? 1);
 
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
