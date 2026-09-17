@@ -612,12 +612,13 @@ function definitionNodeAtPath(
   path: string[],
 ): { definitionId: string; node: Y.Map<unknown> } | null {
   let definitionId = path[0]!;
-  if (String(root.get("id")) !== definitionId) {
+  let node = definitionNode(root, definitionId, path[1]!);
+  if (!node) {
     const instance = nodesMap(doc).get(definitionId);
     if (!(instance instanceof Y.Map) || String(instance.get("type")) !== String(root.get("id"))) return null;
     definitionId = String(root.get("id"));
+    node = definitionNode(root, definitionId, path[1]!);
   }
-  let node = definitionNode(root, definitionId, path[1]!);
   if (!node) return null;
   for (const nodeId of path.slice(2)) {
     definitionId = String(node.get("type"));
@@ -1219,8 +1220,9 @@ function applyPromotedHostWrite(
   key: StampKey,
   catalog?: WidgetCatalog,
 ): SuccessfulOutcome {
-  const target = resolveInteriorNode(doc, promoted.instancePath, catalog);
-  if (target === null) return "no-op"; // head instance concurrently deleted → no-op (delete wins)
+  const resolution = resolveInteriorNode(doc, promoted.instancePath, catalog);
+  if (resolution === null) return "no-op"; // head instance concurrently deleted → no-op (delete wins)
+  const target = resolution.node;
   const storage = hostWriteStorage(target, catalog);
   switch (storage) {
     case "named":
@@ -1271,12 +1273,23 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
     throw new OpRejectedError("malformed_op", "set_widget: a promoted host write carries no interior path");
   }
 
+  // Interior paths have several legal spellings (definition id and instance
+  // id), but all of them can resolve to the same node. Resolve first
+  // so that node owns one register rather than letting each raw alias claim a
+  // separate stamp key. `writeTarget` remains the public op-only identity.
+  const interiorResolution = interior === null
+    ? null
+    : resolveInteriorNode(doc, interior.path.map(String), catalog);
+  if (interior !== null && interiorResolution === null) return "no-op";
+
   // LWW gate next (comfy-cli `_apply_set_widget`): a lower-or-equal stamp is
   // dropped — a protocol-level apply that still consumes its op_id. It is no
   // longer literally FIRST: the op-only checks above it must precede it so
   // their verdict cannot depend on which stamp is in the document (A6).
   const stamps = stampsMap(doc);
-  const targetKey = stampTargetKey(op);
+  const targetKey = interiorResolution === null
+    ? stampTargetKey(op)
+    : JSON.stringify(["widget", interiorResolution.canonicalPath, op.node_incarnation ?? LEGACY_NODE_INCARNATION, interior!.inner_widget]);
   const prior = stamps.get(targetKey) as StampKey | undefined;
   const key = stampKey(op);
   if (prior != null && compareStampKeys(key, prior) <= 0) return "lww-dropped";
@@ -1286,8 +1299,7 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
   }
 
   if (interior !== null) {
-    const target = resolveInteriorNode(doc, interior.path.map(String), catalog);
-    if (target === null) return "no-op"; // head instance concurrently deleted → no-op (delete wins)
+    const target = interiorResolution!.node;
     if (nodeIncarnation(target) !== (op.node_incarnation ?? LEGACY_NODE_INCARNATION)) return "no-op";
     const nodeType = String(target.get("type") ?? "");
     const widget = interior.inner_widget;
@@ -1352,16 +1364,22 @@ function projectedWidgetsLength(node: Y.Map<unknown>, order: readonly string[]):
  * not forked: schema §5.3 pins that a conforming applier must reject interior
  * writes to shared definitions until forking is specced and fixtured.
  */
-function resolveInteriorNode(doc: Y.Doc, path: string[], catalog?: WidgetCatalog): Y.Map<unknown> | null {
+interface InteriorResolution {
+  node: Y.Map<unknown>;
+  canonicalPath: string[];
+}
+
+function resolveInteriorNode(doc: Y.Doc, path: string[], catalog?: WidgetCatalog): InteriorResolution | null {
   const head = nodesMap(doc).get(path[0]!);
   if (!head) {
     const definition = resolveDefinition(doc, path[0]!);
     if (!definition || String(definition.get("id")) !== path[0]) return null;
-    const instances = countDefinitionInstances(doc, path[0]!, catalog);
+    const definitionId = String(definition.get("id"));
+    const instances = countDefinitionInstances(doc, definitionId, catalog);
     if (instances > 1) {
       throw new OpRejectedError(
         "shared_definition_unforked",
-        `definition ${path[0]} is instantiated ${instances} times; interior writes to shared definitions are rejected until forking is specced (schema §5.3)`,
+        `definition ${definitionId} is instantiated ${instances} times; interior writes to shared definitions are rejected until forking is specced (schema §5.3)`,
       );
     }
     const innerNodes = definition.get("nodes");
@@ -1372,18 +1390,25 @@ function resolveInteriorNode(doc: Y.Doc, path: string[], catalog?: WidgetCatalog
         `interior node ${path[1]} not found in subgraph ${path[0]}`,
       );
     }
-    if (path.length === 2) return inner;
-    return resolveInteriorDescendants(doc, inner, path.slice(2), catalog);
+    const canonicalPath = [definitionId, path[1]!];
+    if (path.length === 2) return { node: inner, canonicalPath };
+    return resolveInteriorDescendants(doc, inner, path.slice(2), canonicalPath, catalog);
   }
-  return resolveInteriorDescendants(doc, head, path.slice(1), catalog);
+  const definition = resolveDefinition(doc, String(head.get("type") ?? ""));
+  const canonicalPath = definition === null
+    ? [path[0]!]
+    : [String(definition.get("id") ?? head.get("type"))];
+  if (path.length === 1) return { node: head, canonicalPath };
+  return resolveInteriorDescendants(doc, head, path.slice(1), canonicalPath, catalog);
 }
 
 function resolveInteriorDescendants(
   doc: Y.Doc,
   head: Y.Map<unknown>,
   path: string[],
+  canonicalPath: string[],
   catalog?: WidgetCatalog,
-): Y.Map<unknown> {
+): InteriorResolution {
   let cur: Y.Map<unknown> = head;
   for (const seg of path) {
     const curType = String(cur.get("type") ?? "");
@@ -1411,8 +1436,12 @@ function resolveInteriorDescendants(
       );
     }
     cur = inner;
+    // Identity is the final owning definition and node, not the route used to
+    // reach it. This aliases [outerDef, nestedInstance, leaf] with
+    // [innerDef, leaf] while keeping equal leaf IDs in other definitions apart.
+    canonicalPath.splice(0, canonicalPath.length, defId, seg);
   }
-  return cur;
+  return { node: cur, canonicalPath };
 }
 
 // ---------------------------------------------------------------------------

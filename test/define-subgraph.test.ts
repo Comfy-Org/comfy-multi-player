@@ -12,7 +12,8 @@ import {
   type WidgetCatalog,
   type WorkflowJSON,
 } from "../src/index.js"
-import { definitionsMap, metaMap } from "../src/doc.js"
+import { definitionsMap, metaMap, stampsMap } from "../src/doc.js"
+import { stampKey } from "../src/stamps.js"
 
 const catalog: WidgetCatalog = {
   types: {
@@ -127,6 +128,128 @@ describe("define_subgraph application", () => {
     expect(Y.encodeStateAsUpdate(doc)).not.toEqual(before) // the new op_id is consumed
     const projected = (project(doc, catalog).definitions as { subgraphs: Array<{ nodes: Array<{ widgets_values: unknown[] }> }> }).subgraphs[0]!
     expect(projected.nodes[0]!.widgets_values).toEqual([2])
+  })
+
+  it("replays an identical definition imported without a private digest and continues the batch", () => {
+    const imported = {
+      nodes: [],
+      links: [],
+      definitions: { subgraphs: [definition()] },
+    } as unknown as WorkflowJSON
+    const doc = mint(imported, catalog)
+    const storedDefinition = definitionsMap(doc).get(subgraphId)!
+    const storedWidgets = (storedDefinition.get("nodes") as Y.Map<Y.Map<unknown>>).get("10")!.get("widgets")
+    const before = project(doc, catalog)
+    const replay = define()
+    const suffix = {
+      op: "add_node", ...envelope(), node_id: 99, class_type: "Other", pos: [0, 0],
+      node: { id: 99, type: "Other", inputs: [], outputs: [] },
+    } as Op
+
+    expect(storedDefinition.get("__definition_digest")).toBeUndefined()
+    expect(metaMap(doc).get("__definition_digests")).toBeUndefined()
+    expect(applyOps(doc, [replay, suffix], catalog).outcomes).toEqual([
+      { op_id: replay.op_id, outcome: "no-op" },
+      { op_id: suffix.op_id, outcome: "applied" },
+    ])
+    expect(definitionsMap(doc).get(subgraphId)).toBe(storedDefinition)
+    expect((storedDefinition.get("nodes") as Y.Map<Y.Map<unknown>>).get("10")!.get("widgets")).toBe(storedWidgets)
+    expect((project(doc, catalog).definitions as unknown)).toEqual(before.definitions)
+    expect(project(doc, catalog).nodes.map((node) => node.id)).toContain(99)
+  })
+
+  it("treats instance-ID and definition-ID widget paths as one LWW register", () => {
+    const seeded = mint({
+      nodes: [{ id: 1, type: subgraphId, inputs: [], outputs: [] }],
+      links: [],
+      definitions: { subgraphs: [definition()] },
+    } as unknown as WorkflowJSON, catalog)
+    const snapshot = Y.encodeStateAsUpdate(seeded)
+    const lower = {
+      op: "set_widget", op_id: "10000000000000000000000000000000", actor: "agent:low",
+      base_version: 10, stamp: [10, "agent:low"], node_id: 10,
+      path: [subgraphId, "10"], inner_widget: "value", widget: "value", value: "lower-definition-path",
+    } as Op
+    const higher = {
+      op: "set_widget", op_id: "20000000000000000000000000000000", actor: "agent:high",
+      base_version: 20, stamp: [20, "agent:high"], node_id: 10,
+      path: ["1", "10"], inner_widget: "value", widget: "value", value: "higher-instance-path",
+    } as Op
+
+    const results = [[lower, higher], [higher, lower]].map((ops) => {
+      const doc = new Y.Doc()
+      Y.applyUpdate(doc, snapshot)
+      const outcomes = ops.flatMap((op) => applyOps(doc, [op], catalog).outcomes)
+      expect(outcomes).toHaveLength(2)
+      expect(outcomes.every(({ outcome }) => outcome === "applied" || outcome === "lww-dropped")).toBe(true)
+      const projected = (project(doc, catalog).definitions as { subgraphs: Array<{ nodes: Array<{ widgets_values: unknown[] }> }> }).subgraphs[0]!
+      const beforeReplay = Y.encodeStateAsUpdate(doc)
+      expect(ops.map((op) => applyOps(doc, [op], catalog).outcomes[0]?.outcome)).toEqual(["no-op", "no-op"])
+      expect(Y.encodeStateAsUpdate(doc)).toEqual(beforeReplay)
+      return { value: projected.nodes[0]!.widgets_values, stamps: [...stampsMap(doc).values()] }
+    })
+
+    expect(results.map(({ value }) => value)).toEqual([
+      ["higher-instance-path"],
+      ["higher-instance-path"],
+    ])
+    expect(results.map(({ stamps }) => stamps)).toEqual([[stampKey(higher)], [stampKey(higher)]])
+  })
+
+  it("uses the final owning definition and node as nested alias identity without conflating equal leaf IDs", () => {
+    const innerId = "22345678-1234-4123-8123-123456789abc"
+    const nestedWorkflow = {
+      nodes: [{ id: 1, type: subgraphId, inputs: [], outputs: [] }],
+      links: [],
+      definitions: { subgraphs: [
+        {
+          id: subgraphId, name: "Outer", inputs: [], outputs: [], links: [],
+          nodes: [
+            { id: 10, type: "Inner", inputs: [], outputs: [], widgets_values: ["outer-leaf"] },
+            { id: 20, type: innerId, inputs: [], outputs: [] },
+          ],
+        },
+        {
+          id: innerId, name: "Nested", inputs: [], outputs: [], links: [],
+          nodes: [{ id: 10, type: "Inner", inputs: [], outputs: [], widgets_values: ["nested-leaf"] }],
+        },
+      ] },
+    } as unknown as WorkflowJSON
+    const snapshot = Y.encodeStateAsUpdate(mint(nestedWorkflow, catalog))
+    const lower = {
+      op: "set_widget", op_id: "30000000000000000000000000000000", actor: "agent:low",
+      base_version: 30, stamp: [30, "agent:low"], node_id: 10,
+      path: [subgraphId, "20", "10"], inner_widget: "value", widget: "value", value: "lower-outer-history",
+    } as Op
+    const higher = {
+      op: "set_widget", op_id: "40000000000000000000000000000000", actor: "agent:high",
+      base_version: 40, stamp: [40, "agent:high"], node_id: 10,
+      path: [innerId, "10"], inner_widget: "value", widget: "value", value: "higher-final-owner",
+    } as Op
+
+    for (const ops of [[lower, higher], [higher, lower]]) {
+      const doc = new Y.Doc()
+      Y.applyUpdate(doc, snapshot)
+      const outcomes = ops.map((op) => applyOps(doc, [op], catalog).outcomes[0]?.outcome)
+      expect(outcomes.every((outcome) => outcome === "applied" || outcome === "lww-dropped")).toBe(true)
+      const definitions = (project(doc, catalog).definitions as {
+        subgraphs: Array<{ id: string; nodes: Array<{ id: unknown; widgets_values?: unknown[] }> }>
+      }).subgraphs
+      const inner = definitions.find(({ id }) => id === innerId)!
+      const outer = definitions.find(({ id }) => id === subgraphId)!
+      expect(inner.nodes.find(({ id }) => id === 10)!.widgets_values).toEqual(["higher-final-owner"])
+      expect(outer.nodes.find(({ id }) => id === 10)!.widgets_values).toEqual(["outer-leaf"])
+      expect([...stampsMap(doc).values()]).toEqual([stampKey(higher)])
+    }
+
+    const isolated = new Y.Doc()
+    Y.applyUpdate(isolated, snapshot)
+    const outerLeaf = {
+      ...lower, op_id: "50000000000000000000000000000000", base_version: 50,
+      stamp: [50, "agent:low"], path: [subgraphId, "10"], value: "changed-outer-leaf",
+    } as Op
+    expect(applyOps(isolated, [higher, outerLeaf], catalog).outcomes.map(({ outcome }) => outcome)).toEqual(["applied", "applied"])
+    expect(stampsMap(isolated).size).toBe(2)
   })
 
   it("converges when a definition replay and an interior edit arrive in either legal order", () => {
