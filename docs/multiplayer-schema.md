@@ -630,7 +630,10 @@ package also supports `connect` with a non-empty instance `path`:
   enable cross-boundary wiring or an interior `disconnect` operation. Its path
   is an instance route only: after the visible head is deleted, resolution
   requires that instance's retained `interior_route` stamp (including its
-  incarnation), and a definition id is never accepted as a direct alias.
+  incarnation), and a definition id is never resolved as a direct alias.
+  A missing instance without a retained route is an accepted, consumed no-op,
+  including when the path happens to name a definition. It does not edit that
+  definition; it is not a rejected operation with a byte-identity guarantee.
 - `add_node`/`delete_node` cannot address interior nodes at all.
 
 `set_widget` accepts three address forms — flat promoted (`57.text`, routed
@@ -825,8 +828,8 @@ the epoch; cross-epoch struct updates never merge.
   current-version one), an unreadable `meta.schema_version` is rejected rather
   than assumed current, and "exact no-op" is defined at the byte level. Read A3
   for the normative rule and for what this deliberately stopped checking.
-- Bumping `SCHEMA_VERSION` requires: a migration step, updated fixtures or a
-  fixture-format note, an amendment section in this document, and FE
+- Bumping `SCHEMA_VERSION` requires: an explicit old-layout disposition,
+  updated fixtures or a fixture-format note, an amendment section, and FE
   sign-off (the layout is a cross-repo contract with the FE follower).
 - **The version check is on the READ path, not only on `migrate()`.**
   `project(doc, catalog)` refuses — `SchemaVersionError`, before it reads any
@@ -2081,7 +2084,8 @@ reference, then installs its own tuple and exactly its own references. The
 separate input register still decides whether that identity may occupy the
 requested destination; losing that gate leaves no tuple or dangling reference.
 This adds an internal `__stamps` key, not a root-layout change, so
-`SCHEMA_VERSION` remains 2.
+this amendment did not itself require a version bump. The combined current
+document schema is v3.
 
 ---
 
@@ -2103,5 +2107,6 @@ conflict path remains.
 The whole merge occurs in one Yjs transaction and claims the
 `("insert_workflow", op_id)` stamp target. Exact replay is stopped by the
 existing applied-op gate and is byte-identical. This adds graph content but no
-new root or node-map layout, so `SCHEMA_VERSION` remains 2. Other op payloads
-remain closed to definition-bearing fields.
+new root or node-map layout, so insertion did not itself require a version
+bump. The combined current document schema is v3. Other op payloads remain
+closed to definition-bearing fields.
