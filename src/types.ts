@@ -215,6 +215,8 @@ export interface PromotedHostWrite {
 /** Fields every `connect` carries, whichever way its destination slot is addressed. */
 interface ConnectOpBase extends OpBase {
   op: "connect";
+  /** Non-empty subgraph-instance path for a connect inside its definition. */
+  path?: [NodeId, ...NodeId[]];
   /** Link identity, minted at op-mint time (int in comfy-cli). */
   link_id: NodeId;
   from_node: NodeId;
