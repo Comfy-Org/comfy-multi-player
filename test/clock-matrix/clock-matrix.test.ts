@@ -171,6 +171,11 @@ function schemeStamp(item: LogicalOp, scheme: Scheme, order: LogicalOp[]): [numb
   return [order.indexOf(item) + 1, item.op.actor];
 }
 
+function stampedOps(caseData: MatrixCase, scheme: Scheme): Op[] {
+  const ordered = orderFor(caseData, scheme);
+  return ordered.map((item) => ({ ...item.op, stamp: schemeStamp(item, scheme, ordered) })) as Op[];
+}
+
 function canonicalProjection(doc: Y.Doc): WorkflowJSON {
   const value = structuredClone(project(doc, catalog));
   value.nodes.sort((a, b) => String(a.id).localeCompare(String(b.id)));
@@ -184,7 +189,7 @@ function canonicalProjection(doc: Y.Doc): WorkflowJSON {
 
 function replay(caseData: MatrixCase, scheme: Scheme): Omit<SchemeResult, "divergence_class"> {
   const ordered = orderFor(caseData, scheme);
-  const ops = ordered.map((item) => ({ ...item.op, stamp: schemeStamp(item, scheme, ordered) })) as Op[];
+  const ops = stampedOps(caseData, scheme);
   const doc = mint(caseData.workflow, catalog);
   const result = applyOps(doc, ops, catalog);
   const projection = canonicalProjection(doc);
@@ -382,5 +387,44 @@ describe("clock shadow-comparison acceptance matrix", () => {
     expect(matrix.allowlist_firing).toEqual(ALLOWLIST_FIRING);
     expect(`${JSON.stringify(matrix, null, 2)}\n`).toBe(readFileSync(join(GOLDEN_DIR, "matrix.json"), "utf8"));
     expect(renderMarkdown(matrix)).toBe(readFileSync(join(GOLDEN_DIR, "matrix.md"), "utf8"));
+  });
+
+  it("converges for both legal arrival orders of immutable concurrent stamps", () => {
+    let streams = 0;
+    for (const caseData of allCases()) {
+      if (caseData.ops.length !== 2 || happensBefore(caseData.ops[0]!.vector, caseData.ops[1]!.vector) || happensBefore(caseData.ops[1]!.vector, caseData.ops[0]!.vector)) continue;
+      for (const scheme of SCHEMES) {
+        const snapshot = Y.encodeStateAsUpdate(mint(caseData.workflow, catalog));
+        const fork = () => { const doc = new Y.Doc(); Y.applyUpdate(doc, snapshot); return doc; };
+        const immutableOps = stampedOps(caseData, scheme);
+        const forward = fork();
+        const reverse = fork();
+        const forwardResult = applyOps(forward, immutableOps, catalog);
+        const reverseResult = applyOps(reverse, [...immutableOps].reverse(), catalog);
+        expect(forwardResult.outcomes.every((outcome) => outcome.outcome !== "rejected"), `${caseData.id}/${scheme}/forward`).toBe(true);
+        expect(reverseResult.outcomes.every((outcome) => outcome.outcome !== "rejected"), `${caseData.id}/${scheme}/reverse`).toBe(true);
+        expect(canonicalProjection(reverse), `${caseData.id}/${scheme}`).toEqual(canonicalProjection(forward));
+        streams++;
+      }
+    }
+    // 304 two-op streams have no vector-clock edge; each runs under 3 schemes.
+    expect(streams).toBe(912);
+  });
+
+  it("makes duplicate replay of every fully accepted immutable stream byte-identical", () => {
+    let streams = 0;
+    for (const caseData of allCases()) for (const scheme of SCHEMES) {
+      const ops = stampedOps(caseData, scheme);
+      const doc = mint(caseData.workflow, catalog);
+      const first = applyOps(doc, ops, catalog);
+      if (first.outcomes.some((outcome) => outcome.outcome === "rejected")) continue;
+      const beforeReplay = Y.encodeStateAsUpdate(doc);
+      const replayed = applyOps(doc, ops, catalog);
+      expect(replayed.outcomes.every((outcome) => outcome.outcome === "no-op"), `${caseData.id}/${scheme}`).toBe(true);
+      expect(Y.encodeStateAsUpdate(doc), `${caseData.id}/${scheme}`).toEqual(beforeReplay);
+      streams++;
+    }
+    // Every one of the 414 matrix streams is accepted under all 3 schemes.
+    expect(streams).toBe(1_242);
   });
 });
