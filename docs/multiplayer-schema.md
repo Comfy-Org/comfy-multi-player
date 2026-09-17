@@ -1156,12 +1156,17 @@ unwritable too wherever the write path projects as part of its response.
 ### Why the read gate is exactly two conditions wide
 
 A draft of this amendment skipped more: mistyped slots, a blank `type`, an
-id/key disagreement. Every one of those is reachable through this package's own
+id/key disagreement. Every one of those WAS reachable through this package's own
 writers — `createNodeMap` stores a non-plain-object `flags` as a plain clone per
-§1.1, and `applyAddNode` keys by `op.node_id` without requiring `op.node.id` to
+§1.1, and `applyAddNode` keyed by `op.node_id` without requiring `op.node.id` to
 agree. The result was that `applyOps` returned `failed: null` and `project()`
 silently deleted the node, which also burned the node id, since `add_node`'s
 structural-idempotency early return then made the honest retry a no-op.
+(The id/key disagreement is no longer writer-reachable: the add-node identity
+guard — Amendment A19 — rejects a payload `id` contradicting the wire
+`node_id` as `malformed_op` before any mutation. The passthrough above is
+unchanged; that shape now reaches the read path only as corrupt or untrusted
+doc state, exactly like the other §1.1 passthrough shapes.)
 
 **A read-side gate must never be wider than the throw it prevents.** Anything
 else is the read path overruling the write path, and it presents as data loss
@@ -2044,3 +2049,69 @@ separate input register still decides whether that identity may occupy the
 requested destination; losing that gate leaves no tuple or dangling reference.
 This adds an internal `__stamps` key, not a root-layout change, so
 `SCHEMA_VERSION` remains 2.
+
+---
+
+## Amendment A19 — 2026-09-03 — the wire `node_id` is authoritative at the add-node identity boundary (PR #165 and its review follow-up)
+
+`add_node` accepts a node payload that names its own `id`. Before this
+amendment, a payload whose `id` disagreed with the wire `node_id` was stored
+under the wire key while projecting under the payload id, so later links could
+address an id that exists in no projected node (R-93, #150). The guard and the
+exact accepted-path contract are now normative.
+
+### The rule
+
+When the payload carries a PRESENT `node.id` — meaning not `undefined` and not
+`null` — and `String(node_id) !== String(node.id)`, the op is rejected
+`malformed_op` **before any document access or mutation**: the rejected
+operation leaves the Yjs update byte-identical, consumes no `op_id`
+(`__applied` does not record it — KA-4), and every remaining op in its batch
+aborts (`batch_aborted`). String normalization makes numeric `9` and string
+`"9"` compare equal (§3 pin 3's bytewise discipline does not apply here: the
+comparison is idENTITY agreement, not ordering).
+
+An ABSENT payload `id` — the key omitted, or spelled `null` (the JSON
+serialization of "unset"; both spellings read as absent at the identity gate) —
+remains valid: the wire `node_id` is authoritative for minimal producers. The
+payload itself is still stored verbatim, so the two spellings DIVERGE in
+projection: an omitted key projects a node with no `id` at all, while `null`
+projects as `id: null`. Neither projected node carries an `id` that equals the
+wire `node_id`.
+
+### The residual, stated rather than implied
+
+FC-8 keeps valid payloads verbatim — the guard never re-derives payload
+fields — so two accepted-path shapes are pinned deliberately rather than
+"fixed" here, both pre-existing and reachable from no producer in the recorded
+corpus:
+
+1. An omitted (or `null`) payload `id` is never materialized into a node whose
+   `id` equals the wire `node_id`. The projected node carries no `id` (omitted
+   key) or `id: null` (verbatim payload — FC-8), so a `connect` targeting that
+   `node_id` names an id absent from the projected nodes — the
+   no-dangling-target criterion is not exercised on this path.
+2. The `String()` comparison admits a type-divergent id (`node_id: 11` with
+   payload `id: "11"` is accepted and stored verbatim). Mixed id types make
+   §7's canonical `idCompare` ordering non-transitive for such a document.
+
+Closing either means re-deriving or rewriting payload fields, which FC-8
+forecloses without its own amendment. Producers that need strict projected
+identity MUST emit payload ids agreeing with the wire `node_id` in type as
+well as value.
+
+### Consumer impact
+
+Per the consumer-impact rule this change is applier-first. Until comfy-cli
+mirrors the rejection, a batch containing a contradictory `add_node` applies
+fully on the CLI and aborts at that op here, so replicas diverge by the whole
+remainder of the batch rather than the single op; the CLI counterpart is the
+linked follow-up. `SCHEMA_VERSION` is not bumped: the guard adds a rejection
+and no root-layout change (`__applied`/`__stamps` are internal).
+
+### Guarded by
+
+`test/add-node-identity-boundary.test.ts` (rejection byte-identity, no
+dangling target, abort-remainder, normalization, absent/`null` payload ids,
+accepted-path projection coherence) and
+`test/invalid-op-states.test.ts` (the group-2 rejection case).
