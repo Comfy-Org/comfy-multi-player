@@ -1,6 +1,6 @@
-# Multiplayer workflow-document schema — v2
+# Multiplayer workflow-document schema — v3
 
-`SCHEMA_VERSION = 2`
+`SCHEMA_VERSION = 3`
 
 > **State: DRAFT — awaiting FE sign-off (FE-1330).**
 >
@@ -58,8 +58,25 @@ Y.Doc
 │                        last_node_id, last_link_id,
 │                        groups, extra, config, version, …          (§1.4)
 ├── Y.Map "__applied"    op_id → 1                                  (§4)
-└── Y.Map "__stamps"     write-target key → [base_version, actor, op_id]  (§4)
+├── Y.Map "__stamps"     write-target key → [base_version, actor, op_id]  (§4)
+└── Y.Map "__link_state" normalized link id → imported durable descriptor (§1.5)
 ```
+
+### 1.5 Durable link state
+
+Schema v3 adds `__link_state` as the accepted first-class storage boundary for
+durable link intent. `mint()` seeds one versioned `authority: "imported"`
+descriptor per coherent six-field link tuple. It retains the complete tuple and
+the complete persisted destination-slot object, classifying it as concrete,
+promoted (by full definition input name), or autogrow (by `grow_id`). Readers
+fail closed on unknown descriptor versions or kinds. A successful `connect`
+replaces that baseline with an operation-owned descriptor carrying its A18
+stamp and authoritative concrete, full-name promoted, or autogrow destination
+metadata. Endpoint deletion strands the live tuple but retains the descriptor;
+a winning endpoint re-add restores the exact tuple, slot and endpoint
+references. Winning disconnect, replacement, and explicitly named
+`delete_node.removed_links` retire the descriptor. Composed destinations remain
+undefined until a producer and public type contract exist.
 
 ### 1.1 Per-node Y.Map
 
@@ -538,7 +555,8 @@ stays mandatory.
    unreadable (§7 rule 0) or the catalogue pin is violated (§3 pin 4), neither
    of which is a state a host can be compacting from, and it drops individual
    entries only per §7 rule 6 —
-   carrying forward: `__stamps` entries for still-live targets, the actor
+   carrying forward: `__stamps` entries for still-live targets, all
+   `__link_state` descriptors (including temporarily stranded endpoint intent), the actor
    watermarks, `catalog_version`, and the id high-water marks. The fresh doc
    is a new **doc epoch**: its bootstrap snapshot replaces the old one (§9),
    and followers resynchronize by full re-fetch (an epoch bump is a signal on
@@ -776,10 +794,12 @@ the epoch; cross-epoch struct updates never merge.
 
 ## 10. Versioning and `migrate()`
 
-- `SCHEMA_VERSION = 2`, stored in `meta.schema_version` at mint.
-- `migrate(doc, fromVersion)` contract: in-place, stepwise `vN → vN+1`
-  migrations composed in order; exact no-op when
-  `fromVersion === SCHEMA_VERSION`; host-only (followers receive the migrated
+- `SCHEMA_VERSION = 3`, stored in `meta.schema_version` at mint.
+- Private-alpha policy keeps one current format: old layouts are re-minted at
+  their source and compatibility readers/migrations are not provided.
+- `migrate(doc, fromVersion)` contract: exact no-op when
+  `fromVersion === SCHEMA_VERSION`; fail closed without mutation for every
+  older or newer version; host-only (followers receive the current-format
   doc via the struct stream / a new epoch); a doc whose `schema_version` is
   **greater** than the code's `SCHEMA_VERSION` is rejected, fail-closed —
   never best-effort read.

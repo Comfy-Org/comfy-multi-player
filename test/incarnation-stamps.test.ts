@@ -84,7 +84,7 @@ describe("incarnation-namespaced widget stamps (DQ-11)", () => {
       .toBeUndefined();
   });
 
-  it("migrates v1 node lifetimes and widget stamp keys to legacy life 0", () => {
+  it("refuses to relabel a v1 document as the current schema", () => {
     const doc = mint(base(), catalog);
     const node = doc.getMap<Y.Map<unknown>>("nodes").get("1")!;
     node.delete(NODE_INCARNATION_KEY);
@@ -93,15 +93,11 @@ describe("incarnation-namespaced widget stamps (DQ-11)", () => {
     stamps.set(oldKey, [7, "human:a", id("old")]);
     doc.getMap("meta").set("schema_version", 1);
 
-    migrate(doc, 1);
-
-    expect(doc.getMap("meta").get("schema_version")).toBe(2);
-    expect(node.get(NODE_INCARNATION_KEY)).toBe(LEGACY_NODE_INCARNATION);
-    expect(stamps.get(JSON.stringify(["widget", "1", LEGACY_NODE_INCARNATION, "text"]))).toEqual([
-      7,
-      "human:a",
-      id("old"),
-    ]);
-    expect(stamps.has(oldKey)).toBe(false);
+    const before = Y.encodeStateAsUpdate(doc);
+    expect(() => migrate(doc, 1)).toThrow(/private-alpha no-compat-reader policy/);
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+    expect(doc.getMap("meta").get("schema_version")).toBe(1);
+    expect(node.has(NODE_INCARNATION_KEY)).toBe(false);
+    expect(stamps.has(oldKey)).toBe(true);
   });
 });

@@ -185,27 +185,10 @@ describe("delete_node LWW loser removed_links cleanup", () => {
     expect(Y.encodeStateAsUpdate(doc)).toEqual(bytesAfter);
   });
 
-  it("does NOT converge across arrival order once a link is installed (known divergence)", () => {
-    // KNOWN DIVERGENCE — characterization of current behavior, not an endorsement.
-    //
-    // The link-free sibling case above asserts the two arrival orders converge.
-    // That assertion only holds because its document has no links: the branch at
-    // `src/applier.ts:1736-1737` scrubs EVERY link incident to the node, but only
-    // when the delete WINS the presence gate. When the delete loses it scrubs just
-    // the links it named. So the set of links removed depends on arrival order:
-    //
-    //   [add_node@9, delete@5] -> delete loses  -> only removed_links scrubbed -> L1 survives
-    //   [delete@5, add_node@9] -> delete wins   -> incident scrub takes L1      -> L1 gone
-    //
-    // Both orders end with node 10 present, so the divergence is confined to the
-    // link register, and it is permanent: link deletion carries no stamp and the
-    // winning re-add does not restore L1. This contradicts vocabulary §6 A7
-    // ("removed_links is the authoritative target set") and the determinism
-    // invariant. Deciding the fix (drop the incident scrub, stamp link deletions,
-    // or restore on re-add) is an applier-semantics call, not a test change.
-    //
-    // If a fix lands, this test SHOULD fail — replace it with a convergence
-    // assertion at that point.
+  it("restores retained intent after a winning re-add in either arrival order", () => {
+    // `removed_links` is authoritative. A delete that wins node presence may
+    // strand an incident link while the endpoint is absent, but a later winning
+    // re-add restores its retained descriptor. A losing delete never strands it.
     const op = losingDelete([999]);
 
     const forward = linkedDoc();
@@ -220,12 +203,9 @@ describe("delete_node LWW loser removed_links cleanup", () => {
       "applied",
     ]);
 
-    // Same op set, same nodes, different links.
-    expect(project(forward, catalog).nodes.map(({ id: nodeId }) => nodeId)).toEqual(
-      project(reverse, catalog).nodes.map(({ id: nodeId }) => nodeId),
-    );
+    // Same op set, same nodes, same restored topology.
+    expect(project(forward, catalog)).toEqual(project(reverse, catalog));
     expect(project(forward, catalog).links).toHaveLength(1);
-    expect(project(reverse, catalog).links).toEqual([]);
-    expect(project(forward, catalog)).not.toEqual(project(reverse, catalog));
+    expect(project(reverse, catalog).links).toEqual(project(forward, catalog).links);
   });
 });

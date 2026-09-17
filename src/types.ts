@@ -16,10 +16,42 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Version of the Y.Doc layout. Bump requires FE sign-off + a `migrate` path.
+ * Version of the Y.Doc layout. Bump requires FE sign-off and an explicit old-layout disposition.
  * The authoritative layout + op-semantics reference is docs/multiplayer-schema.md.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
+
+/** Version of an imported destination reconstruction descriptor in `__link_state`. */
+export const LINK_STATE_DESCRIPTOR_VERSION = 1;
+
+/** A coherent six-field LiteGraph link tuple retained verbatim for reconstruction. */
+export type LinkTuple = [id: NodeId, fromNode: NodeId, fromSlot: number, toNode: NodeId, toSlot: number, type: unknown];
+
+export type ImportedLinkDestination =
+  | { kind: "concrete"; to_slot: number; slot: Record<string, unknown> }
+  | { kind: "promoted"; to_slot: number; name: string; slot: Record<string, unknown> }
+  | { kind: "autogrow"; to_slot: number; slot: Record<string, unknown> };
+
+/** Durable baseline imported by `mint`; operation lifecycle rules are intentionally separate. */
+export interface ImportedLinkState {
+  version: typeof LINK_STATE_DESCRIPTOR_VERSION;
+  authority: "imported";
+  tuple: LinkTuple;
+  destination: ImportedLinkDestination;
+}
+
+export type OperationLinkDestination =
+  | { kind: "concrete"; to_slot: number; slot: Record<string, unknown> }
+  | { kind: "promoted"; to_slot: number; name: string; slot: Record<string, unknown> }
+  | { kind: "autogrow"; to_slot: number; slot: Record<string, unknown>; request: GrowSpec };
+
+/** Durable intent created by an installed connect, owned by its A18 operation stamp. */
+export interface OperationLinkState {
+  version: typeof LINK_STATE_DESCRIPTOR_VERSION;
+  authority: { kind: "operation"; stamp: StampKey };
+  tuple: LinkTuple;
+  destination: OperationLinkDestination;
+}
 
 /** Internal per-node lifetime key. It never projects into workflow JSON. */
 export const NODE_INCARNATION_KEY = "__incarnation";

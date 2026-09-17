@@ -82,6 +82,7 @@ export {
   hasAppliedOp,
   hasNode,
   readGraph,
+  readLinkState,
   readMeta,
   readStamps,
   type GraphSnapshot,

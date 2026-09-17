@@ -61,11 +61,13 @@ import {
   OPAQUE_WIDGETS_KEY,
   ROOT_APPLIED,
   ROOT_LINKS,
+  ROOT_LINK_STATE,
   ROOT_META,
   ROOT_NODES,
   ROOT_STAMPS,
 } from "./doc.js";
 import { assertReadableSchema } from "./schema-version.js";
+import { LINK_STATE_DESCRIPTOR_VERSION } from "./types.js";
 
 /**
  * The reserved per-node key holding a whole `widgets_values` array verbatim for
@@ -435,4 +437,66 @@ export function appliedOpIds(doc: Y.Doc): readonly string[] {
 export function readStamps(doc: Y.Doc): Readonly<Record<string, unknown>> {
   assertSnapshotReadable(doc, "readStamps");
   return snapshotRoot(doc, ROOT_STAMPS);
+}
+
+/** Durable imported and operation-owned link descriptors as deep-frozen plain data. */
+export function readLinkState(doc: Y.Doc): Readonly<Record<string, unknown>> {
+  assertSnapshotReadable(doc, "readLinkState");
+  const state = snapshotRoot(doc, ROOT_LINK_STATE);
+  for (const [id, raw] of Object.entries(state)) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      throw new TypeError(`readLinkState: link ${id} is not a descriptor`);
+    }
+    const descriptor = raw as Record<string, unknown>;
+    const tuple = descriptor["tuple"];
+    const destinationValue = descriptor["destination"];
+    const destination = typeof destinationValue === "object" && destinationValue !== null && !Array.isArray(destinationValue)
+      ? destinationValue as Record<string, unknown>
+      : undefined;
+    const validId = (value: unknown): boolean =>
+      (typeof value === "string" && value.length > 0) || (typeof value === "number" && Number.isSafeInteger(value));
+    const validSlot = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) >= 0;
+    const validSlotRecord = destination !== undefined && typeof destination["slot"] === "object" &&
+      destination["slot"] !== null && !Array.isArray(destination["slot"]);
+    const slotRecord = validSlotRecord ? destination!["slot"] as Record<string, unknown> : undefined;
+    const authority = descriptor["authority"];
+    const operationAuthority = typeof authority === "object" && authority !== null && !Array.isArray(authority)
+      ? authority as Record<string, unknown>
+      : undefined;
+    const operationStamp = operationAuthority?.["stamp"];
+    // Match validateEnvelope/stampKey, including the empty fallback actor and
+    // non-empty opaque op IDs. Reading must not reject records our writer emits.
+    const validAuthority = authority === "imported" ||
+      (operationAuthority?.["kind"] === "operation" && Array.isArray(operationStamp) && operationStamp.length === 3 &&
+       Number.isSafeInteger(operationStamp[0]) && (operationStamp[0] as number) >= 0 &&
+       typeof operationStamp[1] === "string" &&
+       typeof operationStamp[2] === "string" && operationStamp[2].length > 0);
+    const requestValue = destination?.["request"];
+    const request = typeof requestValue === "object" && requestValue !== null && !Array.isArray(requestValue)
+      ? requestValue as Record<string, unknown>
+      : undefined;
+    const inputcountValue = request?.["inputcount"];
+    const inputcount = typeof inputcountValue === "object" && inputcountValue !== null && !Array.isArray(inputcountValue)
+      ? inputcountValue as Record<string, unknown>
+      : undefined;
+    const validRequest = destination?.["kind"] !== "autogrow" || authority === "imported" ||
+      (request !== undefined && typeof request["name"] === "string" &&
+       typeof request["type"] === "string" &&
+       (request["widget"] === undefined || typeof request["widget"] === "string") &&
+       (request["promoted"] === undefined || typeof request["promoted"] === "boolean") &&
+       (request["inputcount"] === undefined ||
+        (inputcount !== undefined && typeof inputcount["widget"] === "string" && "value" in inputcount)));
+    if (descriptor["version"] !== LINK_STATE_DESCRIPTOR_VERSION || !validAuthority ||
+        !Array.isArray(tuple) || tuple.length !== 6 || String(tuple[0]) !== id ||
+        !validId(tuple[0]) || !validId(tuple[1]) || !validSlot(tuple[2]) ||
+        !validId(tuple[3]) || !validSlot(tuple[4]) || destination === undefined ||
+        !validSlot(destination["to_slot"]) || destination["to_slot"] !== tuple[4] || !validSlotRecord ||
+        (slotRecord !== undefined && String(slotRecord["link"]) !== String(tuple[0])) ||
+        !["concrete", "promoted", "autogrow"].includes(String(destination["kind"])) ||
+        !validRequest ||
+        (destination["kind"] === "promoted" && typeof destination["name"] !== "string")) {
+      throw new TypeError(`readLinkState: link ${id} has an unsupported or malformed descriptor`);
+    }
+  }
+  return state;
 }

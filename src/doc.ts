@@ -158,6 +158,7 @@ export const ROOT_DEFINITIONS = "definitions";
 export const ROOT_META = "meta";
 export const ROOT_APPLIED = "__applied";
 export const ROOT_STAMPS = "__stamps";
+export const ROOT_LINK_STATE = "__link_state";
 
 /** Root map holding one Y.Map per node, keyed by String(node id). */
 export function nodesMap(doc: Y.Doc): Y.Map<Y.Map<unknown>> {
@@ -200,6 +201,11 @@ export function stampsMap(doc: Y.Doc): Y.Map<unknown> {
   return doc.getMap<unknown>(ROOT_STAMPS);
 }
 
+/** First-class durable link intent, keyed by normalized link id (schema v3). */
+export function linkStateMap(doc: Y.Doc): Y.Map<unknown> {
+  return doc.getMap<unknown>(ROOT_LINK_STATE);
+}
+
 /**
  * Initialize the v1 layout on a fresh doc (idempotent). Creates the root maps
  * (including bookkeeping) and seeds meta with schema_version, the pinned
@@ -215,6 +221,7 @@ export function initDoc(doc: Y.Doc, catalogVersion = ""): void {
     definitionsMap(doc);
     appliedMap(doc);
     stampsMap(doc);
+    linkStateMap(doc);
     const meta = metaMap(doc);
     if (meta.get("schema_version") === undefined) {
       meta.set("schema_version", SCHEMA_VERSION);

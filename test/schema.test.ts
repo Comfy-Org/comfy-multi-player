@@ -9,8 +9,8 @@ import {
 import { OPAQUE_WIDGETS_KEY, SCHEMA_VERSION, linksMap, nodesMap } from "../src/index.js";
 
 describe("schema", () => {
-  it("pins SCHEMA_VERSION at 2", () => {
-    expect(SCHEMA_VERSION).toBe(2);
+  it("pins SCHEMA_VERSION at 3", () => {
+    expect(SCHEMA_VERSION).toBe(3);
   });
 
   it("initDoc creates the v1 layout: nodes/links/definitions/meta + bookkeeping", () => {
@@ -21,6 +21,7 @@ describe("schema", () => {
     expect(definitionsMap(doc)).toBeInstanceOf(Y.Map);
     expect(doc.getMap("__applied")).toBeInstanceOf(Y.Map);
     expect(doc.getMap("__stamps")).toBeInstanceOf(Y.Map);
+    expect(doc.getMap("__link_state")).toBeInstanceOf(Y.Map);
     const meta = metaMap(doc);
     expect(meta.get("schema_version")).toBe(SCHEMA_VERSION);
     expect(meta.get("catalog_version")).toBe("object_info@2026-08-01");

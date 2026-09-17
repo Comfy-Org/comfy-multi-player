@@ -88,6 +88,7 @@ import {
   arrayItemRefusal,
   countDefinitionInstances,
   createNodeMap,
+  linkStateMap,
   linksMap,
   mapValueRefusal,
   mdel,
@@ -121,8 +122,13 @@ import {
   type DisconnectOp,
   type GrowConnectOp,
   type GrowSpec,
+  type ImportedLinkState,
   type InteriorSetWidgetOp,
+  LINK_STATE_DESCRIPTOR_VERSION,
+  type LinkTuple,
   type Op,
+  type OperationLinkDestination,
+  type OperationLinkState,
   type SetWidgetOp,
   type StampKey,
   type WidgetCatalog,
@@ -582,6 +588,7 @@ function applyAddNode(doc: Y.Doc, op: AddNodeOp, catalog?: WidgetCatalog): Succe
   // arrived. Everything else in the payload is still copied verbatim (FC-8) —
   // only `inputs[].link` / `outputs[].links` are re-derived.
   reconcileNodeLinkRefs(doc, op.node_id, nodeMap);
+  restoreDurableLinks(doc, op.node_id);
 
   // last_node_id is a max-register (vocabulary §8.3): write only on increase.
   // DQ-15 Q2 (Christian, blocked-on-christian#10): node ids are normalized
@@ -1359,7 +1366,37 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
   if (!(outLinks as Y.Array<unknown>).toArray().includes(op.link_id)) {
     apush(outLinks as Y.Array<unknown>, op.link_id);
   }
+  const tuple = links.get(linkKey) as LinkTuple;
+  const destination = operationLinkDestination(ins.get(toIdx)!, toIdx, op);
+  const state: OperationLinkState = {
+    version: LINK_STATE_DESCRIPTOR_VERSION,
+    authority: { kind: "operation", stamp: stampKey(op) },
+    tuple: structuredClone(tuple),
+    destination,
+  };
+  mset(linkStateMap(doc), linkKey, state);
   return "applied";
+}
+
+/** Capture the destination that was actually installed, without reclassifying it as an import. */
+function operationLinkDestination(
+  slot: Y.Map<unknown>,
+  toSlot: number,
+  op: ConnectOp,
+): OperationLinkDestination {
+  const slotRecord = slot.toJSON() as Record<string, unknown>;
+  if (op.grow?.promoted === true) {
+    return { kind: "promoted", to_slot: toSlot, name: op.grow.name, slot: slotRecord };
+  }
+  if (op.grow != null) {
+    return {
+      kind: "autogrow",
+      to_slot: toSlot,
+      slot: slotRecord,
+      request: structuredClone(op.grow),
+    };
+  }
+  return { kind: "concrete", to_slot: toSlot, slot: slotRecord };
 }
 
 /** Claim the normalized complete-tuple link register (schema Amendment A18). */
@@ -1374,6 +1411,11 @@ function claimLinkIdentity(doc: Y.Doc, op: ConnectOp): boolean {
   const links = linksMap(doc);
   if (links.has(normalizedId)) mdel(links, normalizedId);
   scrubLinkRefs(doc, (candidate) => candidate != null && String(candidate) === normalizedId);
+  // This connect generation now owns the normalized identity. Until it is
+  // coherently installed it has no truthful destination descriptor; retaining
+  // an older generation here would make hidden intent disagree with A18.
+  const linkState = linkStateMap(doc);
+  if (linkState.has(normalizedId)) mdel(linkState, normalizedId);
   mset(stamps, targetKey, key);
   return true;
 }
@@ -1607,6 +1649,24 @@ function normalizeGrowFamily(
       const updated = [...link];
       updated[4] = positions[rank];
       mset(linksMap(doc), String(linkId), updated);
+
+      // This is the same canonical move as the tuple/slot rewrite above, so
+      // keep an already-installed generation's durable description in that
+      // move. The currently applying generation is described by applyConnect
+      // after this function returns; only earlier generations exist here.
+      const state = linkStateMap(doc).get(String(linkId));
+      if (typeof state === "object" && state !== null && !Array.isArray(state)) {
+        const descriptor = state as OperationLinkState;
+        mset(linkStateMap(doc), String(linkId), {
+          ...structuredClone(descriptor),
+          tuple: structuredClone(updated) as LinkTuple,
+          destination: {
+            ...structuredClone(descriptor.destination),
+            to_slot: positions[rank]!,
+            slot: structuredClone(desired),
+          },
+        });
+      }
     }
   });
   const wantedRank = snapshots.findIndex(
@@ -1705,6 +1765,8 @@ function removeLink(doc: Y.Doc, linkId: unknown): void {
   const key = String(linkId);
   if (links.has(key)) mdel(links, key);
   scrubLinkRefs(doc, (candidate) => candidate != null && String(candidate) === key);
+  const linkState = linkStateMap(doc);
+  if (linkState.has(key)) mdel(linkState, key);
 }
 
 /** Scrub input/output references selected by one shared link-id predicate. */
@@ -1785,21 +1847,93 @@ function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp): SuccessfulOutcome {
 
   const links = linksMap(doc);
   const removed = new Set<unknown>(removedLinks);
-  const toDelete: string[] = [];
+  const removedIds = new Set([...removed].map(String));
+  const toDelete: Array<{ key: string; retire: boolean }> = [];
+  let retiredStranded = false;
   links.forEach((ln: unknown, k: string) => {
     const tuple = ln as unknown[];
     if (removed.has(tuple[0])) {
-      toDelete.push(k);
+      toDelete.push({ key: k, retire: true });
       return;
     }
     if (!presenceWon) return;
-    if (String(tuple[1]) === key || String(tuple[3]) === key) toDelete.push(k);
+    if (String(tuple[1]) === key || String(tuple[3]) === key) toDelete.push({ key: k, retire: false });
   });
-  for (const k of toDelete) mdel(links, k);
+  for (const entry of toDelete) {
+    mdel(links, entry.key);
+    if (entry.retire && linkStateMap(doc).has(entry.key)) mdel(linkStateMap(doc), entry.key);
+  }
+  // An earlier endpoint deletion can already have removed the live tuple. The
+  // explicit target list still retires that stranded intent.
+  for (const [linkKey, raw] of linkStateMap(doc).entries()) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const tuple = (raw as OperationLinkState | ImportedLinkState).tuple;
+    if (Array.isArray(tuple) && removedIds.has(String(tuple[0]))) {
+      mdel(linkStateMap(doc), linkKey);
+      retiredStranded = true;
+    }
+  }
 
   scrubDanglingLinkRefs(doc);
-  if (!presenceWon && toDelete.length === 0) return "lww-dropped";
-  return nodeWasPresent || toDelete.length > 0 ? "applied" : "no-op";
+  if (!presenceWon && toDelete.length === 0 && !retiredStranded) return "lww-dropped";
+  return nodeWasPresent || toDelete.length > 0 || retiredStranded ? "applied" : "no-op";
+}
+
+/**
+ * Reinstall coherent live topology from retained first-class descriptors after
+ * an endpoint is re-added. Endpoint deletion strands intent but does not
+ * retire it; explicit disconnect/replacement/delete removed_links do.
+ * Descriptors are retained indefinitely, including across compaction, until
+ * one of those semantic retirement operations wins.
+ */
+function restoreDurableLinks(doc: Y.Doc, nodeId: unknown): void {
+  const restoredEndpoint = String(nodeId);
+  const nodes = nodesMap(doc);
+  linkStateMap(doc).forEach((raw, linkKey) => {
+    if (typeof raw !== "object" || raw === null) return;
+    const state = raw as OperationLinkState;
+    const tuple = state.tuple;
+    if (!Array.isArray(tuple) || tuple.length !== 6) return;
+    if (String(tuple[1]) !== restoredEndpoint && String(tuple[3]) !== restoredEndpoint) return;
+    const src = nodes.get(String(tuple[1]));
+    const dst = nodes.get(String(tuple[3]));
+    if (!src || !dst) return;
+
+    const outs = src.get("outputs");
+    if (!(outs instanceof Y.Array) || !(outs.get(tuple[2]) instanceof Y.Map)) return;
+    let ins = dst.get("inputs");
+    if (!(ins instanceof Y.Array)) {
+      ins = new Y.Array<unknown>();
+      mset(dst, "inputs", ins);
+    }
+    const inputArray = ins as Y.Array<unknown>;
+    const destination = state.destination;
+    if (!destination || typeof destination.to_slot !== "number") return;
+    while (inputArray.length <= destination.to_slot) {
+      const slotIndex = inputArray.length;
+      if (slotIndex !== destination.to_slot) return;
+      const slot = new Y.Map<unknown>();
+      for (const [key, value] of Object.entries(destination.slot)) slot.set(key, structuredClone(value));
+      inputArray.insert(slotIndex, [slot]);
+    }
+    const slot = inputArray.get(destination.to_slot);
+    if (!(slot instanceof Y.Map)) return;
+    const incumbent = slot.get("link");
+    if (incumbent != null && String(incumbent) !== String(tuple[0])) return;
+
+    const links = linksMap(doc);
+    if (!links.has(linkKey)) mset(links, linkKey, structuredClone(tuple));
+    mset(slot, "link", tuple[0]);
+    const outPort = outs.get(tuple[2]) as Y.Map<unknown>;
+    let outLinks = outPort.get("links");
+    if (!(outLinks instanceof Y.Array)) {
+      outLinks = new Y.Array<unknown>();
+      mset(outPort, "links", outLinks);
+    }
+    if (!(outLinks as Y.Array<unknown>).toArray().some(value => String(value) === String(tuple[0]))) {
+      apush(outLinks as Y.Array<unknown>, tuple[0]);
+    }
+  });
 }
 
 /**
@@ -1881,7 +2015,7 @@ function applyDisconnect(doc: Y.Doc, op: DisconnectOp): SuccessfulOutcome {
 
   const nodes = nodesMap(doc);
   const dst = nodes.get(String(op.to_node));
-  if (!dst) return "no-op";
+  if (!dst) return retireStrandedLink(doc, op) ? "applied" : "no-op";
 
   const ins = dst.get("inputs");
   if (!(ins instanceof Y.Array) || op.to_slot >= ins.length) {
@@ -1896,8 +2030,9 @@ function applyDisconnect(doc: Y.Doc, op: DisconnectOp): SuccessfulOutcome {
   }
 
   const prev = slot.get("link");
+  if (prev == null && retireStrandedLink(doc, op)) return "applied";
   const stamps = stampsMap(doc);
-  const targetKey = stampTargetKey(op);
+  const targetKey = disconnectTargetKey(doc, op, prev);
   const prior = stamps.get(targetKey) as StampKey | undefined;
   const key = stampKey(op);
   if (prior != null && compareStampKeys(key, prior) <= 0) return "lww-dropped";
@@ -1905,6 +2040,46 @@ function applyDisconnect(doc: Y.Doc, op: DisconnectOp): SuccessfulOutcome {
   mset(stamps, targetKey, key);
   if (prev != null) removeLink(doc, prev);
   return prev != null ? "applied" : "no-op";
+}
+
+/** A disconnect addresses the durable destination register that created the occupied slot. */
+function disconnectTargetKey(doc: Y.Doc, op: DisconnectOp, linkId: unknown): string {
+  const raw = linkId == null ? undefined : linkStateMap(doc).get(String(linkId));
+  if (typeof raw === "object" && raw !== null) {
+    const destination = (raw as OperationLinkState).destination;
+    if (destination?.kind === "promoted") {
+      return JSON.stringify(["input", String(op.to_node), "grow", destination.name]);
+    }
+    if (destination?.kind === "autogrow" && "request" in destination) {
+      return JSON.stringify(["input", String(op.to_node), "grow", destination.request.name.split(".", 1)[0]]);
+    }
+  }
+  return stampTargetKey(op);
+}
+
+/** Retire retained intent even when its destination endpoint is currently absent. */
+function retireStrandedLink(doc: Y.Doc, op: DisconnectOp): boolean {
+  // Disconnect addresses a destination register; link_id is advisory and may
+  // mismatch the occupant under the established live-slot semantics.
+  let match: { key: string; state: OperationLinkState | ImportedLinkState } | undefined;
+  for (const [key, raw] of linkStateMap(doc).entries()) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const state = raw as OperationLinkState | ImportedLinkState;
+    if (!Array.isArray(state.tuple) || !state.destination) continue;
+    if (String(state.tuple[3]) === String(op.to_node) && state.destination.to_slot === op.to_slot) {
+      match = { key, state };
+      break;
+    }
+  }
+  if (match === undefined) return false;
+  const targetKey = disconnectTargetKey(doc, op, match.state.tuple[0]);
+  const stamps = stampsMap(doc);
+  const prior = stamps.get(targetKey) as StampKey | undefined;
+  const stamp = stampKey(op);
+  if (prior != null && compareStampKeys(stamp, prior) <= 0) return false;
+  mset(stamps, targetKey, stamp);
+  mdel(linkStateMap(doc), match.key);
+  return true;
 }
 
 // ---------------------------------------------------------------------------

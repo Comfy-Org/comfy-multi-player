@@ -1,71 +1,23 @@
 /**
- * Schema-layout versioning (schema §10): stepwise vN → vN+1 migrations,
- * composed in order; exact no-op at the current version; FAIL-CLOSED on a
+ * Schema-layout versioning (schema §10): exact no-op at the current version;
+ * older schemas are refused under the private-alpha no-compat-reader policy;
+ * FAIL-CLOSED on a
  * doc newer than this package, or one whose schema cannot be read at all —
  * never a best-effort read. Host-only: followers receive the migrated doc via
  * the struct stream / a new epoch.
  */
 
 import * as Y from "yjs";
-import { definitionsMap, nodesMap } from "./doc.js";
 import { readSchemaVersion } from "./schema-version.js";
-import {
-  LEGACY_NODE_INCARNATION,
-  NODE_INCARNATION_KEY,
-  SCHEMA_VERSION,
-  SchemaVersionError,
-} from "./types.js";
-
-function migrateNodeMap(node: unknown): void {
-  if (!(node instanceof Y.Map)) return;
-  if (!node.has(NODE_INCARNATION_KEY)) node.set(NODE_INCARNATION_KEY, LEGACY_NODE_INCARNATION);
-}
-
-function migrateStampKey(key: string): string | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(key);
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(parsed) || parsed[0] !== "widget" || parsed.length !== 3) return null;
-  return JSON.stringify([parsed[0], parsed[1], LEGACY_NODE_INCARNATION, parsed[2]]);
-}
-
-/** Apply the v1 → v2 compatibility translation in one host-owned transaction. */
-function migrateV1ToV2(doc: Y.Doc): void {
-  doc.transact(() => {
-    nodesMap(doc).forEach(migrateNodeMap);
-    definitionsMap(doc).forEach((definition) => {
-      if (!(definition instanceof Y.Map)) return;
-      const nodes = definition.get("nodes");
-      if (nodes instanceof Y.Map) nodes.forEach(migrateNodeMap);
-    });
-
-    const stamps = doc.getMap<unknown>("__stamps");
-    for (const oldKey of [...stamps.keys()]) {
-      const newKey = migrateStampKey(oldKey);
-      if (newKey === null || stamps.has(newKey)) continue;
-      const value = stamps.get(oldKey);
-      stamps.set(newKey, value);
-      stamps.delete(oldKey);
-    }
-
-    doc.getMap<unknown>("meta").set("schema_version", SCHEMA_VERSION);
-  });
-}
+import { SCHEMA_VERSION, SchemaVersionError } from "./types.js";
 
 /**
  * Migrate a doc from schema `fromVersion` to `SCHEMA_VERSION`, in place.
  *
- * The v1 → v2 step seeds the legacy incarnation (`"0"`) on imported nodes and
- * rewrites legacy widget stamp keys into that namespace. New add operations
- * carry their immutable `op_id` as the incarnation token.
- *
  * Validation runs before the migration step on EVERY path (KA-11: schema-version
  * discipline is enforced on read). A rejected call and a current-version no-op
  * leave the `encodeStateAsUpdate` byte-identical and the `doc.share` key set
- * unchanged; only the explicit v1 → v2 path mutates the document.
+ * unchanged. This function never relabels an old layout as the current one.
  */
 export function migrate(doc: Y.Doc, fromVersion: number): void {
   if (!Number.isInteger(fromVersion) || fromVersion < 1) {
@@ -105,9 +57,10 @@ export function migrate(doc: Y.Doc, fromVersion: number): void {
     );
   }
 
-  if (fromVersion === 1) {
-    migrateV1ToV2(doc);
-    return;
+  if (fromVersion < SCHEMA_VERSION) {
+    throw new SchemaVersionError(
+      `migrate: schema v${fromVersion} is unsupported by the private-alpha no-compat-reader policy; refusing to relabel it as v${SCHEMA_VERSION}`,
+    );
   }
 
   // The current-version path is an EXACT no-op, byte-identical under
