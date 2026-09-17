@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -20,7 +20,13 @@ afterEach(() => {
 });
 
 describe("portable harness regressions", () => {
-  it.each([0, 1, 2])("the documented SonarJS command preserves exit %i", (status) => {
+  it.each([
+    { name: "clean", eslintStatus: 0, output: '[{"filePath":"fixture.ts","messages":[]}]', expected: 0 },
+    { name: "findings", eslintStatus: 1, output: '[{"filePath":"fixture.ts","messages":[{"severity":2}]}]', expected: 1 },
+    { name: "execution error", eslintStatus: 2, output: '[{"filePath":"fixture.ts","messages":[]}]', expected: 2 },
+    { name: "malformed JSON", eslintStatus: 0, output: '{', expected: 2 },
+    { name: "empty output", eslintStatus: 0, output: '', expected: 2 },
+  ])("the documented SonarJS command classifies $name", ({ eslintStatus, output, expected }) => {
     const profile = readFileSync(join(repoRoot, ".agents/checks/sonarjs-lint.md"), "utf8");
     const command = [...profile.matchAll(/```bash\n([\s\S]*?)\n\s*```/g)]
       .map((match) => match[1])
@@ -28,15 +34,15 @@ describe("portable harness regressions", () => {
     expect(command).toBeDefined();
     expect(command).not.toContain("npm i");
     const bin = temp("sonar-command-");
-    writeFileSync(join(bin, "npx"), `#!/bin/sh\nexit ${status}\n`);
+    writeFileSync(join(bin, "npx"), `#!/bin/sh\nprintf '%s' '${output}'\nexit ${eslintStatus}\n`);
     chmodSync(join(bin, "npx"), 0o755);
     const run = spawnSync("bash", ["-c", command!.replace("<changed_files>", "fixture.ts")], {
       encoding: "utf8",
       cwd: bin,
       env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
     });
-    expect(run.status).toBe(status);
-    expect(run.stdout).toContain(`eslint exit: ${status}`);
+    expect(run.status).toBe(expected);
+    expect(run.stdout).toContain(`eslint exit: ${eslintStatus}`);
   });
 
   it("the driver's root calculation decodes a URL-encoded checkout path", () => {
@@ -84,6 +90,41 @@ describe("portable harness regressions", () => {
       if (!healthy) expect(run.stderr).toContain("sidecar did not become healthy");
     });
   }
+
+  it("bounds an actual stalled health request", async () => {
+    const root = temp("dochost-stalled-");
+    const bin = join(root, "bin");
+    const sidecar = join(root, "sidecar");
+    mkdirSync(bin);
+    mkdirSync(sidecar);
+    writeFileSync(join(bin, "npm"), "#!/bin/sh\nexit 0\n");
+    writeFileSync(join(bin, "seq"), "#!/bin/sh\necho 1\n");
+    writeFileSync(join(bin, "sleep"), "#!/bin/sh\nexit 0\n");
+    writeFileSync(join(bin, "node"), "#!/bin/sh\ncase \"$1\" in *dist/server.js) while :; do /bin/sleep 1; done;; *) exit 0;; esac\n");
+    for (const executable of ["npm", "seq", "sleep", "node"]) chmodSync(join(bin, executable), 0o755);
+
+    const serverFile = join(root, "stall.mjs");
+    writeFileSync(serverFile, "import net from 'node:net'; net.createServer(() => {}).listen(0, '127.0.0.1', function () { console.log(this.address().port); });\n");
+    const server = spawn(process.execPath, [serverFile], { stdio: ["ignore", "pipe", "inherit"] });
+    const port = await new Promise<string>((resolve, reject) => {
+      server.once("error", reject);
+      server.stdout.once("data", (chunk) => resolve(String(chunk).trim()));
+    });
+    try {
+      const started = Date.now();
+      const run = spawnSync("bash", [join(repoRoot, "examples/dochost-poc/run.sh")], {
+        encoding: "utf8",
+        timeout: 2_000,
+        env: { ...process.env, PATH: `${bin}:/usr/bin:/bin`, DOCHOST_SRC: sidecar, PORT: port },
+      });
+      expect(run.error).toBeUndefined();
+      expect(run.status).toBe(1);
+      expect(Date.now() - started).toBeLessThan(1_500);
+      expect(run.stderr).toContain("within 15s");
+    } finally {
+      server.kill();
+    }
+  });
 
   it("rejects equal-count readers with unequal link values", () => {
     const source = readFileSync(join(repoRoot, "scripts/bench-read.mjs"), "utf8");

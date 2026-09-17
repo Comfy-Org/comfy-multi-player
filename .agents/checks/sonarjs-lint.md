@@ -13,10 +13,17 @@ Run `eslint-plugin-sonarjs` on changed files for SonarQube-grade bug and code-sm
    If install fails, skip and report: "Skipped: could not install eslint/sonarjs." Restore `package-lock.json` afterward if the install touched it (`git checkout -- package-lock.json`).
 4. Run (do not suppress stderr or discard the exit status — a failed lint run must not look like a clean pass). `--no-warn-ignored` is load-bearing, not cosmetic: see the non-vacuousness note below.
    ```bash
+   report="$(mktemp)"
+   trap 'rm -f "$report"' EXIT
    status=0
    npx eslint --no-config-lookup --config .agents/checks/eslint.strict.config.js \
-     --no-warn-ignored --format json <changed_files> || status=$?
+     --no-warn-ignored --format json <changed_files> >"$report" || status=$?
    echo "eslint exit: $status"
+   parse_status=0
+   node -e 'const fs=require("node:fs"); try { const result=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (!Array.isArray(result) || result.length === 0) throw new Error("empty ESLint result"); } catch (error) { console.error(`INDETERMINATE: ${error.message}`); process.exit(2); }' "$report" || parse_status=$?
+   if [ "$parse_status" -ne 0 ]; then
+     exit 2
+   fi
    exit "$status"
    ```
    ESLint exits `1` when it reports problems and `2` on a config/execution error. Treat exit `2`, a parse error, or empty/no output as **indeterminate** (report the failure), never as "no issues found".

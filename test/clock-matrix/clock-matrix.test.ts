@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as Y from "yjs";
@@ -8,7 +8,7 @@ import { applyOps, mint, project, type Op, type WorkflowJSON, type WorkflowNode 
 import { loadCatalog, loadSession, sessionFiles } from "../helpers.js";
 
 const catalog = loadCatalog();
-const OUT_DIR = dirname(fileURLToPath(import.meta.url));
+const GOLDEN_DIR = dirname(fileURLToPath(import.meta.url));
 const SCHEMES = ["base_version_actor", "lamport_doc_derived", "vector_reference"] as const;
 type Scheme = (typeof SCHEMES)[number];
 
@@ -363,9 +363,6 @@ function runMatrix() {
     session_corpus,
     cases: rows,
   };
-  mkdirSync(OUT_DIR, { recursive: true });
-  writeFileSync(join(OUT_DIR, "matrix.json"), `${JSON.stringify(matrix, null, 2)}\n`);
-  writeFileSync(join(OUT_DIR, "matrix.md"), renderMarkdown(matrix));
   return matrix;
 }
 
@@ -382,7 +379,8 @@ describe("clock shadow-comparison acceptance matrix", () => {
     for (const name of ["Agent adds node A, human observes it, then connects B to A", "Dependent producer edit-1 then edit-2 before shared revision advances", "Agent edits, reconnects after restart, observes the doc, and continues monotonically", "Stale-base human edit races after agent changed related state", "Human and agent independently change the same widget", "Human changes the agent value after seeing it", "Delete-versus-edit race on a related node", "Reconnect races on the same input register", "DQ-11 incarnation transition occurs mid-stream"]) expect(matrix.cases.some((row) => row.name === name)).toBe(true);
     expect(matrix.cases.find((row) => row.id === "agent-add-human-connect")?.vector_relations.ordered_pairs).toBe(1);
     expect(matrix.cases.find((row) => row.id === "same-widget-true-concurrency")?.vector_relations.concurrent_pairs).toBe(1);
-    expect(matrix.summary.divergent_rows).toBeGreaterThanOrEqual(0);
     expect(matrix.allowlist_firing).toEqual(ALLOWLIST_FIRING);
+    expect(`${JSON.stringify(matrix, null, 2)}\n`).toBe(readFileSync(join(GOLDEN_DIR, "matrix.json"), "utf8"));
+    expect(renderMarkdown(matrix)).toBe(readFileSync(join(GOLDEN_DIR, "matrix.md"), "utf8"));
   });
 });
