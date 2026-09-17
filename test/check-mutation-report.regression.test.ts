@@ -1,0 +1,60 @@
+/**
+ * Regression: malformed mutation JSON escaped the gate as a SyntaxError/exit 1.
+ * Source: https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#discussion_r3914401883
+ */
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+import { afterEach, describe, expect, it } from "vitest";
+
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const fixtures: string[] = [];
+
+function runReport(contents: string) {
+  const fixture = mkdtempSync(join(tmpdir(), "mutation-report-"));
+  fixtures.push(fixture);
+  mkdirSync(join(fixture, "scripts"));
+  mkdirSync(join(fixture, "reports", "mutation"), { recursive: true });
+  const scriptPath = join(fixture, "scripts", "check-mutation-report.mjs");
+  copyFileSync(join(root, "scripts", "check-mutation-report.mjs"), scriptPath);
+  const reportPath = join(fixture, "reports", "mutation", "mutation.json");
+  writeFileSync(reportPath, contents);
+  return spawnSync(process.execPath, [scriptPath], {
+    encoding: "utf8",
+  });
+}
+
+function report(killed: number, survived: number, breakAt: number) {
+  const mutants = [
+    ...Array.from({ length: killed }, () => ({ status: "Killed" })),
+    ...Array.from({ length: survived }, () => ({ status: "Survived" })),
+  ];
+  return JSON.stringify({ files: { "src/example.ts": { mutants } }, thresholds: { break: breakAt } });
+}
+
+afterEach(() => {
+  for (const fixture of fixtures.splice(0)) rmSync(fixture, { recursive: true, force: true });
+});
+
+describe("mutation report CLI", () => {
+  it("regression: classifies an unreadable report as INCONCLUSIVE", () => {
+    const run = runReport("{not-json");
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain("mutation report INCONCLUSIVE: could not read or parse report");
+    expect(run.stderr).not.toContain("SyntaxError");
+  });
+
+  it("passes a valid report at or above its score threshold", () => {
+    const run = runReport(report(450, 50, 90));
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("mutation report PASSED");
+  });
+
+  it("fails a valid report below its score threshold", () => {
+    const run = runReport(report(449, 51, 90));
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("mutation report FAILED");
+  });
+});

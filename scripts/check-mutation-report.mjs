@@ -44,7 +44,12 @@ if (!existsSync(reportPath)) {
   inconclusive(`no report at ${reportPath} — run \`npm run test:mutation\` first`);
 }
 
-const report = JSON.parse(readFileSync(reportPath, "utf8"));
+let report;
+try {
+  report = JSON.parse(readFileSync(reportPath, "utf8"));
+} catch (error) {
+  inconclusive(`could not read or parse report at ${reportPath}: ${error.message}`);
+}
 const files = report.files ?? {};
 const counts = { Killed: 0, Timeout: 0, Survived: 0, NoCoverage: 0, RuntimeError: 0, CompileError: 0, Ignored: 0 };
 for (const file of Object.values(files)) {

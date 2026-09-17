@@ -170,6 +170,7 @@ if (tracked.length < MIN_SCANNED_FILES) {
 }
 
 const errors = [];
+const malformedPinLocations = new Set();
 
 // --------------------------------------------------------------------------
 // 2. Registry shape, and every citation site carries its pin's SHA.
@@ -184,9 +185,11 @@ for (const [id, pin] of Object.entries(pins)) {
   }
   if (typeof pin.repo !== "string" || !pin.repo.startsWith("https://")) {
     errors.push(`${id}: repo must be an https URL`);
+    malformedPinLocations.add(id);
   }
   if (typeof pin.path !== "string" || pin.path.length === 0) {
     errors.push(`${id}: path must name the cited file in the upstream repository`);
+    malformedPinLocations.add(id);
   }
   if (typeof pin.established_by !== "string" || pin.established_by.length < 40) {
     errors.push(
@@ -386,6 +389,7 @@ if (!preflight.ok) {
 
 for (const [id, pin] of Object.entries(pins)) {
   if (typeof pin?.commit !== "string" || !/^[0-9a-f]{40}$/.test(pin.commit)) continue;
+  if (malformedPinLocations.has(id)) continue;
   const slug = pin.repo.replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "");
 
   const commit = gh(`repos/${slug}/commits/${pin.commit}`);
