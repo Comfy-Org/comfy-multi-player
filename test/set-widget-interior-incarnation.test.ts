@@ -97,12 +97,17 @@ describe("set_widget interior incarnation guard (current-behavior characterizati
     const op = setWidget(2, "stale-incarnation");
     const graphBefore = project(doc, catalog);
     const bytesBefore = Y.encodeStateAsUpdate(doc);
+    const stampsBefore = readStamps(doc);
 
     expect(applyOps(doc, [op], catalog).outcomes).toEqual([
       { op_id: op.op_id, outcome: "no-op" },
     ]);
     expect(project(doc, catalog)).toEqual(graphBefore);
     expect(interiorValue(doc)).toBe("original");
+    // Full stamp-map equality: a mutation that wrote the stale stamp into the
+    // current incarnation register while still returning "no-op" would
+    // LWW-drop a later valid lower-stamped write (A16 / KA-4).
+    expect(readStamps(doc)).toEqual(stampsBefore);
     expect(readStamps(doc)[stampTargetKey(op)]).toBeUndefined();
 
     // applyOps consumes op_ids even for delete-wins no-ops. The graph and
@@ -127,11 +132,13 @@ describe("set_widget interior incarnation guard (current-behavior characterizati
     const doc = mint(workflow(), catalog);
     interiorNode(doc).set(NODE_INCARNATION_KEY, REPLACEMENT_INCARNATION);
     const op = setWidget(4);
+    const stampsBefore = readStamps(doc);
 
     expect(applyOps(doc, [op], catalog).outcomes).toEqual([
       { op_id: op.op_id, outcome: "no-op" },
     ]);
     expect(interiorValue(doc)).toBe("original");
+    expect(readStamps(doc)).toEqual(stampsBefore);
     expect(readStamps(doc)[stampTargetKey(op)]).toBeUndefined();
   });
 });

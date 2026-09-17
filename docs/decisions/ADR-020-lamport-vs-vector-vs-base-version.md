@@ -5,6 +5,12 @@
 **Decider:** Christian Byrne
 **Verification owner:** shadow-comparison lane
 
+> **Mirror note (superseded in part):** [ADR-021](ADR-021-doc-derived-lamport-clock-store.md)
+> (accepted) supersedes and narrows this ADR to a concrete doc-derived Lamport clock store.
+> The `Proposed` status and shadow-comparison verification gate below are preserved as the
+> historical decision record; the current decision state is ADR-021 together with the
+> portability constraints (KA-2) and foreclose rules (FC-2, FC-9) it operates under.
+
 ## Context
 
 The In-App Agent graph is an op-based CRDT. A semantic operation carries its identity and
@@ -185,18 +191,20 @@ widens. Any rollout must preserve the host-is-writer and semantic-op replication
 
 ## References
 
-- Program [ADR-007: Op-based CRDT for in-app-agent graph state](ADR-007-op-based-crdt-v1.md),
-  especially its portability, semantic-op, and logical-clock constraints.
+- Workspace [ADR-007: Op-based CRDT for in-app-agent graph state](https://github.com/christian-byrne/in-app-agent-program/blob/main/decisions/ADR-007-op-based-crdt-v1.md)
+  (workspace repo, `decisions/ADR-007-op-based-crdt-v1.md` — not mirrored here), especially its
+  portability, semantic-op, and logical-clock constraints.
 - [`comfy-multi-player` ADR-0005 at `8636af3e`](https://github.com/Comfy-Org/comfy-multi-player/blob/8636af3e42e1f81d942bd861aa604f770de73769/docs/adr/0005-lamport-ordering-v1-migration.md),
   the package-level Lamport decision this ADR preserves.
-- [DQ-10 Lamport feasibility evidence](../reports/spikes/dq10-lamport-feasibility.md), including
-  the DQ-11 conditional result and persistence-loss boundary.
+- [DQ-10 Lamport feasibility evidence](https://github.com/christian-byrne/in-app-agent-program/blob/main/reports/spikes/dq10-lamport-feasibility.md)
+  (workspace repo), including the DQ-11 conditional result and persistence-loss boundary.
 - [Lamport, “Time, Clocks, and the Ordering of Events in a Distributed System”](https://lamport.azurewebsites.net/pubs/time-clocks.pdf),
   the primary logical-clock reference.
 - [Fidge, “Timestamps in Message-Passing Systems That Preserve the Partial Ordering”](https://fileadmin.cs.lth.se/cs/Personal/Amr_Ergawy/dist-algos-papers/4.pdf),
   the primary vector-clock reference.
-- [AGENTS.md CRDT invariants](../AGENTS.md), the keep-alive and foreclose constraints for
-  portability, op identity, host/follower direction, and replay.
+- [AGENTS.md CRDT invariants](https://github.com/christian-byrne/in-app-agent-program/blob/main/AGENTS.md)
+  (workspace repo), the keep-alive and foreclose constraints for portability, op identity,
+  host/follower direction, and replay.
 
 ## Glossary
 
