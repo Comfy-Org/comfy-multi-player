@@ -4,6 +4,10 @@
 
 V1 is an op-based Yjs document applier implemented once in the shared `@comfyorg/comfy-multi-player` TypeScript package. The browser and Node doc-host sidecar consume the same git-SHA-pinned package. Semantic ops are the replication unit; the widget catalog is sha256-pinned and fail-closed in the deployed architecture.
 
+ADR-022 adds the seventh implemented kind, `insert_workflow`, for atomic template insertion. It is
+standalone-only; producer-side `remapWorkflowIds` allocates top-level ids and the applier rejects
+collisions. Definition collisions dedupe identical content or fork deterministically.
+
 ## Guard gaps
 
 - ~~**Positive purity assertion (#22):**~~ **CLOSED.** `scripts/check-purity.mjs` asserts directly that the declared and resolved production dependency roots are exactly `{yjs}`, and `scripts/check-import-graph.mjs` asserts the same per source module via `src-runtime-dep-is-yjs-only`. A cross-language parity guard is still only warranted if a second-language implementation is proposed; the preferred policy remains no second implementation (tracked in the separate bullet below).
