@@ -227,6 +227,31 @@ describe("interior connect regression", () => {
     expect(projections[0]).toEqual(projections[1]);
   });
 
+  // https://github.com/Comfy-Org/comfy-multi-player/pull/198
+  it("regression: a winning same-id rewrite updates addition order in all six permutations", () => {
+    const independent = structuredClone(workflow);
+    const definitions = independent.definitions as {
+      subgraphs: Array<{ nodes: WorkflowJSON["nodes"] }>;
+    };
+    definitions.subgraphs[0]!.nodes.push({
+      id: 3, type: "Sink", inputs: [{ name: "text", type: "STRING", link: null }], outputs: [],
+    });
+    const snapshot = Y.encodeStateAsUpdate(mint(independent, catalog));
+    const early = connect();
+    const middle = connect({ op_id: "middle", stamp: [2, "human:a"], link_id: 42, to_node: 3 });
+    const late = connect({ op_id: "late", stamp: [3, "human:a"] });
+    const orders = [[early, middle, late], [early, late, middle], [middle, early, late],
+      [middle, late, early], [late, early, middle], [late, middle, early]];
+    expect(orders).toHaveLength(6);
+    for (const order of orders) {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      applyOps(doc, order, catalog);
+      expect.soft(definitionOf(doc).links.map(({ id }) => id), order.map((op) => op.op_id).join(","))
+        .toEqual([42, 41]);
+    }
+  });
+
   it("preserves asymmetric imported order ahead of deterministically ordered additions", () => {
     const imported = structuredClone(workflow) as unknown as WorkflowJSON & {
       definitions: { subgraphs: Array<{ nodes: WorkflowJSON["nodes"]; links: Array<Record<string, unknown>> }> };
