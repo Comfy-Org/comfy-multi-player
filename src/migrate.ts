@@ -3,7 +3,7 @@
  * older schemas are refused under the private-alpha no-compat-reader policy;
  * FAIL-CLOSED on a
  * doc newer than this package, or one whose schema cannot be read at all —
- * never a best-effort read. Host-only: followers receive the migrated doc via
+ * never a best-effort read. Host-only: followers receive the current-format doc via
  * the struct stream / a new epoch.
  */
 
@@ -12,12 +12,13 @@ import { readSchemaVersion } from "./schema-version.js";
 import { SCHEMA_VERSION, SchemaVersionError } from "./types.js";
 
 /**
- * Migrate a doc from schema `fromVersion` to `SCHEMA_VERSION`, in place.
+ * Validate that a doc is already at `SCHEMA_VERSION`.
  *
- * Validation runs before the migration step on EVERY path (KA-11: schema-version
- * discipline is enforced on read). A rejected call and a current-version no-op
- * leave the `encodeStateAsUpdate` byte-identical and the `doc.share` key set
- * unchanged. This function never relabels an old layout as the current one.
+ * The current-version path is an exact no-op. Older, newer, unreadable, and
+ * caller/document-mismatched versions are refused fail-closed (KA-11). Every
+ * path leaves `encodeStateAsUpdate` byte-identical and the `doc.share` key set
+ * unchanged; this function provides no compatibility reader and never
+ * relabels an old layout as the current one.
  */
 export function migrate(doc: Y.Doc, fromVersion: number): void {
   if (!Number.isInteger(fromVersion) || fromVersion < 1) {

@@ -137,12 +137,12 @@ unrecognized workflow key passed through untouched.
 workflow content it throws `SchemaVersionError` when `meta.schema_version` is
 absent, is not a positive integer, or is not this package's `SCHEMA_VERSION`. A document
 NEWER than this package is refused rather than best-effort projected; a
-document OLDER is refused too, and the message names the remedy — run
-`migrate(doc, storedVersion)` on the **host** first, then read. `project()`
+document OLDER is refused too. Re-mint an old document from its source workflow
+with the current package; `migrate()` does not provide a compatibility reader.
+`project()`
 never migrates, because it is a read any replica may call — a browser follower
-included — and a follower must not write the shared document (KA-6/FC-5). No
-follower calls it today (the frontend does not depend on this package at all),
-so this is a rule about the API, not an observation about callers.
+included — and a follower must not write the shared document (KA-6/FC-5). This
+is an API rule independent of which consumers currently call it.
 
 This refusal is byte-exact: `encodeStateAsUpdate(doc)` and the `doc.share` key
 set are both unchanged. It is also strictly *less* mutating than the old
@@ -423,11 +423,14 @@ implementation to replay it with no failures. If you are building a submission
 surface in front of the applier, that admission layer is where `BATCHABLE_OPS`
 belongs. `test/batch-policy.test.ts` pins all of this.
 
-The normative definition of the op envelope and eight kinds is
+The historical op envelope and six-kind base vocabulary are defined by
 `docs/op-vocabulary-v1.md` in
-[comfy-cli](https://github.com/Comfy-Org/comfy-cli), which mints these ops on
-the agent side. The `Op` types here mirror those minted shapes field for field;
-a divergence is a bug here.
+[comfy-cli](https://github.com/Comfy-Org/comfy-cli), with the adopted connect
+amendment pinned separately below. The complete current eight-kind implemented
+surface is defined locally by `src/types.ts` and
+[`docs/multiplayer-schema.md`](docs/multiplayer-schema.md): `define_subgraph`
+and ADR-031's standalone `insert_workflow` are local extensions, not claims
+about the historical comfy-cli pin.
 
 This package tracks that document at comfy-cli commit
 `7e732242d971daf0d2d30f22f997abfacd78986e`, plus amendment v1.2 (§11) at

@@ -9,9 +9,10 @@ this package uses semantic versioning.
 
 ### Added
 
-- Added the standalone `insert_workflow` op and `remapWorkflowIds` helper for
-  deterministic, collision-safe workflow-template insertion, including
-  subgraph-definition deduplication and deterministic forks.
+- Added the standalone `insert_workflow` op for atomic workflow-template
+  insertion. The applier derives every carried node, link, group, and
+  definition ID from the operation ID and graph scope, avoiding allocation
+  against mutable document state.
 
 ## 0.2.0 - 2026-08-30
 
