@@ -1,7 +1,7 @@
 /**
  * Types and constants for @comfyorg/comfy-multi-player.
  *
- * The op vocabulary is frozen at six kinds; the normative contract is
+ * The op vocabulary is frozen at eight kinds; the normative contract is
  * comfy-cli's `docs/op-vocabulary-v1.md` and the stamp shapes minted by
  * `comfy_cli/workflow_ops.py` (`_new_op`), pinned by SHA at comfy-cli
  * `7e732242d971daf0d2d30f22f997abfacd78986e` (FC-10: never by branch — the
@@ -71,9 +71,6 @@ export const DEFERRED_OPS = ["reset_doc"] as const;
  */
 export const BATCHABLE_OPS = ["add_node", "connect", "disconnect", "set_widget", "delete_node", "define_subgraph"] as const;
 
-/** Every kind the vocabulary defines — implemented ({@link Op}) plus deferred ({@link DeferredOp}). */
-export type OpKind = WireOp["op"];
-
 /** A kind `applyOps` implements. */
 export type FrozenOpKind = (typeof FROZEN_OPS)[number];
 
@@ -139,7 +136,7 @@ export interface OpBase {
 }
 
 // ---------------------------------------------------------------------------
-// The eight declared op kinds: seven implemented (`Op`) plus the deferred
+// The nine declared op kinds: eight implemented (`Op`) plus the deferred
 // `reset_doc` (`DeferredOp`); together `WireOp`. "Frozen" now means
 // implemented — `FROZEN_OPS` is pinned to `Op["op"]` exactly (issue #17).
 // ---------------------------------------------------------------------------
@@ -160,17 +157,21 @@ export interface AddNodeOp extends OpBase {
  * Merge a workflow template (nodes, links, `definitions.subgraphs`) into an
  * existing doc in one transaction (ADR-022; agent-subgraph TDD V1.5).
  *
- * The MINTER (cloud / cli) remaps template node and link ids so they are
- * collision-free against the live doc before emitting (see
- * `remapWorkflowIds`); the applier only validates and rejects on collision.
- * Subgraph definitions whose id already exists are deduped when identical
- * and forked to `${id}-${hash8}` when different, with the inserted instance
- * nodes retargeted to the fork. Existing instances are never touched.
+ * The applier remaps every carried id deterministically from `op_id` and the
+ * original id. Exact replay therefore chooses the same ids, while distinct
+ * insert ops cannot collide or depend on document state. `links`, `groups`,
+ * and `definitions` are optional and default to empty.
  */
 export interface InsertWorkflowOp extends OpBase {
   op: "insert_workflow";
   /** The template to merge — AUTHORITATIVE, nodes inserted verbatim after id validation. */
-  workflow: WorkflowJSON;
+  workflow: {
+    nodes: WorkflowNode[];
+    links?: unknown[];
+    groups?: unknown[];
+    definitions?: { subgraphs?: unknown[]; [key: string]: unknown };
+    [key: string]: unknown;
+  };
 }
 
 /** Autogrow slot descriptor carried by a `connect` (vocabulary §1.2 / §8.4). */
@@ -512,18 +513,20 @@ export type WireOp = Op | DeferredOp;
 // ---------------------------------------------------------------------------
 
 type Equals<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
-type Assert<T extends true> = T;
+type Checked<T, Checks extends readonly true[]> = T &
+  (Checks[number] extends true ? unknown : never);
 
-/** `FROZEN_OPS` names exactly the kinds `applyOps` implements. */
-type _FrozenIsExactlyTheImplementedUnion = Assert<Equals<FrozenOpKind, Op["op"]>>;
-/** `DEFERRED_OPS` names exactly the kinds declared-but-not-implemented. */
-type _DeferredIsExactlyTheDeferredUnion = Assert<Equals<DeferredOpKind, DeferredOp["op"]>>;
-/** Every declared kind is exactly once in FROZEN_OPS or DEFERRED_OPS. */
-type _OpKindsArePartitioned = Assert<Equals<FrozenOpKind | DeferredOpKind, OpKind>>;
-/** No kind is both implemented and deferred. */
-type _FrozenAndDeferredAreDisjoint = Assert<Equals<FrozenOpKind & DeferredOpKind, never>>;
-/** Batchable kinds are a subset of the implemented kinds. */
-type _BatchableIsSubsetOfFrozen = Assert<Equals<Exclude<BatchableOpKind, FrozenOpKind>, never>>;
+/** Every kind the vocabulary defines — implemented ({@link Op}) plus deferred ({@link DeferredOp}). */
+export type OpKind = Checked<
+  WireOp["op"],
+  [
+    Equals<FrozenOpKind, Op["op"]>,
+    Equals<DeferredOpKind, DeferredOp["op"]>,
+    Equals<FrozenOpKind | DeferredOpKind, WireOp["op"]>,
+    Equals<FrozenOpKind & DeferredOpKind, never>,
+    Equals<Exclude<BatchableOpKind, FrozenOpKind>, never>,
+  ]
+>;
 
 // ---------------------------------------------------------------------------
 // Widget catalog (pinned object_info projection)

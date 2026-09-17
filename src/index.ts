@@ -58,7 +58,6 @@ export {
   type CmpEventType,
 } from "./events.js";
 export * from "./collab-trace.js";
-export * from "./remap.js";
 /**
  * ADR-004 follower read-surface. These helpers expose the established wire
  * layout only so the frontend follower can consume host updates. They are

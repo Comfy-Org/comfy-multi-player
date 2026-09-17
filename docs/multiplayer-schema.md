@@ -1307,9 +1307,9 @@ consumer repositories at their current revisions, not by analogy to A3:
   `clear`'s `groups`, and `clear` preserves everything else.
 - **The op producer never constructs a document at all.** `comfy-cli` emits ops as plain JSON; it has
   no Yjs dependency, no `Y.Doc`, no snapshot handling.
-- **The frontend does not consume this package.** `@comfyorg/comfy-multi-player` is absent from its
-  `package.json` on every branch, so there is no follower call site to break, which is what ADR-004
-  already records.
+- **At the time of this amendment, the frontend did not consume this package.** It now consumes the
+  canonical workspace source from `packages/comfy-multi-player`; this historical compatibility
+  argument applied before that migration, not to future package changes.
 - **Two endpoints reach `project()`**, both in the doc-host sidecar: `/project` and `/apply` (whose
   response embeds a projection computed after `applyOps`). `/mint` and `/resync` do not.
 
@@ -2053,17 +2053,17 @@ This adds an internal `__stamps` key, not a root-layout change, so
 ## Amendment A19 — 2026-09-11 — atomic workflow-template insertion
 
 ADR-022 adds the standalone-only `insert_workflow` op. Its payload is one
-authoritative workflow containing top-level `nodes`, `links`, and optional
-`definitions.subgraphs`. The producer allocates top-level ids before dispatch
-with `remapWorkflowIds`; the applier validates and rejects any live or duplicate
-payload collision as `node_id_collision` or `link_id_collision`. Malformed link
-tuples are `malformed_op`.
+authoritative workflow containing required top-level `nodes` and optional
+`links`, `groups`, and `definitions`. The applier deterministically remaps every
+inserted id from the immutable `op_id`, graph scope, id kind, and original id,
+then rewrites internal references. Producers emit raw payloads. Distinct ops
+cannot collide; exact replay derives the same ids. Duplicate ids within one raw
+payload remain collision errors. Malformed link tuples are `malformed_op`.
 
-Definitions use projected canonical content as identity. If an incoming id is
-already present with identical content, the definition write is skipped. If
-the content differs, the incoming definition is written as
-`${id}-${sha256(canonical).slice(0,8)}` and only inserted instance-node `type`
-fields are rewritten to that fork. Definition-interior ids are not remapped.
+Definition ids and every nested definition-interior graph id are remapped in
+scoped namespaces. Definition-instance `type` values are rewritten with them,
+so a consumer definition id is never used as a live id and no live-definition
+conflict path remains.
 
 The whole merge occurs in one Yjs transaction and claims the
 `("insert_workflow", op_id)` stamp target. Exact replay is stopped by the
