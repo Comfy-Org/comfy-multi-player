@@ -33,7 +33,7 @@ export const LEGACY_NODE_INCARNATION = "0";
 // ---------------------------------------------------------------------------
 
 /** The implemented op kinds. `apply` rejects anything else loudly. */
-export const FROZEN_OPS = ["add_node", "connect", "disconnect", "set_widget", "delete_node", "clear"] as const;
+export const FROZEN_OPS = ["add_node", "connect", "disconnect", "set_widget", "delete_node", "clear", "define_subgraph"] as const;
 
 /** Defined by the vocabulary but deferred (§1.6): rejected until un-deferred by amendment. */
 export const DEFERRED_OPS = ["reset_doc"] as const;
@@ -60,7 +60,7 @@ export const DEFERRED_OPS = ["reset_doc"] as const;
  * belongs. `test/batch-policy.test.ts` pins the list, the README table, and
  * the deliberate non-enforcement together.
  */
-export const BATCHABLE_OPS = ["add_node", "connect", "disconnect", "set_widget", "delete_node"] as const;
+export const BATCHABLE_OPS = ["add_node", "connect", "disconnect", "set_widget", "delete_node", "define_subgraph"] as const;
 
 /** Every kind the vocabulary defines — implemented ({@link Op}) plus deferred ({@link DeferredOp}). */
 export type OpKind = WireOp["op"];
@@ -394,6 +394,12 @@ export interface ClearOp extends OpBase {
   removed_nodes: NodeId[];
 }
 
+export interface DefineSubgraphOp extends OpBase {
+  op: "define_subgraph";
+  subgraph_id: string;
+  subgraph_definition: SubgraphDefinition;
+}
+
 /**
  * Replace the entire document with a workflow snapshot.
  *
@@ -427,7 +433,8 @@ export type Op =
   | DisconnectOp
   | SetWidgetOp
   | DeleteNodeOp
-  | ClearOp;
+  | ClearOp
+  | DefineSubgraphOp;
 
 /**
  * A kind the vocabulary declares but this package refuses to apply
@@ -546,6 +553,12 @@ export interface WorkflowJSON {
   groups?: unknown[];
   extra?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+export interface SubgraphDefinition extends Record<string, unknown> {
+  id: string;
+  nodes: unknown[];
+  links: unknown[];
 }
 
 // ---------------------------------------------------------------------------

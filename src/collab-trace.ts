@@ -414,6 +414,9 @@ function assertOpPayload(value: unknown, context: string) {
     assertNodeIdArray(required(payload, "removed_links", context), `${context}.removed_links`);
   } else if (op === "clear") {
     assertNodeIdArray(required(payload, "removed_nodes", context), `${context}.removed_nodes`);
+  } else if (op === "define_subgraph") {
+    asString(required(payload, "subgraph_id", context), `${context}.subgraph_id`);
+    asRecord(required(payload, "subgraph_definition", context), `${context}.subgraph_definition`);
   } else {
     // Exhaustiveness guard (issue #21), matching `dispatch` in `applier.ts`:
     // `op` is narrowed from `FROZEN_OPS`, so with every kind enumerated above
