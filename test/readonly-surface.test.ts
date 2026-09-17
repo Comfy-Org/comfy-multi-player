@@ -255,6 +255,36 @@ describe("read-only surface — no live handle escapes", () => {
     expect(snapshotValue).toEqual(aliased);
     expect(readMeta(doc)["extra"]).not.toBe(doc.getMap("meta").get("extra"));
   });
+
+  it("preserves hostile __proto__ keys as isolated snapshot data", () => {
+    const doc = fixtureDoc();
+    const hostileNode = new Y.Map<unknown>();
+    hostileNode.set("type", "Note");
+    hostileNode.set("pos", JSON.parse('{"__proto__":{"polluted":true},"x":7}'));
+    const hostileWidgets = new Y.Map<unknown>();
+    hostileWidgets.set("__proto__", "widget value");
+    hostileWidgets.set("safe", "retained value");
+    hostileNode.set("widgets", hostileWidgets);
+    nodesMap(doc).set("__proto__", hostileNode);
+    doc.getMap<unknown>(ROOT_LINKS).set("__proto__", [1, 2, 3]);
+
+    const graph = readGraph(doc);
+    const node = graph.nodes["__proto__"]!;
+    const pos = node.pos as Record<string, unknown>;
+    const widgets = node.widgets as Record<string, unknown>;
+
+    for (const record of [graph.nodes, graph.links, pos, widgets]) {
+      expect(Object.getPrototypeOf(record)).toBeNull();
+      expect(Object.hasOwn(record, "__proto__")).toBe(true);
+    }
+    expect(graph.links["__proto__"]).toEqual([1, 2, 3]);
+    expect(pos["__proto__"]).toEqual({ polluted: true });
+    expect(pos["x"]).toBe(7);
+    expect(widgets["__proto__"]).toBe("widget value");
+    expect(widgets["safe"]).toBe("retained value");
+    expect((pos as { polluted?: unknown }).polluted).toBeUndefined();
+    expect((Object.prototype as { polluted?: unknown }).polluted).toBeUndefined();
+  });
 });
 
 describe("read-only surface — a caller cannot mutate the document through it", () => {
@@ -389,11 +419,8 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
    * bump trigger — a name-keyed probe is blind to exactly the document the
    * gate exists to refuse.
    *
-   * The "document is OLDER than the reader" arm is not constructible at
-   * `SCHEMA_VERSION = 1` (there is no v0). It is not re-implemented here: this
-   * gate delegates the comparison to `assertReadableSchema`, where #60's
-   * `test/schema-version-on-read.test.ts` reaches that arm through
-   * `assertSchemaVersionAgainst`.
+   * `SCHEMA_VERSION` is 2, so a v1 document exercises the older-than-reader
+   * arm through the same `assertReadableSchema` comparison used by project().
    */
 
   /** A document that carries real content, with `meta.schema_version` forced to `version`. */
@@ -415,6 +442,7 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
 
   const UNREADABLE: [string, () => Y.Doc][] = [
     ["newer than this package", () => docWithSchemaVersion(3)],
+    ["older than this package", () => docWithSchemaVersion(1)],
     ["not an integer version", () => docWithSchemaVersion("1")],
     ["a zero version", () => docWithSchemaVersion(0)],
     ["absent from a document that has meta", () => {
