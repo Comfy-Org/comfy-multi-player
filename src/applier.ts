@@ -1971,8 +1971,9 @@ function resolveInteriorConnectScope(
   catalog?: WidgetCatalog,
 ): InteriorConnectScope | null {
   if (!op.path || op.path.length === 0) return null;
-  const host = resolveInteriorNode(doc, op.path.map(String), catalog);
-  if (host === null) return null;
+  const resolved = resolveInteriorNode(doc, op.path.map(String), catalog);
+  if (resolved === null) return null;
+  const host = resolved.node;
   const hostType = String(host.get("type") ?? "");
   const definition = resolveDefinition(doc, hostType);
   if (!definition) {
