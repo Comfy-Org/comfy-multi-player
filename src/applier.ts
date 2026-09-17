@@ -88,6 +88,7 @@ import {
   arrayItemRefusal,
   countDefinitionInstances,
   createNodeMap,
+  definitionsMap,
   linksMap,
   mapValueRefusal,
   mdel,
@@ -107,6 +108,8 @@ import {
   MAX_PAYLOAD_DEPTH,
   opBoundsRefusal,
 } from "./limits.js";
+import { mintDefinition } from "./mint.js";
+import { projectDefinition } from "./project.js";
 import { codePointCompare, compareStampKeys, stampKey, stampTargetKey, widgetTargetKey } from "./stamps.js";
 import {
   DEFERRED_OPS,
@@ -118,6 +121,7 @@ import {
   type ApplyResult,
   type ConnectOp,
   type DeleteNodeOp,
+  type DefineSubgraphOp,
   type DisconnectOp,
   type GrowConnectOp,
   type GrowSpec,
@@ -273,11 +277,11 @@ function opIdentity(op: unknown): string {
  * NOT stored — see {@link opDigest}. Exposed to tests as the definition of
  * what the digest is taken over.
  */
-export function canonicalOp(op: Op): string {
+function canonicalJson(value: unknown): string {
   // BigInt classification takes precedence over the generic depth/cost gates.
   // Keep this walk iterative and bounded so even a hostile envelope cannot
   // turn the diagnostic into unbounded work.
-  const bigintStack: Array<{ value: unknown; path: string }> = [{ value: op, path: "$" }];
+  const bigintStack: Array<{ value: unknown; path: string }> = [{ value, path: "$" }];
   const bigintVisited = new Set<object>();
   let bigintVisits = 0;
   while (bigintStack.length > 0 && bigintVisits++ <= MAX_OP_COST) {
@@ -312,7 +316,7 @@ export function canonicalOp(op: Op): string {
   // Amendment A11 extends A8's whole-envelope, pre-idempotency gate with a
   // breadth/size budget. Its iterative depth check keeps A8's
   // `payload_too_deep` vocabulary while avoiding hostile recursion.
-  const bounds = opBoundsRefusal(op);
+  const bounds = opBoundsRefusal(value);
   if (bounds !== null) {
     throw new OpRejectedError(
       bounds.includes("nests deeper") ? "payload_too_deep" : "malformed_op",
@@ -344,7 +348,11 @@ export function canonicalOp(op: Op): string {
     }
     return value;
   };
-  return JSON.stringify(normalize(op, 0, "$"));
+  return JSON.stringify(normalize(value, 0, "$"));
+}
+
+export function canonicalOp(op: Op): string {
+  return canonicalJson(op);
 }
 
 /**
@@ -406,6 +414,12 @@ function validateEnvelope(op: WireOp): void {
   if (!(FROZEN_OPS as readonly string[]).includes(op.op)) {
     throw new OpRejectedError("unknown_op", `unknown op '${op.op}'`);
   }
+  if (op.op !== "define_subgraph") {
+    const ordinary = op as WireOp & Record<string, unknown>;
+    if ("subgraph_definition" in ordinary || "definitions" in ordinary || "subgraph_id" in ordinary) {
+      throw new OpRejectedError("malformed_op", `${op.op}: definition payloads and subgraph_id targets are only valid on define_subgraph`);
+    }
+  }
   if (typeof op.op_id !== "string" || op.op_id.length === 0) {
     throw new OpRejectedError("malformed_op", `${op.op}: missing op_id`);
   }
@@ -459,6 +473,8 @@ function dispatch(doc: Y.Doc, op: Op, catalog?: WidgetCatalog): SuccessfulOutcom
       return applyDeleteNode(doc, op);
     case "clear":
       return applyClear(doc, op);
+    case "define_subgraph":
+      return applyDefineSubgraph(doc, op, catalog);
     default:
       // Exhaustiveness guard (issue #21): with every `Op` member cased above,
       // `op` is `never` here. Add a sixth IMPLEMENTED kind to `Op` and this
@@ -475,6 +491,311 @@ function dispatch(doc: Y.Doc, op: Op, catalog?: WidgetCatalog): SuccessfulOutcom
       // (`validateEnvelope`), pinned by `test/exhaustiveness.test.ts`.
       return assertNever(op, "applier.dispatch");
   }
+}
+
+function applyDefineSubgraph(
+  doc: Y.Doc,
+  op: DefineSubgraphOp,
+  catalog?: WidgetCatalog,
+): SuccessfulOutcome {
+  if (!isUuid(op.subgraph_id) || !isPlainRecord(op.subgraph_definition) || op.subgraph_definition.id !== op.subgraph_id) {
+    throw new OpRejectedError(
+      "malformed_op",
+      "define_subgraph: subgraph_id must be a UUID matching subgraph_definition.id",
+    );
+  }
+  validateSubgraphDefinition(op.subgraph_definition, "subgraph_definition");
+  if (!catalog) {
+    throw new OpRejectedError("catalog_required", "define_subgraph: the pinned catalog is required to encode interior nodes");
+  }
+  const digest = sha256Hex(canonicalJson(op.subgraph_definition));
+  validateDefinitionWidgets(op.subgraph_definition, catalog);
+  const definitions = definitionsMap(doc);
+  const existing = definitions.get(op.subgraph_id);
+  if (existing !== undefined) {
+    const digests = definitionDigests(doc);
+    const existingDigest = digests[op.subgraph_id] ?? sha256Hex(canonicalJson(projectDefinition(existing, catalog)));
+    if (existingDigest === digest) return "no-op";
+    if (digest > existingDigest) {
+      assertDefinitionIdsAvailable(doc, op.subgraph_definition, op.subgraph_id);
+      let replacement: Y.Map<unknown>;
+      try {
+        replacement = mintDefinition(op.subgraph_definition, catalog);
+      } catch (error) {
+        throw new OpRejectedError("malformed_op", `define_subgraph(${op.subgraph_id}): ${error instanceof Error ? error.message : String(error)}`);
+      }
+      const widgetEdits = definitionWidgetEdits(doc, existing);
+      mset(definitions, op.subgraph_id, replacement);
+      restoreDefinitionWidgetEdits(doc, replacement, widgetEdits);
+      setDefinitionDigest(doc, op.subgraph_id, digest);
+      return "applied";
+    }
+    return "no-op";
+  }
+  const existingNested = resolveDefinition(doc, op.subgraph_id);
+  if (existingNested !== null) {
+    throw new OpRejectedError(
+      "definition_conflict",
+      `define_subgraph: definition id '${op.subgraph_id}' is already registered`,
+    );
+  }
+  assertDefinitionIdsAvailable(doc, op.subgraph_definition);
+  let definition: Y.Map<unknown>;
+  try {
+    definition = mintDefinition(op.subgraph_definition, catalog);
+  } catch (error) {
+    throw new OpRejectedError(
+      "malformed_op",
+      `define_subgraph(${op.subgraph_id}): ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  mset(definitions, op.subgraph_id, definition);
+  setDefinitionDigest(doc, op.subgraph_id, digest);
+  return "applied";
+}
+
+function definitionDigests(doc: Y.Doc): Record<string, string> {
+  const value = metaMap(doc).get("__definition_digests");
+  if (!isPlainRecord(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
+function setDefinitionDigest(doc: Y.Doc, id: string, digest: string): void {
+  mset(metaMap(doc), "__definition_digests", { ...definitionDigests(doc), [id]: digest });
+}
+
+type DefinitionWidgetEdit = {
+  targetKey: string;
+  definitionId: string;
+  nodeId: string;
+  widget: string;
+  value: unknown;
+};
+
+function definitionWidgetEdits(
+  doc: Y.Doc,
+  existing: Y.Map<unknown>,
+): DefinitionWidgetEdit[] {
+  const edits: DefinitionWidgetEdit[] = [];
+  for (const targetKey of stampsMap(doc).keys()) {
+    let target: unknown;
+    try {
+      target = JSON.parse(targetKey);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(target) || target[0] !== "widget" || !Array.isArray(target[1])) continue;
+    const path = target[1].map(String);
+    const widget = target[3];
+    if (path.length < 2 || typeof widget !== "string") continue;
+    const resolved = definitionNodeAtPath(doc, existing, path);
+    if (!resolved) continue;
+    const oldWidgets = resolved.node.get("widgets");
+    if (oldWidgets instanceof Y.Map && oldWidgets.has(widget)) {
+      edits.push({
+        targetKey,
+        definitionId: resolved.definitionId,
+        nodeId: path.at(-1)!,
+        widget,
+        value: structuredClone(oldWidgets.get(widget)),
+      });
+    }
+  }
+  return edits;
+}
+
+function definitionNodeAtPath(
+  doc: Y.Doc,
+  root: Y.Map<unknown>,
+  path: string[],
+): { definitionId: string; node: Y.Map<unknown> } | null {
+  let definitionId = path[0]!;
+  let node = definitionNode(root, definitionId, path[1]!);
+  if (!node) {
+    const instance = nodesMap(doc).get(definitionId);
+    if (!(instance instanceof Y.Map) || String(instance.get("type")) !== String(root.get("id"))) return null;
+    definitionId = String(root.get("id"));
+    node = definitionNode(root, definitionId, path[1]!);
+  }
+  if (!node) return null;
+  for (const nodeId of path.slice(2)) {
+    definitionId = String(node.get("type"));
+    node = definitionNode(root, definitionId, nodeId);
+    if (!node) return null;
+  }
+  return { definitionId, node };
+}
+
+function restoreDefinitionWidgetEdits(
+  doc: Y.Doc,
+  replacement: Y.Map<unknown>,
+  edits: DefinitionWidgetEdit[],
+): void {
+  for (const edit of edits) {
+    const newNode = definitionNode(replacement, edit.definitionId, edit.nodeId);
+    const newWidgets = newNode?.get("widgets");
+    if (!(newWidgets instanceof Y.Map)) {
+      mdel(stampsMap(doc), edit.targetKey);
+      continue;
+    }
+    mset(newWidgets, edit.widget, edit.value);
+  }
+}
+
+function definitionNode(
+  root: Y.Map<unknown>,
+  definitionId: string,
+  nodeId: string,
+): Y.Map<unknown> | null {
+  if (String(root.get("id")) === definitionId) {
+    const nodes = root.get("nodes");
+    const node = nodes instanceof Y.Map ? nodes.get(nodeId) : undefined;
+    return node instanceof Y.Map ? node : null;
+  }
+  const container = root.get("definitions");
+  const nested = container instanceof Y.Map ? container.get("subgraphs") : undefined;
+  if (!(nested instanceof Y.Map)) return null;
+  for (const child of nested.values()) {
+    if (child instanceof Y.Map) {
+      const node = definitionNode(child, definitionId, nodeId);
+      if (node) return node;
+    }
+  }
+  return null;
+}
+
+function assertDefinitionIdsAvailable(
+  doc: Y.Doc,
+  definition: Record<string, unknown>,
+  excludedRootId?: string,
+): void {
+  const submitted = new Set<string>();
+  const visit = (candidate: Record<string, unknown>, path: string): void => {
+    const id = String(candidate.id);
+    if (submitted.has(id)) throw new OpRejectedError("malformed_op", `define_subgraph: duplicate definition id '${id}' at ${path}`);
+    submitted.add(id);
+    const nested = candidate.definitions;
+    if (isPlainRecord(nested) && Array.isArray(nested.subgraphs)) nested.subgraphs.forEach((child, index) => {
+      if (isPlainRecord(child)) visit(child, `${path}.definitions.subgraphs[${index}]`);
+    });
+  };
+  visit(definition, "subgraph_definition");
+  for (const id of submitted) {
+    if (definitionIdExistsOutsideRoot(doc, id, excludedRootId)) {
+      throw new OpRejectedError("definition_conflict", `define_subgraph: definition id '${id}' is already registered`);
+    }
+  }
+}
+
+function definitionIdExistsOutsideRoot(
+  doc: Y.Doc,
+  id: string,
+  excludedRootId?: string,
+): boolean {
+  const containsId = (definition: Y.Map<unknown>): boolean => {
+    if (String(definition.get("id")) === id) return true;
+    const container = definition.get("definitions");
+    const nested = container instanceof Y.Map ? container.get("subgraphs") : undefined;
+    if (!(nested instanceof Y.Map)) return false;
+    for (const child of nested.values()) {
+      if (child instanceof Y.Map && containsId(child)) return true;
+    }
+    return false;
+  };
+
+  for (const [rootId, definition] of definitionsMap(doc)) {
+    if (rootId !== excludedRootId && definition instanceof Y.Map && containsId(definition)) return true;
+  }
+  return false;
+}
+
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function validateSubgraphDefinition(definition: Record<string, unknown>, path: string): void {
+  if (!isUuid(definition.id) || !Array.isArray(definition.nodes) || !Array.isArray(definition.links)) {
+    throw new OpRejectedError("malformed_op", `define_subgraph: ${path} needs a UUID id plus nodes and links arrays`);
+  }
+  for (const key of ["node_order", "link_order", "__definition_digest"]) {
+    if (Object.hasOwn(definition, key)) {
+      throw new OpRejectedError("malformed_op", `define_subgraph: ${path} contains reserved key '${key}'`);
+    }
+  }
+  assertUniqueNormalizedIds(definition.nodes, `${path}.nodes`, true);
+  assertUniqueNormalizedIds(definition.links, `${path}.links`);
+  validateSerializableValue(definition, path);
+
+  const nested = definition.definitions;
+  if (nested === undefined) return;
+  if (!isPlainRecord(nested) || !Array.isArray(nested.subgraphs)) {
+    throw new OpRejectedError("malformed_op", `define_subgraph: ${path}.definitions.subgraphs must be an array`);
+  }
+  const nestedIds = new Set<string>();
+  nested.subgraphs.forEach((candidate, index) => {
+    const nestedPath = `${path}.definitions.subgraphs[${index}]`;
+    if (!isPlainRecord(candidate) || !isUuid(candidate.id)) {
+      throw new OpRejectedError("malformed_op", `define_subgraph: ${nestedPath} must be a definition with a UUID id`);
+    }
+    if (nestedIds.has(candidate.id)) {
+      throw new OpRejectedError("malformed_op", `define_subgraph: duplicate definition id '${candidate.id}' at ${nestedPath}`);
+    }
+    nestedIds.add(candidate.id);
+    validateSubgraphDefinition(candidate, nestedPath);
+  });
+}
+
+function assertUniqueNormalizedIds(values: unknown[], path: string, required = false): void {
+  const ids = new Set<string>();
+  values.forEach((value, index) => {
+    const id = Array.isArray(value) ? value[0] : isPlainRecord(value) ? value.id : undefined;
+    if (id === undefined || id === null) {
+      if (required) throw new OpRejectedError("malformed_op", `define_subgraph: missing id at ${path}[${index}]`);
+      return;
+    }
+    const normalized = String(id);
+    if (ids.has(normalized)) {
+      throw new OpRejectedError("malformed_op", `define_subgraph: duplicate normalized id '${normalized}' at ${path}[${index}]`);
+    }
+    ids.add(normalized);
+  });
+}
+
+function validateDefinitionWidgets(definition: Record<string, unknown>, catalog: WidgetCatalog): void {
+  (definition.nodes as unknown[]).forEach((candidate) => {
+    if (!isPlainRecord(candidate)) {
+      throw new OpRejectedError("malformed_op", "define_subgraph: every interior node must be an object");
+    }
+    rejectUnprojectableWidgets(candidate.type, candidate.widgets_values, catalogEntry(catalog, candidate.type));
+  });
+  const nested = definition.definitions;
+  if (isPlainRecord(nested) && Array.isArray(nested.subgraphs)) {
+    nested.subgraphs.forEach((child) => {
+      if (isPlainRecord(child)) validateDefinitionWidgets(child, catalog);
+    });
+  }
+}
+
+function validateSerializableValue(value: unknown, path: string): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number" && Number.isFinite(value)) return;
+  if (Array.isArray(value)) {
+    value.forEach((child, index) => validateSerializableValue(child, `${path}[${index}]`));
+    return;
+  }
+  if (isPlainRecord(value)) {
+    Object.entries(value).forEach(([key, child]) => validateSerializableValue(child, `${path}.${key}`));
+    return;
+  }
+  throw new OpRejectedError("malformed_op", `define_subgraph: ${path} is not JSON-serializable`);
 }
 
 // ---------------------------------------------------------------------------
@@ -899,8 +1220,9 @@ function applyPromotedHostWrite(
   key: StampKey,
   catalog?: WidgetCatalog,
 ): SuccessfulOutcome {
-  const target = resolveInteriorNode(doc, promoted.instancePath, catalog);
-  if (target === null) return "no-op"; // head instance concurrently deleted → no-op (delete wins)
+  const resolution = resolveInteriorNode(doc, promoted.instancePath, catalog);
+  if (resolution === null) return "no-op"; // head instance concurrently deleted → no-op (delete wins)
+  const target = resolution.node;
   const storage = hostWriteStorage(target, catalog);
   switch (storage) {
     case "named":
@@ -951,12 +1273,23 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
     throw new OpRejectedError("malformed_op", "set_widget: a promoted host write carries no interior path");
   }
 
+  // Interior paths have several legal spellings (definition id and instance
+  // id), but all of them can resolve to the same node. Resolve first
+  // so that node owns one register rather than letting each raw alias claim a
+  // separate stamp key. `writeTarget` remains the public op-only identity.
+  const interiorResolution = interior === null
+    ? null
+    : resolveInteriorNode(doc, interior.path.map(String), catalog);
+  if (interior !== null && interiorResolution === null) return "no-op";
+
   // LWW gate next (comfy-cli `_apply_set_widget`): a lower-or-equal stamp is
   // dropped — a protocol-level apply that still consumes its op_id. It is no
   // longer literally FIRST: the op-only checks above it must precede it so
   // their verdict cannot depend on which stamp is in the document (A6).
   const stamps = stampsMap(doc);
-  const targetKey = stampTargetKey(op);
+  const targetKey = interiorResolution === null
+    ? stampTargetKey(op)
+    : JSON.stringify(["widget", interiorResolution.canonicalPath, op.node_incarnation ?? LEGACY_NODE_INCARNATION, interior!.inner_widget]);
   const prior = stamps.get(targetKey) as StampKey | undefined;
   const key = stampKey(op);
   if (prior != null && compareStampKeys(key, prior) <= 0) return "lww-dropped";
@@ -966,8 +1299,7 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
   }
 
   if (interior !== null) {
-    const target = resolveInteriorNode(doc, interior.path.map(String), catalog);
-    if (target === null) return "no-op"; // head instance concurrently deleted → no-op (delete wins)
+    const target = interiorResolution!.node;
     if (nodeIncarnation(target) !== (op.node_incarnation ?? LEGACY_NODE_INCARNATION)) return "no-op";
     const nodeType = String(target.get("type") ?? "");
     const widget = interior.inner_widget;
@@ -1032,11 +1364,53 @@ function projectedWidgetsLength(node: Y.Map<unknown>, order: readonly string[]):
  * not forked: schema §5.3 pins that a conforming applier must reject interior
  * writes to shared definitions until forking is specced and fixtured.
  */
-function resolveInteriorNode(doc: Y.Doc, path: string[], catalog?: WidgetCatalog): Y.Map<unknown> | null {
+interface InteriorResolution {
+  node: Y.Map<unknown>;
+  canonicalPath: string[];
+}
+
+function resolveInteriorNode(doc: Y.Doc, path: string[], catalog?: WidgetCatalog): InteriorResolution | null {
   const head = nodesMap(doc).get(path[0]!);
-  if (!head) return null;
+  if (!head) {
+    const definition = resolveDefinition(doc, path[0]!);
+    if (!definition || String(definition.get("id")) !== path[0]) return null;
+    const definitionId = String(definition.get("id"));
+    const instances = countDefinitionInstances(doc, definitionId, catalog);
+    if (instances > 1) {
+      throw new OpRejectedError(
+        "shared_definition_unforked",
+        `definition ${definitionId} is instantiated ${instances} times; interior writes to shared definitions are rejected until forking is specced (schema §5.3)`,
+      );
+    }
+    const innerNodes = definition.get("nodes");
+    const inner = innerNodes instanceof Y.Map ? innerNodes.get(path[1]!) : undefined;
+    if (!(inner instanceof Y.Map)) {
+      throw new OpRejectedError(
+        "interior_node_not_found",
+        `interior node ${path[1]} not found in subgraph ${path[0]}`,
+      );
+    }
+    const canonicalPath = [definitionId, path[1]!];
+    if (path.length === 2) return { node: inner, canonicalPath };
+    return resolveInteriorDescendants(doc, inner, path.slice(2), canonicalPath, catalog);
+  }
+  const definition = resolveDefinition(doc, String(head.get("type") ?? ""));
+  const canonicalPath = definition === null
+    ? [path[0]!]
+    : [String(definition.get("id") ?? head.get("type"))];
+  if (path.length === 1) return { node: head, canonicalPath };
+  return resolveInteriorDescendants(doc, head, path.slice(1), canonicalPath, catalog);
+}
+
+function resolveInteriorDescendants(
+  doc: Y.Doc,
+  head: Y.Map<unknown>,
+  path: string[],
+  canonicalPath: string[],
+  catalog?: WidgetCatalog,
+): InteriorResolution {
   let cur: Y.Map<unknown> = head;
-  for (const seg of path.slice(1)) {
+  for (const seg of path) {
     const curType = String(cur.get("type") ?? "");
     const def = resolveDefinition(doc, curType);
     if (!def) {
@@ -1062,8 +1436,12 @@ function resolveInteriorNode(doc: Y.Doc, path: string[], catalog?: WidgetCatalog
       );
     }
     cur = inner;
+    // Identity is the final owning definition and node, not the route used to
+    // reach it. This aliases [outerDef, nestedInstance, leaf] with
+    // [innerDef, leaf] while keeping equal leaf IDs in other definitions apart.
+    canonicalPath.splice(0, canonicalPath.length, defId, seg);
   }
-  return cur;
+  return { node: cur, canonicalPath };
 }
 
 // ---------------------------------------------------------------------------

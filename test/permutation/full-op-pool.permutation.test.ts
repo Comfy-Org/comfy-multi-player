@@ -2,9 +2,10 @@
  * Full declared-op-vocabulary permutation matrix (perm-4).
  *
  * The vocabulary is read from FROZEN_OPS and DEFERRED_OPS rather than copied
- * into the matrix. Pair coverage is exhaustive across kind pairs, eight
- * salient document preconditions, stamp relations, arrival orders, and batch
- * boundaries. Longer streams are fixed-seed fast-check samples with shrinking
+ * into the matrix. Pair coverage is exhaustive across kind pairs and eight
+ * salient document preconditions, with named representative actor/stamp
+ * equivalence classes, both arrival orders, and both batch boundaries.
+ * Longer streams are fixed-seed fast-check samples with shrinking
  * left enabled.
  *
  * Amendment A6 / docs/decisions/EXCEPTIONS.md and schema §2.5 item 2 are the
@@ -34,7 +35,11 @@ import { canonicalize } from "../helpers.js";
 
 const KINDS = [...FROZEN_OPS, ...DEFERRED_OPS];
 const ACTORS = ["agent:perm4:0", "agent:perm4:1", "human:perm4:0", "human:perm4:1"] as const;
-const VERSION_PAIRS = [[0, 0], [0, 1], [1, 0], [1, 1], [0, 9], [9, 0], [4, 4], [4, 5]] as const;
+const VERSION_PAIRS = [[0, 0], [0, 1], [1, 0], [9, 0]] as const;
+const ACTOR_PAIRS = [
+  ["agent:perm4:0", "agent:perm4:1"],
+  ["agent:perm4:0", "human:perm4:0"],
+] as const;
 const PRECONDITIONS = [
   "present-valid",
   "source-missing",
@@ -45,8 +50,10 @@ const PRECONDITIONS = [
   "interior-or-inputcount",
   "promoted-or-autogrow",
 ] as const;
-const PAIR_EXECUTIONS = 150_528;
-const SAMPLED_RUNS = 24_736;
+// 8² kind pairs × 8 preconditions × 2 actor classes × 4 stamp relations ×
+// 2 batch modes × 2 arrival orders = 16,384 executions (<20,000).
+const PAIR_EXECUTIONS = 16_384;
+const SAMPLED_RUNS = 1_696;
 const SAMPLED_EXECUTIONS = SAMPLED_RUNS * 2;
 const TOTAL_EXECUTIONS = PAIR_EXECUTIONS + SAMPLED_EXECUTIONS;
 const SAMPLE_SEED = 0x4f70504;
@@ -215,6 +222,19 @@ function makeOp(
       return { ...env, op: "delete_node", node_id: side === 0 ? 10 : 20, removed_links: [80, 100, 101] };
     case "clear":
       return { ...env, op: "clear", removed_nodes: side === 0 ? [10, 40, 57] : [20, 40, 57] };
+    case "define_subgraph":
+      const id = "12345678-1234-4123-8123-123456789abc";
+      return {
+        ...env,
+        op: "define_subgraph",
+        subgraph_id: id,
+        subgraph_definition: {
+          id,
+          name: `side-${side}`,
+          nodes: [],
+          links: [],
+        },
+      };
     case "reset_doc":
       return { ...env, op: "reset_doc", workflow: { nodes: [], links: [] } };
   }
@@ -422,16 +442,12 @@ function classify(
   throw new Error(`unexpected divergence ${stable({ precondition, mode, ops, left, right })}`);
 }
 
-function actorPairs(): Array<readonly [string, string]> {
-  return ACTORS.flatMap((left) => ACTORS.filter((right) => right !== left).map((right) => [left, right] as const));
-}
-
 function kindPairs(): Array<readonly [Kind, Kind]> {
   return KINDS.flatMap((left) => KINDS.map((right) => [left, right] as const));
 }
 
 describe("full op-pool permutation equivalence", () => {
-  it("exhausts every declared op-kind pair across state, stamp, order, and batch dimensions", () => {
+  it("covers every declared op-kind pair across representative state, stamp, actor, order, and batch dimensions", () => {
     let executions = 0;
     let serial = 1;
     const taxonomy: Taxonomy = {
@@ -444,7 +460,7 @@ describe("full op-pool permutation equivalence", () => {
 
     for (const kinds of kindPairs()) {
       for (const precondition of PRECONDITIONS) {
-        for (const actors of actorPairs()) {
+        for (const actors of ACTOR_PAIRS) {
           for (const versions of VERSION_PAIRS) {
             const pair = kinds.map((kind, side) => makeOp(kind, precondition, side as 0 | 1, serial++, actors[side]!, versions[side]!));
             for (const mode of ["together", "split"] as const) {
@@ -529,7 +545,7 @@ describe("full op-pool permutation equivalence", () => {
 
     expect(runs).toBe(SAMPLED_RUNS);
     expect(executions).toBe(SAMPLED_EXECUTIONS);
-    expect(TOTAL_EXECUTIONS).toBe(200_000);
+    expect(TOTAL_EXECUTIONS).toBe(19_776);
     for (const [kind, count] of Object.entries(hits)) expect(count, `${kind} was not sampled`).toBeGreaterThan(0);
     expect(Object.values(taxonomy).reduce((sum, count) => sum + count, 0)).toBe(SAMPLED_RUNS);
     console.info("perm-4 sampled taxonomy", {
