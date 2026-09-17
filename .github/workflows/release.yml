@@ -61,7 +61,7 @@ jobs:
       - name: Import-graph gate
         run: npm run check:imports
 
-      - name: Citation-pin gate
+      - name: Citation-pin gate (FC-10)
         run: npm run check:pins
 
       - name: Tests
