@@ -410,17 +410,35 @@ function validateEnvelope(op: WireOp): void {
     throw new OpRejectedError("malformed_op", `${op.op}: missing op_id`);
   }
   if (
+    op.base_version !== undefined &&
+    (typeof op.base_version !== "number" ||
+      !Number.isSafeInteger(op.base_version) ||
+      op.base_version < 0)
+  ) {
+    throw new OpRejectedError(
+      "malformed_op",
+      `${op.op}: base_version must be a non-negative safe integer`,
+    );
+  }
+  if (op.actor !== undefined && typeof op.actor !== "string") {
+    throw new OpRejectedError(
+      "malformed_op",
+      `${op.op}: actor must be a string`,
+    );
+  }
+  if (
     op.stamp !== undefined &&
     (!Array.isArray(op.stamp) ||
       op.stamp.length !== 2 ||
       typeof op.stamp[0] !== "number" ||
-      !Number.isFinite(op.stamp[0]) ||
+      !Number.isSafeInteger(op.stamp[0]) ||
+      op.stamp[0] < 0 ||
       typeof op.stamp[1] !== "string" ||
       op.stamp[1].length === 0)
   ) {
     throw new OpRejectedError(
       "malformed_op",
-      `${op.op}: stamp must be [finite_number, non_empty_string]`,
+      `${op.op}: stamp must be [non_negative_safe_integer, non_empty_string]`,
     );
   }
 }
