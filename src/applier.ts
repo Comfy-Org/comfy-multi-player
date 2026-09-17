@@ -277,11 +277,11 @@ function opIdentity(op: unknown): string {
  * NOT stored — see {@link opDigest}. Exposed to tests as the definition of
  * what the digest is taken over.
  */
-export function canonicalOp(op: Op): string {
+function canonicalJson(value: unknown): string {
   // BigInt classification takes precedence over the generic depth/cost gates.
   // Keep this walk iterative and bounded so even a hostile envelope cannot
   // turn the diagnostic into unbounded work.
-  const bigintStack: Array<{ value: unknown; path: string }> = [{ value: op, path: "$" }];
+  const bigintStack: Array<{ value: unknown; path: string }> = [{ value, path: "$" }];
   const bigintVisited = new Set<object>();
   let bigintVisits = 0;
   while (bigintStack.length > 0 && bigintVisits++ <= MAX_OP_COST) {
@@ -316,7 +316,7 @@ export function canonicalOp(op: Op): string {
   // Amendment A11 extends A8's whole-envelope, pre-idempotency gate with a
   // breadth/size budget. Its iterative depth check keeps A8's
   // `payload_too_deep` vocabulary while avoiding hostile recursion.
-  const bounds = opBoundsRefusal(op);
+  const bounds = opBoundsRefusal(value);
   if (bounds !== null) {
     throw new OpRejectedError(
       bounds.includes("nests deeper") ? "payload_too_deep" : "malformed_op",
@@ -348,7 +348,11 @@ export function canonicalOp(op: Op): string {
     }
     return value;
   };
-  return JSON.stringify(normalize(op, 0, "$"));
+  return JSON.stringify(normalize(value, 0, "$"));
+}
+
+export function canonicalOp(op: Op): string {
+  return canonicalJson(op);
 }
 
 /**
@@ -504,13 +508,13 @@ function applyDefineSubgraph(
   if (!catalog) {
     throw new OpRejectedError("catalog_required", "define_subgraph: the pinned catalog is required to encode interior nodes");
   }
-  const digest = sha256Hex(canonicalOp(op.subgraph_definition as unknown as Op));
+  const digest = sha256Hex(canonicalJson(op.subgraph_definition));
   validateDefinitionWidgets(op.subgraph_definition, catalog);
   const definitions = definitionsMap(doc);
   const existing = definitions.get(op.subgraph_id);
   if (existing !== undefined) {
     const digests = definitionDigests(doc);
-    const existingDigest = digests[op.subgraph_id] ?? sha256Hex(canonicalOp(projectDefinition(existing, catalog) as unknown as Op));
+    const existingDigest = digests[op.subgraph_id] ?? sha256Hex(canonicalJson(projectDefinition(existing, catalog)));
     if (existingDigest === digest) return "no-op";
     if (digest > existingDigest) {
       assertDefinitionIdsAvailable(doc, op.subgraph_definition, op.subgraph_id);
@@ -586,7 +590,7 @@ function definitionWidgetEdits(
     const path = target[1].map(String);
     const widget = target[3];
     if (path.length < 2 || typeof widget !== "string") continue;
-    const resolved = definitionNodeAtPath(existing, path);
+    const resolved = definitionNodeAtPath(doc, existing, path);
     if (!resolved) continue;
     const oldWidgets = resolved.node.get("widgets");
     if (oldWidgets instanceof Y.Map && oldWidgets.has(widget)) {
@@ -603,10 +607,16 @@ function definitionWidgetEdits(
 }
 
 function definitionNodeAtPath(
+  doc: Y.Doc,
   root: Y.Map<unknown>,
   path: string[],
 ): { definitionId: string; node: Y.Map<unknown> } | null {
   let definitionId = path[0]!;
+  if (String(root.get("id")) !== definitionId) {
+    const instance = nodesMap(doc).get(definitionId);
+    if (!(instance instanceof Y.Map) || String(instance.get("type")) !== String(root.get("id"))) return null;
+    definitionId = String(root.get("id"));
+  }
   let node = definitionNode(root, definitionId, path[1]!);
   if (!node) return null;
   for (const nodeId of path.slice(2)) {

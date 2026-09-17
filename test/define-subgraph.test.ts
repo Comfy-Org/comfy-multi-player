@@ -1,4 +1,5 @@
 import * as Y from "yjs"
+import { createHash } from "node:crypto"
 import { describe, expect, it } from "vitest"
 
 import {
@@ -11,9 +12,7 @@ import {
   type WidgetCatalog,
   type WorkflowJSON,
 } from "../src/index.js"
-import { canonicalOp } from "../src/applier.js"
-import { sha256Hex } from "../src/digest.js"
-import { definitionsMap } from "../src/doc.js"
+import { definitionsMap, metaMap } from "../src/doc.js"
 
 const catalog: WidgetCatalog = {
   types: {
@@ -49,18 +48,18 @@ const empty = () => mint({ nodes: [], links: [] } as unknown as WorkflowJSON, ca
 const rejectionCode = (doc: Y.Doc, op: Op) =>
   applyOps(doc, [op], catalog).outcomes.find((outcome) => outcome.outcome === "rejected")?.reason.code
 
-const winningReplacement = (
-  incumbent: Record<string, unknown>,
-  replacement: Record<string, unknown>,
-) => {
-  const incumbentDigest = sha256Hex(canonicalOp(incumbent as unknown as Op))
+const winningReplacement = (incumbent: SubgraphDefinition, replacement: SubgraphDefinition) => {
+  const canonical = (value: unknown): string => JSON.stringify(value, (_key, child: unknown) =>
+    child && typeof child === "object" && !Array.isArray(child)
+      ? Object.fromEntries(Object.entries(child).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+      : child)
+  const digest = (value: unknown) => createHash("sha256").update(canonical(value)).digest("hex")
+  const incumbentDigest = digest(incumbent)
   for (let nonce = 0; nonce < 1000; nonce++) {
-    const candidate = { ...replacement, name: `replacement-${nonce}` }
-    if (sha256Hex(canonicalOp(candidate as unknown as Op)) > incumbentDigest) {
-      return candidate as unknown as SubgraphDefinition
-    }
+    const candidate: SubgraphDefinition = { ...replacement, name: `replacement-${nonce}` }
+    if (digest(candidate) > incumbentDigest) return candidate
   }
-  throw new Error("unable to construct a winning replacement")
+  throw new Error("independent test oracle could not construct a winning replacement")
 }
 
 describe("define_subgraph schema", () => {
@@ -83,6 +82,23 @@ describe("define_subgraph schema", () => {
 })
 
 describe("define_subgraph application", () => {
+  it("matches the independently derived fixed definition digest and winner vector", () => {
+    const seed = Y.encodeStateAsUpdate(empty())
+    const winner = define(subgraphId, 1)
+    const loser = define(subgraphId, 2)
+    // Derived with Python 3 json.dumps(sort_keys=True,separators=(',',':'))
+    // and hashlib.sha256, not the production canonicalizer or digest helper.
+    // value=2 hashes to 1872feea7ddb573ff68e47b7be0c5b369863cfa2262f6d23d18ae15ecadb9e62.
+    for (const ops of [[winner, loser], [loser, winner]]) {
+      const doc = new Y.Doc()
+      Y.applyUpdate(doc, seed)
+      applyOps(doc, ops, catalog)
+      expect((project(doc, catalog).definitions as { subgraphs: unknown[] }).subgraphs).toEqual([definition()])
+      expect((metaMap(doc).get("__definition_digests") as Record<string, string>)[subgraphId]).toBe(
+        "3a0b0a3e10f67853f62d5b56ed2d505449cccd161cca63bfcbd3187d32523eb3",
+      )
+    }
+  })
   it("projects a newly defined subgraph", () => {
     const doc = empty()
     expect(applyOps(doc, [define()], catalog).outcomes[0]?.outcome).toBe("applied")
@@ -198,6 +214,25 @@ describe("define_subgraph application", () => {
     expect(projections[0]).toEqual(projections[1])
     const projected = (projections[0]!.definitions as { subgraphs: Array<{ definitions: { subgraphs: Array<{ nodes: Array<{ widgets_values: unknown[] }> }> } }> }).subgraphs[0]!
     expect(projected.definitions.subgraphs[0]!.nodes[0]!.widgets_values).toEqual([80])
+  })
+
+  it("restores an instance-ID-addressed widget edit after a digest-winning replacement", () => {
+    const incumbent = definition(subgraphId, 1)
+    const replacement = winningReplacement(incumbent, definition(subgraphId, 2))
+    const doc = empty()
+    applyOps(doc, [{ ...define(), subgraph_definition: incumbent }], catalog)
+    applyOps(doc, [{
+      op: "add_node", ...envelope(), node_id: 1, class_type: subgraphId, pos: [0, 0],
+      node: { id: 1, type: subgraphId, inputs: [], outputs: [] },
+    }], catalog)
+    applyOps(doc, [{
+      op: "set_widget", ...envelope(), node_id: 10, path: ["1", "10"],
+      inner_widget: "value", widget: "value", value: 9,
+    }], catalog)
+
+    expect(applyOps(doc, [{ ...define(), subgraph_definition: replacement }], catalog).outcomes[0]?.outcome).toBe("applied")
+    const projected = (project(doc, catalog).definitions as { subgraphs: Array<{ nodes: Array<{ widgets_values: unknown[] }> }> }).subgraphs[0]!
+    expect(projected.nodes[0]!.widgets_values).toEqual([9])
   })
 
   it("rejects an edit to a node that exists only in the replaced definition", () => {
@@ -412,6 +447,30 @@ describe("define_subgraph application", () => {
       { op: "add_node", ...envelope(), node_id: 2, class_type: subgraphId, pos: [0, 0], node: { id: 2, type: subgraphId, inputs: [], outputs: [] } },
     ], catalog)
     expect(rejectionCode(doc, { op: "set_widget", ...envelope(), node_id: 10, path: [subgraphId, "10"], inner_widget: "value", widget: "value", value: 9 })).toBe("shared_definition_unforked")
+  })
+
+  it("rejects an edit when instances occur recursively three definition levels down", () => {
+    const middleId = "abcdefab-cdef-4abc-8def-abcdefabcdef"
+    const leafId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    const leaf = definition(leafId, 3)
+    const middle = {
+      ...definition(middleId),
+      nodes: [
+        { id: 21, type: leafId, inputs: [], outputs: [], widgets_values: [] },
+        { id: 22, type: leafId, inputs: [], outputs: [], widgets_values: [] },
+      ],
+      definitions: { subgraphs: [leaf] },
+    }
+    const outer = { ...definition(), definitions: { subgraphs: [middle] } }
+    const doc = empty()
+    applyOps(doc, [{ ...define(), subgraph_definition: outer }], catalog)
+    const before = Y.encodeStateAsUpdate(doc)
+
+    expect(rejectionCode(doc, {
+      op: "set_widget", ...envelope(), node_id: 10, path: [leafId, "10"],
+      inner_widget: "value", widget: "value", value: 9,
+    })).toBe("shared_definition_unforked")
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before)
   })
 
   it("rejects an unprojectable named widget in an interior node atomically", () => {
