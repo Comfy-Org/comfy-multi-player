@@ -28,6 +28,7 @@ import type {
   InsertWorkflowOp,
   InteriorSetWidgetOp,
   Op,
+  OpKind,
   ResetDocOp,
   SetWidgetOp,
   TopLevelSetWidgetOp,
@@ -203,6 +204,13 @@ const insertWorkflow: InsertWorkflowOp = {
   workflow: { nodes: [], links: [], definitions: { subgraphs: [] } },
 };
 const insertWorkflowAsOp: Op = insertWorkflow;
+
+// The public vocabulary projection accepts every declared kind and no value
+// outside the wire union. This is an external-consumer check through index.ts.
+const okImplementedKind: OpKind = "add_node";
+const okDeferredKind: OpKind = "reset_doc";
+// @ts-expect-error #21: undeclared operation kinds are not public OpKind values.
+const unknownKind: OpKind = "unknown_op";
 
 // ---------------------------------------------------------------------------
 // Positive controls — these MUST compile, or the gate above is vacuous
