@@ -88,8 +88,9 @@ describe("invariant register integrity (KA-*/FC-* ids resolve)", () => {
     expect(defined.has("FC-10")).toBe(true);
   });
 
-  it("scans a non-trivial number of citing files", () => {
+  it("scans a non-trivial number of citing files including the register", () => {
     expect(cited.size).toBeGreaterThanOrEqual(20);
+    expect(cited.get(REGISTER)).toContain("KA-3");
   });
 
   it("resolves every cited id to a heading in docs/INVARIANTS.md", () => {
