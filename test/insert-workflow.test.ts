@@ -314,6 +314,47 @@ describe("insert_workflow: happy path", () => {
     expect(graph.nodes[1]!.inputs![0]!.link).toBeNull();
   });
 
+  it.each(["root", "nested"] as const)("preserves null input sentinels beside a literal 'null' link at %s", (scope) => {
+    const graph = {
+      nodes: [
+        { id: 1, type: "Src" },
+        {
+          id: 2,
+          type: "Sink",
+          title: `${scope} sentinel sink`,
+          inputs: [{ name: "unconnected", link: null }, { name: "connected", link: "null" }],
+        },
+      ],
+      links: [["null", 1, 0, 2, 1, "literal-null-id"]],
+    };
+    const workflow = scope === "root"
+      ? graph
+      : { nodes: [], links: [], definitions: { subgraphs: [{ id: "sentinel-def", ...graph }] } };
+    const source = structuredClone(workflow);
+    const doc = mint({ nodes: [], links: [] }, catalog);
+    const op: Op = {
+      op: "insert_workflow", workflow, op_id: `sentinel-${scope}`,
+      actor: "sentinel", base_version: 1, stamp: [1, "sentinel"],
+    };
+
+    expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+    const projected = project(doc, catalog);
+    const projectedGraph = (scope === "root"
+      ? projected
+      : projected.definitions!.subgraphs![0]!) as {
+        nodes: Array<{ title?: string; inputs?: Array<{ name: string; link: unknown }> }>;
+        links: unknown[][];
+      };
+    const sink = projectedGraph.nodes!.find((node) => node.title === `${scope} sentinel sink`)!;
+    const remappedLinkId = (projectedGraph.links![0] as unknown[])[0];
+
+    expect(sink.inputs).toEqual([
+      { name: "unconnected", link: null },
+      { name: "connected", link: remappedLinkId },
+    ]);
+    expect(workflow).toEqual(source);
+  });
+
   it("drops a depth-3 array link with a missing endpoint", () => {
     const deepest = {
       id: "deepest",
@@ -608,7 +649,7 @@ describe("insert_workflow: happy path", () => {
     const outerNode = (projectedOuter["nodes"] as Array<{ id: string }>)[0]!;
     const innerNode = (projectedNested["nodes"] as Array<{ id: string }>)[0]!;
     const host = projected.nodes.find((node) => node.type === projectedOuter["id"])!;
-    const edit = { ...env(), op: "set_widget", node_id: host.id, path: [host.id, outerNode.id, innerNode.id], inner_widget: "text", value: "after" } as unknown as Op;
+    const edit: Op = { ...env(), op: "set_widget", node_id: host.id, path: [host.id, outerNode.id, innerNode.id], inner_widget: "text", widget: "text", value: "after" };
 
     expect(applyOps(doc, [edit], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
     const defs = (project(doc, catalog) as { definitions: { subgraphs: Array<Record<string, unknown>> } }).definitions.subgraphs;

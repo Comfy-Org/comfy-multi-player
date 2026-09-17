@@ -722,8 +722,17 @@ describe("define_subgraph application", () => {
       ...definition(), definitions: { subgraphs: [definition(nestedId, 4)] },
     } }], catalog)
 
-    expect(rejectionCode(doc, define(nestedId, 9))).toBe("definition_conflict")
-    expect(rejectionCode(doc, define(nestedId, 4))).toBe("definition_conflict")
+    const differing = define(nestedId, 9)
+    const beforeDiffering = Y.encodeStateAsUpdate(doc)
+    expect(rejectionCode(doc, differing)).toBe("definition_conflict")
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(beforeDiffering)
+    expect(appliedMap(doc).has(differing.op_id)).toBe(false)
+
+    const identical = define(nestedId, 4)
+    const beforeIdentical = Y.encodeStateAsUpdate(doc)
+    expect(rejectionCode(doc, identical)).toBe("definition_conflict")
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(beforeIdentical)
+    expect(appliedMap(doc).has(identical.op_id)).toBe(false)
   })
 
   it("rejects a nested definition whose id collides with an existing root definition", () => {
@@ -734,7 +743,11 @@ describe("define_subgraph application", () => {
       ...definition(newRootId), definitions: { subgraphs: [definition(subgraphId, 9)] },
     }
 
-    expect(rejectionCode(doc, { ...define(newRootId), subgraph_definition: colliding })).toBe("definition_conflict")
+    const rejected = { ...define(newRootId), subgraph_definition: colliding }
+    const before = Y.encodeStateAsUpdate(doc)
+    expect(rejectionCode(doc, rejected)).toBe("definition_conflict")
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before)
+    expect(appliedMap(doc).has(rejected.op_id)).toBe(false)
   })
 
   it("rejects a winning replacement whose nested id collides with another root and preserves the incumbent", () => {
@@ -746,7 +759,11 @@ describe("define_subgraph application", () => {
     const doc = empty()
     applyOps(doc, [define(), define(otherRootId, 4)], catalog)
 
-    expect(rejectionCode(doc, { ...define(), subgraph_definition: replacement })).toBe("definition_conflict")
+    const rejected = { ...define(), subgraph_definition: replacement }
+    const before = Y.encodeStateAsUpdate(doc)
+    expect(rejectionCode(doc, rejected)).toBe("definition_conflict")
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before)
+    expect(appliedMap(doc).has(rejected.op_id)).toBe(false)
     expect((project(doc, catalog).definitions as { subgraphs: unknown[] }).subgraphs).toEqual([
       incumbent,
       definition(otherRootId, 4),
@@ -771,7 +788,11 @@ describe("define_subgraph application", () => {
       { ...define(otherRootId), subgraph_definition: otherRoot },
     ], catalog)
 
-    expect(rejectionCode(doc, { ...define(), subgraph_definition: replacement })).toBe("definition_conflict")
+    const rejected = { ...define(), subgraph_definition: replacement }
+    const before = Y.encodeStateAsUpdate(doc)
+    expect(rejectionCode(doc, rejected)).toBe("definition_conflict")
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before)
+    expect(appliedMap(doc).has(rejected.op_id)).toBe(false)
     expect((project(doc, catalog).definitions as { subgraphs: unknown[] }).subgraphs).toEqual([incumbent, otherRoot])
   })
 

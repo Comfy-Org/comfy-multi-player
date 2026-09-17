@@ -64,6 +64,7 @@ function remapGraph(
       for (const input of node.inputs) {
         if (typeof input === "object" && input !== null && "link" in input) {
           const record = input as { link?: unknown };
+          if (record.link === null || record.link === undefined) continue;
           const id = normalizedId(record.link);
           if (droppedLinkIds.has(id)) record.link = null;
           else if (linkIds.has(id)) record.link = linkIds.get(id);
