@@ -32,6 +32,11 @@ Run `eslint-plugin-sonarjs` on changed files for SonarQube-grade bug and code-sm
    cat "$report"
    exit "$status"
    ```
+   The block reads its file selection from positional arguments; it does not
+   discover changed files itself. Save it to a temporary Bash script and pass
+   every selected path explicitly, preserving spaces with quotes, for example:
+   `bash /tmp/sonarjs-lint.sh file.ts 'path with spaces.ts'`. Remove the
+   temporary script after the run; no repository wrapper is needed.
    ESLint exits `1` when it reports problems and `2` on a config/execution error. Treat exit `2`, a parse error, or empty/no output as **indeterminate** (report the failure), never as "no issues found".
 5. Parse the JSON. Map eslint `severity 2`→major, `severity 1`→minor. Categorize `sonarjs/no-*`→logic, `*cognitive-complexity*`→dx, others→style.
 6. Report rule ID, `path:line`, message, and a fix suggestion.
