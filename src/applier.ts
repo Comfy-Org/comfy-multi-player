@@ -1971,9 +1971,58 @@ function resolveInteriorConnectScope(
   catalog?: WidgetCatalog,
 ): InteriorConnectScope | null {
   if (!op.path || op.path.length === 0) return null;
-  const resolved = resolveInteriorNode(doc, op.path.map(String), catalog);
-  if (resolved === null) return null;
-  const host = resolved.node;
+  const path = op.path.map(String);
+  let host = nodesMap(doc).get(path[0]!);
+  if (!(host instanceof Y.Map)) {
+    // Connect accepts instance routes only. A missing head must have been a
+    // real instance in this incarnation; unlike set_widget, a definition id
+    // is never a direct addressing alias for this operation.
+    const retainedDefinitionId = stampsMap(doc).get(interiorRouteKey(
+      path[0]!,
+      op.node_incarnation ?? LEGACY_NODE_INCARNATION,
+    ));
+    if (typeof retainedDefinitionId !== "string") return null;
+    const retainedDefinition = resolveDefinition(doc, retainedDefinitionId);
+    if (!retainedDefinition) return null;
+    const retainedId = String(retainedDefinition.get("id") ?? retainedDefinitionId);
+    const retainedInstances = countDefinitionInstances(doc, retainedId, catalog) + 1;
+    rejectSharedInteriorDefinition(retainedId, retainedInstances);
+    if (path.length === 1) return interiorConnectScope(retainedDefinition, retainedId);
+    const retainedNodes = retainedDefinition.get("nodes");
+    host = retainedNodes instanceof Y.Map ? retainedNodes.get(path[1]!) : undefined;
+    if (!(host instanceof Y.Map)) {
+      throw new OpRejectedError(
+        "interior_node_not_found",
+        `interior node ${path[1]} not found in subgraph ${retainedId}`,
+      );
+    }
+    path.splice(0, 2);
+  } else {
+    path.shift();
+  }
+
+  for (const segment of path) {
+    const ownerType = String(host.get("type") ?? "");
+    const owner = resolveDefinition(doc, ownerType);
+    if (!owner) {
+      throw new OpRejectedError(
+        "not_a_subgraph",
+        `node ${String(host.get("id"))} is not a subgraph; cannot descend to '${segment}'`,
+      );
+    }
+    const ownerId = String(owner.get("id") ?? ownerType);
+    rejectSharedInteriorDefinition(ownerId, countDefinitionInstances(doc, ownerId, catalog));
+    const innerNodes = owner.get("nodes");
+    const inner = innerNodes instanceof Y.Map ? innerNodes.get(segment) : undefined;
+    if (!(inner instanceof Y.Map)) {
+      throw new OpRejectedError(
+        "interior_node_not_found",
+        `interior node ${segment} not found in subgraph ${ownerId}`,
+      );
+    }
+    host = inner;
+  }
+
   const hostType = String(host.get("type") ?? "");
   const definition = resolveDefinition(doc, hostType);
   if (!definition) {
@@ -1984,12 +2033,19 @@ function resolveInteriorConnectScope(
   }
   const definitionId = String(definition.get("id") ?? hostType);
   const instances = countDefinitionInstances(doc, definitionId, catalog);
-  if (instances > 1) {
-    throw new OpRejectedError(
-      "shared_definition_unforked",
-      `definition ${definitionId} is instantiated ${instances} times; interior writes to shared definitions are rejected until forking is specced (schema §5.3)`,
-    );
-  }
+  rejectSharedInteriorDefinition(definitionId, instances);
+  return interiorConnectScope(definition, definitionId);
+}
+
+function rejectSharedInteriorDefinition(definitionId: string, instances: number): void {
+  if (instances <= 1) return;
+  throw new OpRejectedError(
+    "shared_definition_unforked",
+    `definition ${definitionId} is instantiated ${instances} times; interior writes to shared definitions are rejected until forking is specced (schema §5.3)`,
+  );
+}
+
+function interiorConnectScope(definition: Y.Map<unknown>, definitionId: string): InteriorConnectScope {
   const nodes = definition.get("nodes");
   const links = definition.get("links");
   if (!(nodes instanceof Y.Map) || !(links instanceof Y.Map)) {

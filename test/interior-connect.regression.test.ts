@@ -5,6 +5,7 @@ import {
   mint,
   project,
   type ConnectOp,
+  type DeleteNodeOp,
   type WidgetCatalog,
   type WorkflowJSON,
 } from "../src/index.js";
@@ -62,6 +63,18 @@ function connect(overrides: Partial<ConnectOp> = {}): ConnectOp {
   } as ConnectOp;
 }
 
+function remove(node_id = 100): DeleteNodeOp {
+  return {
+    op: "delete_node",
+    op_id: `delete${node_id}0000000000000000000000`,
+    actor: "human:b",
+    base_version: 2,
+    stamp: [2, "human:b"],
+    node_id,
+    removed_links: [],
+  };
+}
+
 function definitionOf(doc: Y.Doc) {
   return (project(doc, catalog).definitions as {
     subgraphs: Array<{
@@ -76,6 +89,88 @@ function definitionOf(doc: Y.Doc) {
 }
 
 describe("interior connect regression", () => {
+  it("regression: retained host connect projects identically in both connect/delete orders", () => {
+    const snapshot = Y.encodeStateAsUpdate(mint(workflow, catalog));
+    const projections = [[connect(), remove()], [remove(), connect()]].map((order) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      const outcomes = order.flatMap((op) => applyOps(doc, [op], catalog).outcomes);
+      expect(outcomes.map(({ outcome }) => outcome)).toEqual(["applied", "applied"]);
+      expect(project(doc, catalog).nodes).toEqual([]);
+      const definition = definitionOf(doc);
+      expect(definition.links).toEqual([{ id: 41, origin_id: 1, origin_slot: 0, target_id: 2, target_slot: 0, type: "STRING" }]);
+      expect(definition.nodes.find(({ id }) => id === 1)?.outputs?.[0]?.links).toEqual([41]);
+      expect(definition.nodes.find(({ id }) => id === 2)?.inputs?.[0]?.link).toBe(41);
+      return definition;
+    });
+    expect(projections[0]).toEqual(projections[1]);
+  });
+
+  it("regression: retained shared definitions reject without mutation in both orders", () => {
+    const shared = structuredClone(workflow) as unknown as WorkflowJSON;
+    shared.nodes.push({ id: 101, type: "definition-1", inputs: [], outputs: [] });
+    const snapshot = Y.encodeStateAsUpdate(mint(shared, catalog));
+    const projections = [[connect(), remove()], [remove(), connect()]].map((order) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      for (const op of order) {
+        const before = Y.encodeStateAsUpdate(doc);
+        const outcome = applyOps(doc, [op], catalog).outcomes[0]!;
+        if (op.op === "connect") {
+          expect(outcome).toMatchObject({ outcome: "rejected", reason: { code: "shared_definition_unforked" } });
+          expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+          expect(appliedMap(doc).has(op.op_id)).toBe(false);
+        } else {
+          expect(outcome.outcome).toBe("applied");
+        }
+      }
+      return definitionOf(doc);
+    });
+    expect(projections[0]).toEqual(projections[1]);
+  });
+
+  it("regression: retained outer route supports a nested instance host path", () => {
+    const nested = structuredClone(workflow) as unknown as WorkflowJSON & {
+      definitions: { subgraphs: Array<Record<string, unknown>> };
+    };
+    const leafNodes = nested.definitions.subgraphs[0]!.nodes;
+    nested.definitions.subgraphs[0]!.nodes = [{ id: 10, type: "definition-2", inputs: [], outputs: [] }];
+    nested.definitions.subgraphs.push({
+      id: "definition-2",
+      nodes: leafNodes,
+      links: [],
+    });
+    const doc = mint(nested, catalog);
+    expect(applyOps(doc, [remove()], catalog).outcomes[0]?.outcome).toBe("applied");
+    const op = connect({ path: [100, "10"] });
+    expect(applyOps(doc, [op], catalog).outcomes).toEqual([{ op_id: op.op_id, outcome: "applied" }]);
+    const definitions = (project(doc, catalog).definitions as { subgraphs: Array<{ id: string; links: unknown[] }> }).subgraphs;
+    expect(definitions.find(({ id }) => id === "definition-2")?.links).toEqual([
+      { id: 41, origin_id: 1, origin_slot: 0, target_id: 2, target_slot: 0, type: "STRING" },
+    ]);
+  });
+
+  it("regression: direct definition connect remains an unsupported no-op", () => {
+    const doc = mint(workflow, catalog);
+    expect(applyOps(doc, [remove()], catalog).outcomes[0]?.outcome).toBe("applied");
+    const op = connect({ path: ["definition-1"] });
+    const before = definitionOf(doc);
+    expect(applyOps(doc, [op], catalog).outcomes).toEqual([{ op_id: op.op_id, outcome: "no-op" }]);
+    expect(definitionOf(doc)).toEqual(before);
+  });
+
+  it("normalizes numeric and string instance/link aliases across both arrival orders", () => {
+    const low = connect({ path: [100], link_id: 41 });
+    const high = connect({ op_id: "alias-high", actor: "human:b", base_version: 2, stamp: [2, "human:b"], path: ["100"], link_id: "41" });
+    const projections = [[low, high], [high, low]].map((order) => {
+      const doc = mint(workflow, catalog);
+      for (const op of order) expect(applyOps(doc, [op], catalog).outcomes[0]?.outcome).not.toBe("rejected");
+      return definitionOf(doc);
+    });
+    expect(projections[0]).toEqual(projections[1]);
+    expect(projections[0]!.links).toHaveLength(1);
+  });
+
   it("applies and projects a concrete link inside one subgraph definition", () => {
     const doc = mint(workflow, catalog);
     const op = connect();

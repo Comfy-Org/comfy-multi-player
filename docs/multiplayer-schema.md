@@ -627,7 +627,10 @@ package also supports `connect` with a non-empty instance `path`:
 - Interior `connect` resolves both endpoints within one definition and rejects
   interior autogrow and writes to shared, unforked definitions. Input stamps
   include the path; normalized link identity stamps do too. This does not
-  enable cross-boundary wiring or an interior `disconnect` operation.
+  enable cross-boundary wiring or an interior `disconnect` operation. Its path
+  is an instance route only: after the visible head is deleted, resolution
+  requires that instance's retained `interior_route` stamp (including its
+  incarnation), and a definition id is never accepted as a direct alias.
 - `add_node`/`delete_node` cannot address interior nodes at all.
 
 `set_widget` accepts three address forms — flat promoted (`57.text`, routed
