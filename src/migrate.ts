@@ -7,13 +7,15 @@
  */
 
 import * as Y from "yjs";
-import { definitionsMap, nodesMap } from "./doc.js";
+import { ROOT_META, ROOT_STAMPS, definitionsMap, nodesMap } from "./doc.js";
 import { readSchemaVersion } from "./schema-version.js";
+import { compareStampKeys } from "./stamps.js";
 import {
   LEGACY_NODE_INCARNATION,
   NODE_INCARNATION_KEY,
   SCHEMA_VERSION,
   SchemaVersionError,
+  type StampKey,
 } from "./types.js";
 
 function migrateNodeMap(node: unknown): void {
@@ -28,8 +30,28 @@ function migrateStampKey(key: string): string | null {
   } catch {
     return null;
   }
-  if (!Array.isArray(parsed) || parsed[0] !== "widget" || parsed.length !== 3) return null;
-  return JSON.stringify([parsed[0], parsed[1], LEGACY_NODE_INCARNATION, parsed[2]]);
+  if (
+    !Array.isArray(parsed) ||
+    parsed[0] !== "widget" ||
+    parsed.length !== 3 ||
+    (typeof parsed[1] !== "string" && typeof parsed[1] !== "number") ||
+    typeof parsed[2] !== "string"
+  ) {
+    return null;
+  }
+  return JSON.stringify([parsed[0], String(parsed[1]), LEGACY_NODE_INCARNATION, parsed[2]]);
+}
+
+function isStampKey(value: unknown): value is StampKey {
+  return (
+    Array.isArray(value) &&
+    value.length === 3 &&
+    typeof value[0] === "number" &&
+    Number.isSafeInteger(value[0]) &&
+    value[0] >= 0 &&
+    typeof value[1] === "string" &&
+    typeof value[2] === "string"
+  );
 }
 
 /** Apply the v1 → v2 compatibility translation in one host-owned transaction. */
@@ -42,16 +64,20 @@ function migrateV1ToV2(doc: Y.Doc): void {
       if (nodes instanceof Y.Map) nodes.forEach(migrateNodeMap);
     });
 
-    const stamps = doc.getMap<unknown>("__stamps");
+    const stamps = doc.getMap<unknown>(ROOT_STAMPS);
     for (const oldKey of [...stamps.keys()]) {
       const newKey = migrateStampKey(oldKey);
-      if (newKey === null || stamps.has(newKey)) continue;
+      if (newKey === null) continue;
       const value = stamps.get(oldKey);
-      stamps.set(newKey, value);
+      if (!isStampKey(value)) continue;
+      const prior = stamps.get(newKey);
+      if (prior === undefined || !isStampKey(prior) || compareStampKeys(value, prior) > 0) {
+        stamps.set(newKey, value);
+      }
       stamps.delete(oldKey);
     }
 
-    doc.getMap<unknown>("meta").set("schema_version", SCHEMA_VERSION);
+    doc.getMap<unknown>(ROOT_META).set("schema_version", SCHEMA_VERSION);
   });
 }
 
