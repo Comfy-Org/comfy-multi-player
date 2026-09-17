@@ -129,6 +129,26 @@ describe("check-import-graph gate", () => {
     expect(run.stderr).toContain("could not parse");
   });
 
+  it.each(["{}", "null", '{"summary":null}', '{"summary":{"totalCruised":"2","totalDependenciesCruised":1,"violations":[]}}']) (
+    "is INCONCLUSIVE (exit 2) when dependency-cruiser returns malformed report %s",
+    (output) => {
+      writeCleanFixture();
+      rmSync(join(root, "node_modules", ".bin"), { recursive: true, force: true });
+      mkdirSync(join(root, "node_modules", ".bin"), { recursive: true });
+      const fake = join(root, "node_modules", ".bin", "depcruise");
+      writeFileSync(fake, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`);
+      chmodSync(fake, 0o755);
+
+      const run = runAgainst(root, 2);
+
+      expect(run.status).toBe(2);
+      expect(run.stderr).toContain(
+        "import-graph check INCONCLUSIVE: dependency-cruiser report has no valid summary",
+      );
+      expect(run.stderr).not.toContain("TypeError");
+    },
+  );
+
   // --- one mutant per rule -------------------------------------------------
 
   it("FAILS (exit 1) naming src-no-node-builtins on a Node builtin import (FC-3)", () => {
