@@ -1,9 +1,9 @@
-# ADR-022: Atomic workflow-template insertion
+# ADR-031: cmp-owned, op-id-derived workflow-template insertion
 
 - **Status:** Accepted
 - **Date:** 2026-09-11
 - **Decider:** Christian
-- **Source:** ADR-T8, in-app-agent program TDD (Notion)
+- **Source:** in-app-agent program ADR-031 and frozen FE #17501 head `8491ba33fa`
 
 ## Context
 

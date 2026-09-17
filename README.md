@@ -170,18 +170,17 @@ the accept path.
 
 ### `migrate(doc, fromVersion): void`
 
-Document-layout versioning, and the **migration path** a host runs before it
-reads a document it did not mint. `SCHEMA_VERSION` is `1`, so today there is
-nothing to step: the call validates and no-ops at v1, and throws
-`SchemaVersionError` for everything else. A host never best-effort reads a
-layout it does not know.
+Document-layout version validation for the private-alpha current format.
+`SCHEMA_VERSION` is `3`: the call validates and no-ops only at v3, and throws
+`SchemaVersionError` for every older or newer layout without relabelling it.
+Old layouts must be re-minted at their source; there is no compatibility reader.
 
 `migrate()` is **no longer the only fail-closed read gate** — it was, and
 nothing forced a caller through it, which is the fail-open gap #38 closed by
 putting the same check inside `project()`. Both entrypoints share one
 definition of the read (`readSchemaVersion`), so they agree on exactly which
 documents are unreadable. `migrate()` remains **host-only**: followers receive
-a migrated document over the struct stream or as a new epoch (schema §10).
+a current-format document over the struct stream or as a new epoch (schema §10).
 
 `fromVersion` is your *claim* about the document, and it is checked against the
 document's own `meta.schema_version`. It throws when:

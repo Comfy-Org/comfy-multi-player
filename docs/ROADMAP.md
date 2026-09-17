@@ -4,9 +4,8 @@
 
 V1 is an op-based Yjs document applier implemented once in the shared `@comfyorg/comfy-multi-player` TypeScript package. The browser and Node doc-host sidecar consume the same git-SHA-pinned package. Semantic ops are the replication unit; the widget catalog is sha256-pinned and fail-closed in the deployed architecture.
 
-ADR-022 adds the seventh implemented kind, `insert_workflow`, for atomic template insertion. It is
-standalone-only; producer-side `remapWorkflowIds` allocates top-level ids and the applier rejects
-collisions. Definition collisions dedupe identical content or fork deterministically.
+ADR-031 adds the standalone-only `insert_workflow` kind for atomic template insertion. The applier
+derives tree-wide IDs from `op_id`; producers submit raw IDs and do not inspect document state.
 
 ## Guard gaps
 

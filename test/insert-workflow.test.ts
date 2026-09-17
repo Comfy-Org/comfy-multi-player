@@ -23,6 +23,11 @@ import {
   mint,
   project,
   type Op,
+  type AddNodeOp,
+  type DefineSubgraphOp,
+  type DeleteNodeOp,
+  type DisconnectOp,
+  type SubgraphDefinition,
   type WidgetCatalog,
   type WorkflowJSON,
 } from "../src/index.js";
@@ -338,6 +343,57 @@ describe("insert_workflow: happy path", () => {
     expect((n101.inputs?.[0] as { link?: unknown } | undefined)?.link).toBe(linkIds(wf)[1]);
     expect(wf.last_node_id).toBe(7);
     expect(wf.last_link_id).toBe(7);
+  });
+
+  it("retains coherent imported link intent across snapshot and endpoint lifetimes until disconnect", () => {
+    const inserted = mint({ nodes: [], links: [] }, catalog);
+    const op = insertOp({
+      nodes: [
+        { id: 1, type: "Src", outputs: [{ name: "out", links: [3] }] },
+        { id: 2, type: "Sink", inputs: [{ name: "in", link: 3 }] },
+      ],
+      links: [[3, 1, 0, 2, 0, "X"]],
+    });
+    applyOps(inserted, [op], catalog);
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(inserted));
+    const initial = project(doc, catalog);
+    const source = initial.nodes![0]!;
+    const target = initial.nodes![1]!;
+    const link = initial.links![0] as unknown[];
+    const remove = { op: "delete_node", ...env(), node_id: target.id, removed_links: [] } as DeleteNodeOp;
+    const readd = {
+      op: "add_node", ...env(), node_id: target.id, class_type: target.type, pos: [], node: target,
+    } as AddNodeOp;
+
+    applyOps(doc, [remove, readd], catalog);
+    expect(project(doc, catalog).links).toEqual([link]);
+    expect(project(doc, catalog).nodes!.find(node => node.id === source.id)).toMatchObject({ outputs: [{ links: [link[0]] }] });
+
+    const disconnect = {
+      op: "disconnect", ...env(), link_id: link[0], to_node: target.id, to_slot: 0,
+    } as DisconnectOp;
+    const removeAgain = { op: "delete_node", ...env(), node_id: target.id, removed_links: [] } as DeleteNodeOp;
+    const readdAgain = {
+      op: "add_node", ...env(), node_id: target.id, class_type: target.type, pos: [], node: target,
+    } as AddNodeOp;
+    applyOps(doc, [disconnect, removeAgain, readdAgain], catalog);
+    expect(project(doc, catalog).links).toEqual([]);
+  });
+
+  it("treats an identical define after insertion as the same projected definition", () => {
+    const doc = mint({ nodes: [], links: [] }, catalog);
+    const op = insertOp({
+      nodes: [],
+      definitions: { subgraphs: [{ id: "raw", name: "D", nodes: [{ id: 1, type: "Inner", widgets_values: ["x"] }], links: [] }] },
+    });
+    applyOps(doc, [op], catalog);
+    const inserted = project(doc, catalog).definitions!.subgraphs![0]! as SubgraphDefinition;
+    const define = {
+      op: "define_subgraph", ...env(), subgraph_id: inserted.id, subgraph_definition: inserted,
+    } as DefineSubgraphOp;
+    expect(applyOps(doc, [define], catalog).outcomes[0]?.outcome).toBe("no-op");
+    expect(project(doc, catalog).definitions!.subgraphs).toEqual([inserted]);
   });
 
   it("is an exact-replay no-op through the op_id gate (no second copy)", () => {

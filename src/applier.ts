@@ -105,7 +105,7 @@ import {
 import { linkHasMissingEndpoint, remapInsertedWorkflowIds } from "./remap.js";
 import { sha256Hex } from "./digest.js";
 import { CMP_EVENT_SCHEMA_VERSION, emitCmpEvent, type CmpCallContext } from "./events.js";
-import { mintDefinition } from "./mint.js";
+import { importedLinkState, mintDefinition } from "./mint.js";
 import { projectDefinition } from "./project.js";
 import {
   MAX_OP_COST,
@@ -1056,7 +1056,7 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
     validateSubgraphDefinition(sg, "workflow.definitions.subgraphs");
     validateDefinitionWidgets(sg, cat);
     assertDefinitionIdsAvailable(doc, sg, undefined, submittedDefinitionIds);
-    const digest = sha256Hex(canonicalOp(sg as unknown as Op));
+    const digest = definitionDigest(sg as unknown as SubgraphDefinition, cat);
     definitionWrites.push([id, mintDefinition(sg, cat), digest]);
   }
 
@@ -1083,6 +1083,8 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
   for (const link of linkWrites) {
     const key = String((link as unknown[])[0]);
     mset(links, key, cloneForMap(link, "insert_workflow: link"));
+    const state = importedLinkState(link, wf as unknown as import("./types.js").WorkflowJSON);
+    if (state !== null) mset(linkStateMap(doc), key, cloneForMap(state, `insert_workflow: link state ${key}`));
     mset(stamps, JSON.stringify(["insert_workflow_link", key]), stamp);
   }
   for (const [key, id, nodeMap] of nodeWrites) {

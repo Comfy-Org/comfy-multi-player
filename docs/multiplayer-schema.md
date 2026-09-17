@@ -824,8 +824,9 @@ the epoch; cross-epoch struct updates never merge.
   migration is a host-only write, `project()` is a pure read available to every
   replica, and a follower that writes the shared doc breaks KA-6/FC-5 outright
   and becomes an independently edited replica, which is the FC-1 raw-struct
-  divergence path. The caller runs `migrate(doc, storedVersion)` first, then
-  reads. The refusal is byte-exact and materializes no root type, the same as
+  divergence path. Private-alpha callers re-mint old source data into a new
+  current-format document rather than relabelling its layout. The refusal is
+  byte-exact and materializes no root type, the same as
   `migrate()`'s — asserted on `[...doc.share.keys()]`, since an empty
   materialized root encodes to zero bytes (A3).
   Both entrypoints share ONE definition of the read, `readSchemaVersion` in
@@ -1304,11 +1305,10 @@ materialization contrast on a snapshot-forked replica) and `test/roundtrip.test.
 path). Every fail-closed case runs against a real fixture workflow that projects cleanly one line
 earlier, so a `toThrow()` cannot pass for a reason unrelated to the schema version.
 
-The "document is OLDER than the reader" arm has no production reachability at `SCHEMA_VERSION = 1`
-— no older version exists to construct. It is exercised through
-`assertSchemaVersionAgainst(doc, context, expected)`, exported from the module but deliberately NOT
-from the entrypoint, since a caller free to choose `expected` could pass the document's own version
-and switch the gate off. An arm no test can turn red is dead code; this one can be turned red.
+At the time of this amendment, `SCHEMA_VERSION` was 1 and the older-document arm was reachable only
+through the module-only `assertSchemaVersionAgainst` test seam. Schema v3 now exercises the public
+read and migration entrypoints directly with preserved v1/v2 counterexamples; all are refused
+byte-identically rather than translated.
 
 ### Consumer impact
 
@@ -2072,7 +2072,7 @@ This adds an internal `__stamps` key, not a root-layout change, so
 
 ## Amendment A19 — 2026-09-11 — atomic workflow-template insertion
 
-ADR-022 adds the standalone-only `insert_workflow` op. Its payload is one
+ADR-031 adds the standalone-only `insert_workflow` op. Its payload is one
 authoritative workflow containing required top-level `nodes` and optional
 `links`, `groups`, and `definitions`. The applier deterministically remaps every
 inserted id from the immutable `op_id`, graph scope, id kind, and original id,

@@ -162,7 +162,8 @@ function retainedNode(workflow: WorkflowJSON, id: string | number): WorkflowNode
   return undefined;
 }
 
-function importedLinkState(raw: unknown, workflow: WorkflowJSON): ImportedLinkState | null {
+/** Build durable intent only when an imported tuple and both endpoint slot references agree. */
+export function importedLinkState(raw: unknown, workflow: WorkflowJSON): ImportedLinkState | null {
   if (!Array.isArray(raw) || raw.length !== 6) {
     throw new TypeError("mint: link tuple must contain exactly six fields");
   }
