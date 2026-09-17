@@ -38,7 +38,6 @@ import {
   readSchemaVersion,
   type WorkflowJSON,
 } from "../src/index.js";
-import { assertSchemaVersionAgainst } from "../src/schema-version.js";
 import { canonicalize, loadCatalog, loadSession, sessionFiles } from "./helpers.js";
 
 const catalog = loadCatalog();
@@ -205,26 +204,24 @@ describe("project() enforces schema-version on read (KA-11, #38)", () => {
     expect(Y.encodeStateAsUpdate(accepted)).toEqual(acceptedBytes);
   });
 
-  it("refuses an OLDER document and points at migrate() rather than projecting or migrating it", () => {
-    // v1 is the first layout, so no document older than this reader can be
-    // constructed today. The rule is exercised against an explicit reader
-    // version instead — the same code path `project()` takes, with the one
-    // value that cannot yet vary held to a future value.
+  it("refuses an OLDER document and directs the host to re-mint from the source workflow", () => {
+    // Regression: https://github.com/Comfy-Org/comfy-multi-player/pull/206#discussion_r4041772404
+    // Exercise the public reader with a real old layout, not a hypothetical
+    // future reader. Private alpha deliberately provides no compatibility path.
     const doc = readableDoc();
-    const futureReader = SCHEMA_VERSION + 1;
+    metaMap(doc).set("schema_version", 1);
+    const before = Y.encodeStateAsUpdate(doc);
+    const rootsBefore = [...doc.share.keys()].sort();
 
-    expect(() => assertSchemaVersionAgainst(doc, "project", futureReader)).toThrow(SchemaVersionError);
-    expect(() => assertSchemaVersionAgainst(doc, "project", futureReader)).toThrow(
-      new RegExp(`doc schema v${SCHEMA_VERSION} is older than this package's v${futureReader}`),
+    expect(() => project(doc, catalog)).toThrow(SchemaVersionError);
+    expect(() => project(doc, catalog)).toThrow(
+      new RegExp(`doc schema v1 is older than this package's v${SCHEMA_VERSION}`),
     );
-    // The remedy is named, and it is NOT "project it anyway" and NOT "migrate
-    // it here": `project()` is a pure read and a migration is a host-only
-    // write (schema §10).
-    expect(() => assertSchemaVersionAgainst(doc, "project", futureReader)).toThrow(
-      new RegExp(`call migrate\\(doc, ${SCHEMA_VERSION}\\) first`),
+    expect(() => project(doc, catalog)).toThrow(
+      /re-mint from the source workflow on the host/,
     );
-    // …and the read really is refused, not merely warned about.
-    expect(() => assertSchemaVersionAgainst(doc, "project", SCHEMA_VERSION)).not.toThrow();
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+    expect([...doc.share.keys()].sort()).toEqual(rootsBefore);
   });
 
   it("the gate cannot be reached past a wrong catalog: schema is checked first", () => {

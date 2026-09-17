@@ -19,8 +19,8 @@
  *
  * Subgraph definitions project as `{...extra, subgraphs: [...]}` with
  * definitions sorted by id and each definition's interior nodes/links in
- * mint order (`node_order`/`link_order` — interior order is static in v1
- * because only `set_widget` is subgraph-scoped).
+ * mint order (`node_order`/`link_order`); links added by semantic ops follow
+ * imported links in deterministic stamp order.
  */
 
 import * as Y from "yjs";
@@ -33,6 +33,7 @@ import {
   widgetStorageOf,
 } from "./doc.js";
 import { assertNever } from "./exhaustive.js";
+import { projectInteriorLinkOrder } from "./interior-link-order.js";
 import { assertReadableSchema } from "./schema-version.js";
 import { NODE_INCARNATION_KEY, type WidgetCatalog, type WorkflowJSON, type WorkflowNode } from "./types.js";
 
@@ -221,11 +222,11 @@ function tryProjectNode(value: unknown, catalog: WidgetCatalog): WorkflowNode | 
   return projectNode(value, catalog);
 }
 
-/** Definition Y.Map → subgraph definition JSON, interior nodes/links in mint order. */
-function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): Record<string, unknown> {
+/** Definition Y.Map → subgraph JSON, preserving mint order before deterministic additions. */
+export function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): Record<string, unknown> {
   const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   dm.forEach((v, k) => {
-    if (k === "node_order" || k === "link_order") return; // internal order registers
+    if (k === "node_order" || k === "link_order" || k.startsWith("__")) return; // internal registers
     if (k === "nodes" && v instanceof Y.Map) {
       const order = (dm.get("node_order") as string[] | undefined) ?? [...v.keys()].sort();
       out[k] = order
@@ -233,12 +234,41 @@ function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): Record<s
         .map((id) => tryProjectNode(v.get(id), catalog))
         .filter((node): node is WorkflowNode => node !== null);
     } else if (k === "links" && v instanceof Y.Map) {
-      const order = (dm.get("link_order") as string[] | undefined) ?? [...v.keys()].sort();
+      const storedOrder = dm.get("link_order");
+      const order = Array.isArray(storedOrder)
+        ? projectInteriorLinkOrder(storedOrder)
+        : [...v.keys()].sort();
       out[k] = order.filter((id) => v.has(id)).map((id) => structuredClone(v.get(id)));
+    } else if (k === "definitions" && v instanceof Y.Map) {
+      const nestedOut: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+      v.forEach((nestedValue, nestedKey) => {
+        if (nestedKey === "subgraph_order") return;
+        if (nestedKey === "subgraphs" && nestedValue instanceof Y.Map) {
+          const order = (v.get("subgraph_order") as string[] | undefined) ?? [...nestedValue.keys()].sort();
+          nestedOut.subgraphs = order
+            .filter((id) => nestedValue.has(id))
+            .map((id) => nestedValue.get(id))
+            .filter((definition): definition is Y.Map<unknown> => definition instanceof Y.Map)
+            .map((definition) => projectDefinition(definition, catalog));
+        } else {
+          nestedOut[nestedKey] = structuredClone(nestedValue);
+        }
+      });
+      out[k] = nestedOut;
     } else {
       out[k] = structuredClone(v);
     }
   });
+  return scrubPrivateKeys(out) as Record<string, unknown>;
+}
+
+function scrubPrivateKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(scrubPrivateKeys);
+  if (typeof value !== "object" || value === null) return value;
+  const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  for (const [key, child] of Object.entries(value)) {
+    if (!key.startsWith("__")) out[key] = scrubPrivateKeys(child);
+  }
   return out;
 }
 

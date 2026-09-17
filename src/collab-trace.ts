@@ -352,7 +352,17 @@ function assertOpPayload(value: unknown, context: string) {
   const stamp = assertStamp(required(payload, "stamp", context), `${context}.stamp`);
   if (stamp[1] !== actor) invalid(`${context}.stamp`, "does not preserve semantic identity");
 
-  if (op === "add_node") {
+  if (op === "insert_workflow") {
+    const workflow = asRecord(required(payload, "workflow", context), `${context}.workflow`);
+    asArray(required(workflow, "nodes", `${context}.workflow`), `${context}.workflow.nodes`);
+    if (Object.hasOwn(workflow, "links")) asArray(workflow["links"], `${context}.workflow.links`);
+    if (Object.hasOwn(workflow, "definitions")) {
+      const definitions = asRecord(workflow["definitions"], `${context}.workflow.definitions`);
+      if (Object.hasOwn(definitions, "subgraphs")) {
+        asArray(definitions["subgraphs"], `${context}.workflow.definitions.subgraphs`);
+      }
+    }
+  } else if (op === "add_node") {
     const nodeId = asNodeId(required(payload, "node_id", context), `${context}.node_id`);
     const classType = asString(required(payload, "class_type", context), `${context}.class_type`);
     assertNumberArray(required(payload, "pos", context), `${context}.pos`);
@@ -414,6 +424,9 @@ function assertOpPayload(value: unknown, context: string) {
     assertNodeIdArray(required(payload, "removed_links", context), `${context}.removed_links`);
   } else if (op === "clear") {
     assertNodeIdArray(required(payload, "removed_nodes", context), `${context}.removed_nodes`);
+  } else if (op === "define_subgraph") {
+    asString(required(payload, "subgraph_id", context), `${context}.subgraph_id`);
+    asRecord(required(payload, "subgraph_definition", context), `${context}.subgraph_definition`);
   } else {
     // Exhaustiveness guard (issue #21), matching `dispatch` in `applier.ts`:
     // `op` is narrowed from `FROZEN_OPS`, so with every kind enumerated above

@@ -5,6 +5,15 @@ All notable changes to `@comfyorg/comfy-multi-player` are documented in this fil
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package uses semantic versioning.
 
+## Unreleased
+
+### Added
+
+- Added the standalone `insert_workflow` op for atomic workflow-template
+  insertion. The applier derives every carried node, link, group, and
+  definition ID from the operation ID and graph scope, avoiding allocation
+  against mutable document state.
+
 ## 0.2.0 - 2026-08-30
 
 ### Changed

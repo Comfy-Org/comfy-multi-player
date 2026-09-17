@@ -158,6 +158,7 @@ export const ROOT_DEFINITIONS = "definitions";
 export const ROOT_META = "meta";
 export const ROOT_APPLIED = "__applied";
 export const ROOT_STAMPS = "__stamps";
+export const ROOT_LINK_STATE = "__link_state";
 
 /** Root map holding one Y.Map per node, keyed by String(node id). */
 export function nodesMap(doc: Y.Doc): Y.Map<Y.Map<unknown>> {
@@ -200,6 +201,11 @@ export function stampsMap(doc: Y.Doc): Y.Map<unknown> {
   return doc.getMap<unknown>(ROOT_STAMPS);
 }
 
+/** First-class durable link intent, keyed by normalized link id (schema v3). */
+export function linkStateMap(doc: Y.Doc): Y.Map<unknown> {
+  return doc.getMap<unknown>(ROOT_LINK_STATE);
+}
+
 /**
  * Initialize the v1 layout on a fresh doc (idempotent). Creates the root maps
  * (including bookkeeping) and seeds meta with schema_version, the pinned
@@ -215,6 +221,7 @@ export function initDoc(doc: Y.Doc, catalogVersion = ""): void {
     definitionsMap(doc);
     appliedMap(doc);
     stampsMap(doc);
+    linkStateMap(doc);
     const meta = metaMap(doc);
     if (meta.get("schema_version") === undefined) {
       meta.set("schema_version", SCHEMA_VERSION);
@@ -804,18 +811,32 @@ export function createNodeMap(node: WorkflowNode, widgetOrder?: readonly string[
  * never resolve).
  */
 export function resolveDefinition(doc: Y.Doc, key: string): Y.Map<unknown> | null {
-  const defs = definitionsMap(doc);
-  const byId = defs.get(key);
+  const all = allDefinitions(doc);
+  const byId = all.find((definition) => String(definition.get("id")) === key);
   if (byId) return byId;
   let found: Y.Map<unknown> | null = null;
   let count = 0;
-  defs.forEach((dm) => {
+  all.forEach((dm) => {
     if (String(dm.get("name") ?? "") === key) {
       count++;
       found = dm;
     }
   });
   return count === 1 ? found : null;
+}
+
+function allDefinitions(doc: Y.Doc): Y.Map<unknown>[] {
+  const all: Y.Map<unknown>[] = [];
+  const visit = (definition: Y.Map<unknown>): void => {
+    all.push(definition);
+    const container = definition.get("definitions");
+    const nested = container instanceof Y.Map ? container.get("subgraphs") : undefined;
+    if (nested instanceof Y.Map) nested.forEach((child) => {
+      if (child instanceof Y.Map) visit(child);
+    });
+  };
+  definitionsMap(doc).forEach(visit);
+  return all;
 }
 
 /**
@@ -859,7 +880,7 @@ function definitionAliases(doc: Y.Doc, defId: string, catalog?: WidgetCatalog): 
   if (!catalog) return aliases; // no catalogue to ask: cannot verify, so not an alias
   if (Object.prototype.hasOwnProperty.call(catalog.types, name)) return aliases; // a node class
   let sameName = 0;
-  defs.forEach((dm) => {
+  allDefinitions(doc).forEach((dm) => {
     if (String(dm.get("name") ?? "") === name) sameName++;
   });
   if (sameName === 1) aliases.add(name);
@@ -893,6 +914,21 @@ function definitionAliases(doc: Y.Doc, defId: string, catalog?: WidgetCatalog): 
 export function countDefinitionInstances(doc: Y.Doc, defId: string, catalog?: WidgetCatalog): number {
   const aliases = definitionAliases(doc, defId, catalog);
   let count = 0;
+  const visitDefinition = (definition: Y.Map<unknown>): void => {
+    const inner = definition.get("nodes");
+    if (inner instanceof Y.Map) {
+      inner.forEach((node: unknown) => {
+        if (node instanceof Y.Map && aliases.has(String(node.get("type") ?? ""))) count++;
+      });
+    }
+    const container = definition.get("definitions");
+    const nested = container instanceof Y.Map ? container.get("subgraphs") : undefined;
+    if (nested instanceof Y.Map) {
+      nested.forEach((child: unknown) => {
+        if (child instanceof Y.Map) visitDefinition(child);
+      });
+    }
+  };
   nodesMap(doc).forEach((node, key) => {
     if (!(node instanceof Y.Map)) {
       throw new TypeError(
@@ -902,12 +938,7 @@ export function countDefinitionInstances(doc: Y.Doc, defId: string, catalog?: Wi
     if (aliases.has(String(node.get("type") ?? ""))) count++;
   });
   definitionsMap(doc).forEach((dm) => {
-    const inner = dm.get("nodes");
-    if (inner instanceof Y.Map) {
-      inner.forEach((node: unknown) => {
-        if (node instanceof Y.Map && aliases.has(String(node.get("type") ?? ""))) count++;
-      });
-    }
+    visitDefinition(dm);
   });
   return count;
 }

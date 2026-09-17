@@ -96,6 +96,7 @@ import {
 import {
   appliedMap,
   definitionsMap,
+  linkStateMap,
   metaMap,
   stampsMap,
 } from "../src/doc.js";
@@ -140,8 +141,20 @@ const env = () => {
  */
 const richWorkflow: WorkflowJSON = {
   nodes: [
-    { id: 1, type: "Inner", inputs: [], outputs: [], widgets_values: ["v"] },
-    { id: 2, type: "UnknownClass", inputs: [], outputs: [], widgets_values: [7, 8] },
+    {
+      id: 1,
+      type: "Inner",
+      inputs: [{ name: "in", type: "X", link: 12 }],
+      outputs: [{ name: "out", type: "X", links: [11] }],
+      widgets_values: ["v"],
+    },
+    {
+      id: 2,
+      type: "UnknownClass",
+      inputs: [{ name: "in", type: "X", link: 11 }],
+      outputs: [{ name: "out", type: "X", links: [12] }],
+      widgets_values: [7, 8],
+    },
   ],
   links: [
     [11, 1, 0, 2, 0, "X"],
@@ -375,7 +388,7 @@ describe("layer 3: the code, the golden vector and the schema documents agree (K
 
   it("uses the supported wire-layout vector format", () => {
     expect(golden.format_version).toBe(1);
-    expect(goldenRootNames.length).toBe(6);
+    expect(goldenRootNames.length).toBe(7);
   });
 
   it("is reachable from the conformance manifest, so a second implementation finds it", () => {
@@ -401,6 +414,7 @@ describe("layer 3: the code, the golden vector and the schema documents agree (K
       meta: metaMap(doc),
       applied: appliedMap(doc),
       stamps: stampsMap(doc),
+      link_state: linkStateMap(doc),
     };
     for (const [role, wireName] of Object.entries(golden.roots)) {
       expect(rootNameOf(doc, byRole[role]), `role '${role}' must live under wire name '${wireName}'`).toBe(wireName);

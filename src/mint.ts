@@ -16,11 +16,21 @@ import {
   createNodeMap,
   definitionsMap,
   linksMap,
+  linkStateMap,
   metaMap,
   nodesMap,
   stampsMap,
 } from "./doc.js";
-import { SCHEMA_VERSION, type WidgetCatalog, type WorkflowJSON, type WorkflowNode } from "./types.js";
+import {
+  LINK_STATE_DESCRIPTOR_VERSION,
+  SCHEMA_VERSION,
+  type ImportedLinkDestination,
+  type ImportedLinkState,
+  type LinkTuple,
+  type WidgetCatalog,
+  type WorkflowJSON,
+  type WorkflowNode,
+} from "./types.js";
 
 /** Top-level keys that are NOT meta passthrough: structural keys get their own root maps; comfy-cli bookkeeping is never imported. */
 const NON_META_KEYS = ["nodes", "links", "definitions", "_applied_ops", "_widget_stamps"] as const;
@@ -47,9 +57,9 @@ interface SubgraphDef {
  *   map through `catalog` — schema §1.2);
  * - `definitions.subgraphs` into the first-class `definitions` root map
  *   (schema §5.1), with interior node/link mint order preserved in plain
- *   `node_order`/`link_order` registers (interior order is static in v1 —
- *   only `set_widget` is subgraph-scoped); non-`subgraphs` keys of the
- *   definitions container are kept in the internal `__definitions_extra`
+ *   `node_order`/`link_order` registers; later interior links retain this
+ *   imported prefix and project in deterministic stamp order;
+ *   non-`subgraphs` keys of the definitions container are kept in the internal `__definitions_extra`
  *   meta key and merged back at projection;
  * - every other top-level key into meta as opaque passthrough (schema §6);
  * - `schema_version` + the pinned `catalogVersion` into meta.
@@ -81,6 +91,7 @@ export function mint(workflow: WorkflowJSON, catalog: WidgetCatalog, catalogVers
     definitionsMap(doc);
     appliedMap(doc);
     stampsMap(doc);
+    const linkState = linkStateMap(doc);
 
     for (const [k, v] of Object.entries(workflow)) {
       if (NON_META_KEYS.includes(k as (typeof NON_META_KEYS)[number])) continue;
@@ -97,7 +108,12 @@ export function mint(workflow: WorkflowJSON, catalog: WidgetCatalog, catalogVers
 
     const links = linksMap(doc);
     for (const ln of workflow.links ?? []) {
-      links.set(String((ln as unknown[])[0]), cloneForMap(ln, "mint: link"));
+      const tuple = cloneForMap(ln, "mint: link");
+      const state = importedLinkState(tuple, workflow);
+      const key = String((tuple as unknown[])[0]);
+      links.set(key, tuple);
+      if (state === null) linkState.delete(key);
+      else linkState.set(key, cloneForMap(state, `mint: link state ${key}`));
     }
 
     const defsIn = workflow["definitions"];
@@ -123,6 +139,93 @@ export function mint(workflow: WorkflowJSON, catalog: WidgetCatalog, catalogVers
   return doc;
 }
 
+function nodeId(value: unknown, context: string): string | number {
+  if (typeof value === "string" && value.length > 0) return value;
+  if (typeof value === "number" && Number.isSafeInteger(value)) return value;
+  throw new TypeError(`mint: ${context} must be a non-empty string or safe integer`);
+}
+
+function recordAt(value: unknown, index: number, context: string): Record<string, unknown> | null {
+  if (!Array.isArray(value) || index >= value.length) return null;
+  const slot = value[index];
+  if (typeof slot !== "object" || slot === null || Array.isArray(slot)) {
+    throw new TypeError(`mint: ${context} slot ${String(index)} is not an object`);
+  }
+  return slot as Record<string, unknown>;
+}
+
+function retainedNode(workflow: WorkflowJSON, id: string | number): WorkflowNode | undefined {
+  for (let index = workflow.nodes.length - 1; index >= 0; index -= 1) {
+    const node = workflow.nodes[index];
+    if (node !== undefined && String(node.id) === String(id)) return node;
+  }
+  return undefined;
+}
+
+/** Build durable intent only when an imported tuple and both endpoint slot references agree. */
+export function importedLinkState(raw: unknown, workflow: WorkflowJSON): ImportedLinkState | null {
+  if (!Array.isArray(raw) || raw.length !== 6) {
+    throw new TypeError("mint: link tuple must contain exactly six fields");
+  }
+  const [id, fromNodeId, fromSlot, toNodeId, toSlot] = raw;
+  const linkId = nodeId(id, "link tuple id");
+  const sourceId = nodeId(fromNodeId, `link ${String(linkId)} source node id`);
+  const targetId = nodeId(toNodeId, `link ${String(linkId)} destination node id`);
+  if (!Number.isSafeInteger(fromSlot) || (fromSlot as number) < 0 || !Number.isSafeInteger(toSlot) || (toSlot as number) < 0) {
+    throw new TypeError(`mint: link ${String(id)} tuple slots must be non-negative integers`);
+  }
+  const source = retainedNode(workflow, sourceId);
+  const target = retainedNode(workflow, targetId);
+  // Existing workflow JSON can carry a dangling tuple while a save is in
+  // progress or after an older producer incompletely scrubbed a node. mint()
+  // has always preserved those tuples. They cannot yield a truthful durable
+  // destination descriptor, so preserve the link and omit only __link_state.
+  if (source === undefined || target === undefined) return null;
+  const output = recordAt(source.outputs, fromSlot as number, `link ${String(id)} source output`);
+  const input = recordAt(target.inputs, toSlot as number, `link ${String(id)} destination input`);
+  if (output === null || input === null) return null;
+  if (!Array.isArray(output["links"]) || !output["links"].some((ref) =>
+    (typeof ref === "string" || typeof ref === "number") && String(ref) === String(linkId))) {
+    return null;
+  }
+  if ((typeof input["link"] !== "string" && typeof input["link"] !== "number") ||
+      String(input["link"]) !== String(linkId)) {
+    return null;
+  }
+
+  const definitions = workflow["definitions"];
+  const subgraphsValue = typeof definitions === "object" && definitions !== null && !Array.isArray(definitions)
+    ? (definitions as Record<string, unknown>)["subgraphs"]
+    : undefined;
+  const subgraphs = Array.isArray(subgraphsValue)
+    ? subgraphsValue.filter((value): value is SubgraphDef => typeof value === "object" && value !== null && !Array.isArray(value))
+    : [];
+  const definition = subgraphs.find((candidate) =>
+    String(candidate.id) === String(target.type) ||
+    (typeof candidate["name"] === "string" && candidate["name"] === target.type),
+  );
+  const declaredInputs = Array.isArray(definition?.["inputs"])
+    ? definition["inputs"].filter((value): value is Record<string, unknown> =>
+        typeof value === "object" && value !== null && !Array.isArray(value))
+    : [];
+  const slot = input;
+  const name = slot["name"];
+  let destination: ImportedLinkDestination;
+  if (typeof name === "string" && declaredInputs.some((declared) => declared["name"] === name)) {
+    destination = { kind: "promoted", to_slot: toSlot as number, name, slot: structuredClone(slot) };
+  } else if (String(slot["grow_id"]) === String(id)) {
+    destination = { kind: "autogrow", to_slot: toSlot as number, slot: structuredClone(slot) };
+  } else {
+    destination = { kind: "concrete", to_slot: toSlot as number, slot: structuredClone(slot) };
+  }
+  return {
+    version: LINK_STATE_DESCRIPTOR_VERSION,
+    authority: "imported",
+    tuple: structuredClone(raw) as LinkTuple,
+    destination,
+  };
+}
+
 /**
  * The `links` map key for one interior link of a definition: the tuple's
  * `[0]` for the litegraph array form, `id` for the frontend's object form, and
@@ -138,14 +241,19 @@ function definitionLinkKey(ln: unknown, index: number): string {
   return `#${String(index)}`;
 }
 
-function mintDefinition(sg: SubgraphDef, catalog: WidgetCatalog): Y.Map<unknown> {
+export function mintDefinition(sg: SubgraphDef, catalog: WidgetCatalog): Y.Map<unknown> {
+  for (const key of ["node_order", "link_order", "__definition_digest"]) {
+    if (Object.hasOwn(sg, key)) throw new TypeError(`mint: definition key '${key}' is reserved`);
+  }
   const dm = new Y.Map<unknown>();
   for (const [k, v] of Object.entries(sg)) {
     if (k === "nodes" && Array.isArray(v)) {
       const nm = new Y.Map<Y.Map<unknown>>();
       const order: string[] = [];
       for (const n of v as WorkflowNode[]) {
+        if (n.id === undefined || n.id === null) throw new TypeError("mint: definition node is missing id");
         const key = String(n.id);
+        if (order.includes(key)) throw new TypeError(`mint: duplicate definition node id '${key}'`);
         order.push(key);
         nm.set(key, createNodeMap(n, widgetOrderFor(catalog, n.type)));
       }
@@ -167,6 +275,24 @@ function mintDefinition(sg: SubgraphDef, catalog: WidgetCatalog): Y.Map<unknown>
       });
       dm.set("links", lm);
       dm.set("link_order", order);
+    } else if (k === "definitions" && typeof v === "object" && v !== null && !Array.isArray(v)) {
+      const container = new Y.Map<unknown>();
+      const { subgraphs, ...extra } = v as { subgraphs?: unknown; [key: string]: unknown };
+      Object.entries(extra).forEach(([key, value]) => container.set(key, cloneForMap(value, `mint: definition.definitions.${key}`)));
+      if (Array.isArray(subgraphs)) {
+        const nested = new Y.Map<Y.Map<unknown>>();
+        const order: string[] = [];
+        for (const child of subgraphs as SubgraphDef[]) {
+          if (child.id === undefined || child.id === null) throw new TypeError("mint: nested definition is missing id");
+          const key = String(child.id);
+          if (order.includes(key)) throw new TypeError(`mint: duplicate nested definition id '${key}'`);
+          order.push(key);
+          nested.set(key, mintDefinition(child, catalog));
+        }
+        container.set("subgraphs", nested);
+        container.set("subgraph_order", order);
+      }
+      dm.set("definitions", container);
     } else {
       dm.set(k, cloneForMap(v, `mint: definition.${k}`));
     }

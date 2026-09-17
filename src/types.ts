@@ -1,7 +1,7 @@
 /**
  * Types and constants for @comfyorg/comfy-multi-player.
  *
- * The op vocabulary is frozen at six kinds; the normative contract is
+ * The op vocabulary is frozen at eight kinds; the normative contract is
  * comfy-cli's `docs/op-vocabulary-v1.md` and the stamp shapes minted by
  * `comfy_cli/workflow_ops.py` (`_new_op`), pinned by SHA at comfy-cli
  * `7e732242d971daf0d2d30f22f997abfacd78986e` (FC-10: never by branch — the
@@ -16,10 +16,42 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Version of the Y.Doc layout. Bump requires FE sign-off + a `migrate` path.
+ * Version of the Y.Doc layout. Bump requires FE sign-off and an explicit old-layout disposition.
  * The authoritative layout + op-semantics reference is docs/multiplayer-schema.md.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
+
+/** Version of an imported destination reconstruction descriptor in `__link_state`. */
+export const LINK_STATE_DESCRIPTOR_VERSION = 1;
+
+/** A coherent six-field LiteGraph link tuple retained verbatim for reconstruction. */
+export type LinkTuple = [id: NodeId, fromNode: NodeId, fromSlot: number, toNode: NodeId, toSlot: number, type: unknown];
+
+export type ImportedLinkDestination =
+  | { kind: "concrete"; to_slot: number; slot: Record<string, unknown> }
+  | { kind: "promoted"; to_slot: number; name: string; slot: Record<string, unknown> }
+  | { kind: "autogrow"; to_slot: number; slot: Record<string, unknown> };
+
+/** Durable baseline imported by `mint`; operation lifecycle rules are intentionally separate. */
+export interface ImportedLinkState {
+  version: typeof LINK_STATE_DESCRIPTOR_VERSION;
+  authority: "imported";
+  tuple: LinkTuple;
+  destination: ImportedLinkDestination;
+}
+
+export type OperationLinkDestination =
+  | { kind: "concrete"; to_slot: number; slot: Record<string, unknown> }
+  | { kind: "promoted"; to_slot: number; name: string; slot: Record<string, unknown> }
+  | { kind: "autogrow"; to_slot: number; slot: Record<string, unknown>; request: GrowSpec };
+
+/** Durable intent created by an installed connect, owned by its A18 operation stamp. */
+export interface OperationLinkState {
+  version: typeof LINK_STATE_DESCRIPTOR_VERSION;
+  authority: { kind: "operation"; stamp: StampKey };
+  tuple: LinkTuple;
+  destination: OperationLinkDestination;
+}
 
 /** Internal per-node lifetime key. It never projects into workflow JSON. */
 export const NODE_INCARNATION_KEY = "__incarnation";
@@ -33,7 +65,16 @@ export const LEGACY_NODE_INCARNATION = "0";
 // ---------------------------------------------------------------------------
 
 /** The implemented op kinds. `apply` rejects anything else loudly. */
-export const FROZEN_OPS = ["add_node", "connect", "disconnect", "set_widget", "delete_node", "clear"] as const;
+export const FROZEN_OPS = [
+  "add_node",
+  "connect",
+  "disconnect",
+  "set_widget",
+  "delete_node",
+  "clear",
+  "define_subgraph",
+  "insert_workflow",
+] as const;
 
 /** Defined by the vocabulary but deferred (§1.6): rejected until un-deferred by amendment. */
 export const DEFERRED_OPS = ["reset_doc"] as const;
@@ -60,10 +101,7 @@ export const DEFERRED_OPS = ["reset_doc"] as const;
  * belongs. `test/batch-policy.test.ts` pins the list, the README table, and
  * the deliberate non-enforcement together.
  */
-export const BATCHABLE_OPS = ["add_node", "connect", "disconnect", "set_widget", "delete_node"] as const;
-
-/** Every kind the vocabulary defines — implemented ({@link Op}) plus deferred ({@link DeferredOp}). */
-export type OpKind = WireOp["op"];
+export const BATCHABLE_OPS = ["add_node", "connect", "disconnect", "set_widget", "delete_node", "define_subgraph"] as const;
 
 /** A kind `applyOps` implements. */
 export type FrozenOpKind = (typeof FROZEN_OPS)[number];
@@ -130,7 +168,7 @@ export interface OpBase {
 }
 
 // ---------------------------------------------------------------------------
-// The seven declared op kinds: six implemented (`Op`) plus the deferred
+// The nine declared op kinds: eight implemented (`Op`) plus the deferred
 // `reset_doc` (`DeferredOp`); together `WireOp`. "Frozen" now means
 // implemented — `FROZEN_OPS` is pinned to `Op["op"]` exactly (issue #17).
 // ---------------------------------------------------------------------------
@@ -145,6 +183,27 @@ export interface AddNodeOp extends OpBase {
   pos: number[];
   /** Full mint-time node snapshot — AUTHORITATIVE, inserted verbatim (vocabulary §8.5). */
   node: WorkflowNode;
+}
+
+/**
+ * Merge a workflow template (nodes, links, `definitions.subgraphs`) into an
+ * existing doc in one transaction (ADR-022; agent-subgraph TDD V1.5).
+ *
+ * The applier remaps every carried id deterministically from `op_id` and the
+ * original id. Exact replay therefore chooses the same ids, while distinct
+ * insert ops cannot collide or depend on document state. `links`, `groups`,
+ * and `definitions` are optional and default to empty.
+ */
+export interface InsertWorkflowOp extends OpBase {
+  op: "insert_workflow";
+  /** The template to merge — AUTHORITATIVE, nodes inserted verbatim after id validation. */
+  workflow: {
+    nodes: WorkflowNode[];
+    links?: unknown[];
+    groups?: unknown[];
+    definitions?: { subgraphs?: unknown[]; [key: string]: unknown };
+    [key: string]: unknown;
+  };
 }
 
 /** Autogrow slot descriptor carried by a `connect` (vocabulary §1.2 / §8.4). */
@@ -215,6 +274,8 @@ export interface PromotedHostWrite {
 /** Fields every `connect` carries, whichever way its destination slot is addressed. */
 interface ConnectOpBase extends OpBase {
   op: "connect";
+  /** Non-empty subgraph-instance path for a connect inside its definition. */
+  path?: [NodeId, ...NodeId[]];
   /** Link identity, minted at op-mint time (int in comfy-cli). */
   link_id: NodeId;
   from_node: NodeId;
@@ -394,6 +455,12 @@ export interface ClearOp extends OpBase {
   removed_nodes: NodeId[];
 }
 
+export interface DefineSubgraphOp extends OpBase {
+  op: "define_subgraph";
+  subgraph_id: string;
+  subgraph_definition: SubgraphDefinition;
+}
+
 /**
  * Replace the entire document with a workflow snapshot.
  *
@@ -427,7 +494,9 @@ export type Op =
   | DisconnectOp
   | SetWidgetOp
   | DeleteNodeOp
-  | ClearOp;
+  | ClearOp
+  | DefineSubgraphOp
+  | InsertWorkflowOp;
 
 /**
  * A kind the vocabulary declares but this package refuses to apply
@@ -478,18 +547,20 @@ export type WireOp = Op | DeferredOp;
 // ---------------------------------------------------------------------------
 
 type Equals<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
-type Assert<T extends true> = T;
+type Checked<T, Checks extends readonly true[]> = T &
+  (Checks[number] extends true ? unknown : never);
 
-/** `FROZEN_OPS` names exactly the kinds `applyOps` implements. */
-type _FrozenIsExactlyTheImplementedUnion = Assert<Equals<FrozenOpKind, Op["op"]>>;
-/** `DEFERRED_OPS` names exactly the kinds declared-but-not-implemented. */
-type _DeferredIsExactlyTheDeferredUnion = Assert<Equals<DeferredOpKind, DeferredOp["op"]>>;
-/** Every declared kind is exactly once in FROZEN_OPS or DEFERRED_OPS. */
-type _OpKindsArePartitioned = Assert<Equals<FrozenOpKind | DeferredOpKind, OpKind>>;
-/** No kind is both implemented and deferred. */
-type _FrozenAndDeferredAreDisjoint = Assert<Equals<FrozenOpKind & DeferredOpKind, never>>;
-/** Batchable kinds are a subset of the implemented kinds. */
-type _BatchableIsSubsetOfFrozen = Assert<Equals<Exclude<BatchableOpKind, FrozenOpKind>, never>>;
+/** Every kind the vocabulary defines — implemented ({@link Op}) plus deferred ({@link DeferredOp}). */
+export type OpKind = Checked<
+  WireOp["op"],
+  [
+    Equals<FrozenOpKind, Op["op"]>,
+    Equals<DeferredOpKind, DeferredOp["op"]>,
+    Equals<FrozenOpKind | DeferredOpKind, WireOp["op"]>,
+    Equals<FrozenOpKind & DeferredOpKind, never>,
+    Equals<Exclude<BatchableOpKind, FrozenOpKind>, never>,
+  ]
+>;
 
 // ---------------------------------------------------------------------------
 // Widget catalog (pinned object_info projection)
@@ -543,9 +614,16 @@ export interface WorkflowNode {
 export interface WorkflowJSON {
   nodes: WorkflowNode[];
   links: unknown[];
+  definitions?: { subgraphs?: unknown[]; [key: string]: unknown };
   groups?: unknown[];
   extra?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+export interface SubgraphDefinition extends Record<string, unknown> {
+  id: string;
+  nodes: unknown[];
+  links: unknown[];
 }
 
 // ---------------------------------------------------------------------------
