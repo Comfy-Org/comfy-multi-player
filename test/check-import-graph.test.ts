@@ -24,7 +24,7 @@ const script = join(repoRoot, "scripts", "check-import-graph.mjs");
 
 /** Run the gate against a fixture root, with an optional floor override. */
 function runAgainst(root: string, minModules?: number) {
-  const env: Record<string, string> = { ...process.env, IMPORT_GRAPH_ROOT: root };
+  const env: NodeJS.ProcessEnv = { ...process.env, IMPORT_GRAPH_ROOT: root };
   if (minModules !== undefined) env.IMPORT_GRAPH_MIN_MODULES = String(minModules);
   return spawnSync("node", [script], { encoding: "utf8", env });
 }
