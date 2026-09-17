@@ -227,6 +227,81 @@ describe("interior connect regression", () => {
     expect(projections[0]).toEqual(projections[1]);
   });
 
+  it("preserves asymmetric imported order ahead of deterministically ordered additions", () => {
+    const imported = structuredClone(workflow) as unknown as WorkflowJSON & {
+      definitions: { subgraphs: Array<{ nodes: WorkflowJSON["nodes"]; links: Array<Record<string, unknown>> }> };
+    };
+    const definition = imported.definitions.subgraphs[0]!;
+    (definition.nodes[0]!.outputs as Array<{ links: number[] | null }>)[0]!.links = [90, 7];
+    (definition.nodes[1]!.inputs as Array<{ link: number | null }>)[0]!.link = 90;
+    definition.nodes.push(
+      {
+        id: 3,
+        type: "Sink",
+        inputs: [{ name: "text", type: "STRING", link: 7 }],
+        outputs: [],
+      },
+      {
+        id: 4,
+        type: "Sink",
+        inputs: [{ name: "text", type: "STRING", link: null }],
+        outputs: [],
+      },
+      {
+        id: 5,
+        type: "Sink",
+        inputs: [{ name: "text", type: "STRING", link: null }],
+        outputs: [],
+      },
+    );
+    definition.links = [
+      { id: 90, origin_id: 1, origin_slot: 0, target_id: 2, target_slot: 0, type: "STRING" },
+      { id: 7, origin_id: 1, origin_slot: 0, target_id: 3, target_slot: 0, type: "STRING" },
+    ];
+    const snapshot = Y.encodeStateAsUpdate(mint(imported, catalog));
+    const first = connect({ to_node: 4, link_id: 41 });
+    const second = connect({
+      op_id: "independentconnect0000000000002",
+      stamp: [2, "human:b"],
+      actor: "human:b",
+      base_version: 2,
+      to_node: 5,
+      link_id: 42,
+    });
+
+    for (const order of [[first, second], [second, first]]) {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      applyOps(doc, order, catalog);
+      expect(definitionOf(doc).links.map(({ id }) => id)).toEqual([90, 7, 41, 42]);
+    }
+  });
+
+  it("removes a replaced imported link without disturbing surviving imported order", () => {
+    const imported = structuredClone(workflow) as unknown as WorkflowJSON & {
+      definitions: { subgraphs: Array<{ nodes: WorkflowJSON["nodes"]; links: Array<Record<string, unknown>> }> };
+    };
+    const definition = imported.definitions.subgraphs[0]!;
+    (definition.nodes[0]!.outputs as Array<{ links: number[] | null }>)[0]!.links = [90, 7];
+    (definition.nodes[1]!.inputs as Array<{ link: number | null }>)[0]!.link = 90;
+    definition.nodes.push({
+      id: 3,
+      type: "Sink",
+      inputs: [{ name: "text", type: "STRING", link: 7 }],
+      outputs: [],
+    });
+    definition.links = [
+      { id: 90, origin_id: 1, origin_slot: 0, target_id: 2, target_slot: 0, type: "STRING" },
+      { id: 7, origin_id: 1, origin_slot: 0, target_id: 3, target_slot: 0, type: "STRING" },
+    ];
+    const doc = mint(imported, catalog);
+
+    expect(applyOps(doc, [connect()], catalog).outcomes[0]?.outcome).toBe("applied");
+
+    expect(definitionOf(doc).links.map(({ id }) => id)).toEqual([7, 41]);
+    expect(definitionOf(doc).nodes.find(({ id }) => id === 1)?.outputs?.[0]?.links).toEqual([7, 41]);
+  });
+
   it("keeps top-level and interior bookkeeping distinct when link ids collide", () => {
     const withRootGraph = structuredClone(workflow) as unknown as WorkflowJSON;
     withRootGraph.nodes.push(

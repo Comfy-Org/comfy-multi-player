@@ -128,6 +128,7 @@ import {
   type WidgetCatalog,
   type WireOp,
 } from "./types.js";
+import { addInteriorLinkOrder, removeInteriorLinkOrder } from "./interior-link-order.js";
 import { NODE_INCARNATION_KEY } from "./types.js";
 
 /**
@@ -1313,10 +1314,10 @@ function applyInteriorConnect(doc: Y.Doc, op: ConnectOp, scope: InteriorConnectS
     });
   }
   const linkOrder = scope.definition.get("link_order");
-  const orderedIds = Array.isArray(linkOrder) ? [...linkOrder] : [];
-  if (!orderedIds.some((id) => String(id) === linkKey)) {
-    orderedIds.push(linkKey);
-    mset(scope.definition, "link_order", orderedIds);
+  const orderedIds: unknown[] = Array.isArray(linkOrder) ? [...linkOrder] : [];
+  const nextOrder = addInteriorLinkOrder(orderedIds, linkKey, key);
+  if (nextOrder !== orderedIds) {
+    mset(scope.definition, "link_order", nextOrder);
   }
   mset(input, "link", op.link_id);
   const output = sourceOutputs.get(op.from_slot) as Y.Map<unknown>;
@@ -1836,7 +1837,7 @@ function removeLinkInScope(scope: InteriorConnectScope, linkId: unknown): void {
   scrubNodeLinkRefs(scope.nodes, (candidate) => candidate != null && String(candidate) === key);
   const linkOrder = scope.definition.get("link_order");
   if (Array.isArray(linkOrder)) {
-    mset(scope.definition, "link_order", linkOrder.filter((id) => String(id) !== key));
+    mset(scope.definition, "link_order", removeInteriorLinkOrder(linkOrder, key));
   }
 }
 

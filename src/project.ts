@@ -19,8 +19,8 @@
  *
  * Subgraph definitions project as `{...extra, subgraphs: [...]}` with
  * definitions sorted by id and each definition's interior nodes/links in
- * mint order (`node_order`/`link_order` — interior order is static in v1
- * because only `set_widget` is subgraph-scoped).
+ * mint order (`node_order`/`link_order`); links added by semantic ops follow
+ * imported links in deterministic stamp order.
  */
 
 import * as Y from "yjs";
@@ -33,6 +33,7 @@ import {
   widgetStorageOf,
 } from "./doc.js";
 import { assertNever } from "./exhaustive.js";
+import { projectInteriorLinkOrder } from "./interior-link-order.js";
 import { assertReadableSchema } from "./schema-version.js";
 import { NODE_INCARNATION_KEY, type WidgetCatalog, type WorkflowJSON, type WorkflowNode } from "./types.js";
 
@@ -213,7 +214,7 @@ function tryProjectNode(value: unknown, catalog: WidgetCatalog): WorkflowNode | 
   return projectNode(value, catalog);
 }
 
-/** Definition Y.Map → subgraph definition JSON, interior nodes/links in mint order. */
+/** Definition Y.Map → subgraph JSON, preserving mint order before deterministic additions. */
 function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): Record<string, unknown> {
   const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   dm.forEach((v, k) => {
@@ -225,7 +226,10 @@ function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): Record<s
         .map((id) => tryProjectNode(v.get(id), catalog))
         .filter((node): node is WorkflowNode => node !== null);
     } else if (k === "links" && v instanceof Y.Map) {
-      const order = (dm.get("link_order") as string[] | undefined) ?? [...v.keys()].sort();
+      const storedOrder = dm.get("link_order");
+      const order = Array.isArray(storedOrder)
+        ? projectInteriorLinkOrder(storedOrder)
+        : [...v.keys()].sort();
       out[k] = order.filter((id) => v.has(id)).map((id) => structuredClone(v.get(id)));
     } else {
       out[k] = structuredClone(v);
