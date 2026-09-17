@@ -581,20 +581,31 @@ node/link arrays are **not** sorted at projection — the §7 sorted-by-id rule
 applies to the top-level arrays only. Python's `canonical` sorts
 `definitions.subgraphs` by id but leaves each definition's interior arrays
 in authored order, and the fixtures pin that (`session-subgraph`'s def lists
-node 27 before node 3). Since only `set_widget` is subgraph-scoped, interior
-membership and order are static after mint; the def Y.Map therefore stores
-plain `node_order`/`link_order` registers (written once at mint) and
-projection emits interior arrays in that order. Definitions themselves
-project sorted by definition id.
+node 27 before node 3). The def Y.Map stores plain scalar
+`node_order`/`link_order` registers, and projection emits interior arrays in
+that order. Interior `connect` preserves surviving imported links as an
+authored-order prefix and sorts op-added links after them by winning stamp.
+The scalar `link_order` itself is updated to that canonical order; projection
+does not depend on an object marker hidden inside the array. Definitions
+themselves project sorted by definition id.
+
+Added-link ordering stamps use the internal `__stamps` key
+`["interior_link_order", String(definition_id), String(link_id)]`. A winning
+same-ID rewrite refreshes that stamp; rewriting a still-present imported link
+does not reclassify it as an addition. Definition IDs identify unique
+definitions. These are additional internal stamp entries, not a new root or
+scalar-array layout; as with Amendment A18, `SCHEMA_VERSION` remains 2.
 
 ### 5.2 Addressing: three forms, one write target
 
-Only `set_widget` is subgraph-scoped in the frozen vocabulary (spike Q6;
-error strings captured verbatim in `fixtures/findings.json`):
+The frozen spike supported only subgraph-scoped `set_widget` (spike Q6;
+historical error strings remain in `fixtures/findings.json`). The current
+package also supports `connect` with a non-empty instance `path`:
 
-- `connect` structurally refuses interior endpoints ("a link cannot cross
-  the subgraph boundary") and promoted-widget targets ("promoted widget (a
-  value), not a link input").
+- Interior `connect` resolves both endpoints within one definition and rejects
+  interior autogrow and writes to shared, unforked definitions. Input stamps
+  include the path; normalized link identity stamps do too. This does not
+  enable cross-boundary wiring or an interior `disconnect` operation.
 - `add_node`/`delete_node` cannot address interior nodes at all.
 
 `set_widget` accepts three address forms — flat promoted (`57.text`, routed

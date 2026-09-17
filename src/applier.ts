@@ -1315,8 +1315,21 @@ function applyInteriorConnect(doc: Y.Doc, op: ConnectOp, scope: InteriorConnectS
   }
   const linkOrder = scope.definition.get("link_order");
   const orderedIds: unknown[] = Array.isArray(linkOrder) ? [...linkOrder] : [];
-  const nextOrder = addInteriorLinkOrder(orderedIds, linkKey, key);
-  if (nextOrder !== orderedIds) {
+  const definitionId = String(scope.definition.get("id") ?? "");
+  const orderStampKey = (candidate: string) =>
+    JSON.stringify(["interior_link_order", definitionId, candidate]);
+  const additions: Record<string, StampKey> = Object.create(null) as Record<string, StampKey>;
+  for (const candidate of orderedIds.map(String)) {
+    const addedStamp = stamps.get(orderStampKey(candidate));
+    if (Array.isArray(addedStamp)) additions[candidate] = addedStamp as StampKey;
+  }
+  const wasAdded = Object.hasOwn(additions, linkKey);
+  const wasPresent = orderedIds.some((candidate) => String(candidate) === linkKey);
+  const nextOrder = addInteriorLinkOrder(orderedIds, linkKey, key, additions);
+  if (!wasPresent || wasAdded) {
+    mset(stamps, orderStampKey(linkKey), key);
+  }
+  if (nextOrder.some((candidate, index) => candidate !== orderedIds[index]) || nextOrder.length !== orderedIds.length) {
     mset(scope.definition, "link_order", nextOrder);
   }
   mset(input, "link", op.link_id);

@@ -244,11 +244,22 @@ describe("interior connect regression", () => {
       [middle, late, early], [late, early, middle], [late, middle, early]];
     expect(orders).toHaveLength(6);
     for (const order of orders) {
-      const doc = new Y.Doc();
+      let doc = new Y.Doc();
       Y.applyUpdate(doc, snapshot);
-      applyOps(doc, order, catalog);
+      for (const op of order) {
+        expect(applyOps(doc, [op], catalog).outcomes[0]?.outcome).not.toBe("rejected");
+        // Resume on a new replica after every op: ordering metadata must persist.
+        const resumed = new Y.Doc();
+        Y.applyUpdate(resumed, Y.encodeStateAsUpdate(doc));
+        doc.destroy();
+        doc = resumed;
+      }
       expect.soft(definitionOf(doc).links.map(({ id }) => id), order.map((op) => op.op_id).join(","))
         .toEqual([42, 41]);
+      const storedDefinition = doc.getMap<Y.Map<unknown>>("definitions").get("definition-1");
+      const rawOrder = storedDefinition?.get("link_order");
+      expect.soft(rawOrder, order.map((op) => op.op_id).join(",")).toEqual(["42", "41"]);
+      expect.soft((rawOrder as unknown[]).every((entry) => typeof entry === "string")).toBe(true);
     }
   });
 
