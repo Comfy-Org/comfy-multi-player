@@ -73,6 +73,13 @@ function linkedDoc(): Y.Doc {
   return doc;
 }
 
+/** Independent replica restored from a snapshot, so forked branches start byte-identical (KA-10). */
+function forkDoc(snapshot: Uint8Array): Y.Doc {
+  const doc = new Y.Doc();
+  Y.applyUpdate(doc, snapshot);
+  return doc;
+}
+
 function seededDoc(): Y.Doc {
   const doc = mint(workflow, catalog);
   const connect = connectOp();
@@ -115,14 +122,9 @@ describe("delete_node LWW loser removed_links cleanup", () => {
   it("returns lww-dropped when the losing delete names no installed link", () => {
     const base = mint(workflow, catalog);
     const snapshot = Y.encodeStateAsUpdate(base);
-    const fork = () => {
-      const doc = new Y.Doc();
-      Y.applyUpdate(doc, snapshot);
-      return doc;
-    };
 
-    const doc = fork();
-    const reverse = fork();
+    const doc = forkDoc(snapshot);
+    const reverse = forkDoc(snapshot);
     const winner = winningPresence();
     const op = losingDelete([999]);
     expect(applyOps(doc, [winner], catalog).outcomes.map(({ outcome }) => outcome)).toEqual(["applied"]);
@@ -199,22 +201,32 @@ describe("delete_node LWW loser removed_links cleanup", () => {
     //
     // Both orders end with node 10 present, so the divergence is confined to the
     // link register, and it is permanent: link deletion carries no stamp and the
-    // winning re-add does not restore L1. This contradicts vocabulary §6 A7
-    // ("removed_links is the authoritative target set") and the determinism
-    // invariant. Deciding the fix (drop the incident scrub, stamp link deletions,
-    // or restore on re-add) is an applier-semantics call, not a test change.
+    // winning re-add does not restore L1. This is NOT a violation of vocabulary
+    // §6 A7: severance of the links the op NAMES in `removed_links` is ungated
+    // and monotonic (schema rule 3), and severing links merely INCIDENT to the
+    // node only when the node itself is removed is exactly what A7 requires.
+    // The defect is the resulting KA-4 arrival-order divergence: whether the
+    // incident scrub fires depends on which op wins the presence stamp, so
+    // identical op sets project different link registers. Deciding the fix
+    // (drop the incident scrub, stamp link deletions, or restore on re-add) is
+    // an applier-semantics call, not a test change.
     //
     // If a fix lands, this test SHOULD fail — replace it with a convergence
     // assertion at that point.
+    //
+    // Both branches below fork ONE linked-document snapshot via
+    // `Y.encodeStateAsUpdate`/`Y.applyUpdate` (KA-10), so arrival order is the
+    // only variable between them.
+    const snapshot = Y.encodeStateAsUpdate(linkedDoc());
     const op = losingDelete([999]);
 
-    const forward = linkedDoc();
+    const forward = forkDoc(snapshot);
     expect(applyOps(forward, [winningPresence(), op], catalog).outcomes.map(({ outcome }) => outcome)).toEqual([
       "applied",
       "lww-dropped",
     ]);
 
-    const reverse = linkedDoc();
+    const reverse = forkDoc(snapshot);
     expect(applyOps(reverse, [op, winningPresence()], catalog).outcomes.map(({ outcome }) => outcome)).toEqual([
       "applied",
       "applied",
