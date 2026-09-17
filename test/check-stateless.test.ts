@@ -78,6 +78,13 @@ describe("check-stateless gate", () => {
     expect(result.stderr).toContain("INCONCLUSIVE — could not run the stateless probe: spawnSync");
   });
 
+  it("returns exit 2 when the stateless probe is terminated by a signal", () => {
+    executable(join(bin, "vitest"), "kill -TERM $$");
+    const result = run();
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("INCONCLUSIVE — stateless probe terminated by signal SIGTERM");
+  });
+
   it("preserves a genuine lint finding as exit 1", () => {
     executable(
       join(bin, "eslint"),

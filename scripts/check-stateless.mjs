@@ -75,6 +75,7 @@ const probe = spawnSync(
   { cwd: root, encoding: "utf8", stdio: "inherit" },
 );
 if (probe.error) inconclusive(`could not run the stateless probe: ${probe.error.message}`);
+if (probe.signal) inconclusive(`stateless probe terminated by signal ${probe.signal}`);
 if (probe.status !== 0) process.exit(probe.status ?? 1);
 
 const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));

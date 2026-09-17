@@ -129,7 +129,14 @@ describe("check-import-graph gate", () => {
     expect(run.stderr).toContain("could not parse");
   });
 
-  it.each(["{}", "null", '{"summary":null}', '{"summary":{"totalCruised":"2","totalDependenciesCruised":1,"violations":[]}}']) (
+  it.each([
+    "{}",
+    "null",
+    '{"summary":null}',
+    '{"summary":{"totalCruised":"2","totalDependenciesCruised":1,"violations":[]}}',
+    '{"summary":{"totalCruised":2,"totalDependenciesCruised":-1,"violations":[]}}',
+    '{"summary":{"totalCruised":2,"totalDependenciesCruised":1,"violations":[{}]}}',
+  ])(
     "is INCONCLUSIVE (exit 2) when dependency-cruiser returns malformed report %s",
     (output) => {
       writeCleanFixture();
