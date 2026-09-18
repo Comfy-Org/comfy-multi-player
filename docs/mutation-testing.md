@@ -50,7 +50,7 @@ Use Node 22 or newer. Do not quote a score unless the checker passes and its out
 | --- | --- |
 | 0 | Conclusive and at or above the break threshold |
 | 1 | Conclusive and below the break threshold |
-| 2 | **INCONCLUSIVE**: no report, fewer than 500 mutants, more than 2% of detected mutants timed out, or no `thresholds.break` value |
+| 2 | **INCONCLUSIVE**: missing, unreadable or unparseable report; fewer than 500 total mutants (including zero); zero valid mutants; more than 2% of detected mutants timed out; or no numeric `thresholds.break` value |
 
 INCONCLUSIVE is not a pass. Re-run on a suitable host and retain the checker output; do not record the score.
 
