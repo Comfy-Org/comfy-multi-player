@@ -565,10 +565,21 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
     };
     const seed = mint(convergenceWorkflow, catalog);
     const snapshot = Y.encodeStateAsUpdate(seed);
-    const runs = [[[bad, tail], [del]], [[del], [bad, tail]]].map((batches) => {
+    const runs = [[[bad, tail], [del]], [[del], [bad, tail]]].map((batches, runIndex) => {
       const doc = new Y.Doc();
       Y.applyUpdate(doc, snapshot);
-      const outcomes = batches.flatMap((batch) => applyOps(doc, batch as unknown as Op[], catalog).outcomes);
+      const outcomes = batches.flatMap((batch, batchIndex) => {
+        const beforeRejectedBatch = runIndex === 0 && batchIndex === 0
+          ? Buffer.from(Y.encodeStateAsUpdate(doc))
+          : null;
+        const batchOutcomes = applyOps(doc, batch as unknown as Op[], catalog).outcomes;
+        if (beforeRejectedBatch !== null) {
+          expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(beforeRejectedBatch)).toBe(true);
+          expect(appliedMap(doc).has(bad.op_id)).toBe(false);
+          expect(appliedMap(doc).has(tail.op_id)).toBe(false);
+        }
+        return batchOutcomes;
+      });
       return { outcomes, projection: project(doc, catalog) };
     });
     const sourcePresent = runs[0]!;
