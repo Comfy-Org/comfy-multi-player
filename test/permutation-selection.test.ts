@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const suite = "test/permutation/full-op-pool.permutation.test.ts";
-const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const manifest: { scripts: Record<string, string> } =
+  JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 describe("permutation scheduling contract", () => {
   it.each([
@@ -17,7 +18,7 @@ describe("permutation scheduling contract", () => {
     expect(command).toEqual(expect.stringMatching(/^vitest run(?: |$)/));
     // Ask the installed Vitest to collect using the actual script's flags and
     // config. A string-only check misses an intersected/unsupported tag filter.
-    const args = command.split(" ").slice(2);
+    const args = command!.split(" ").slice(2);
     if (script === "test") args.push(suite);
     const result = spawnSync(process.execPath, ["node_modules/vitest/vitest.mjs", "list", ...args, "--json"], {
       cwd: root, encoding: "utf8", timeout: 10_000,
