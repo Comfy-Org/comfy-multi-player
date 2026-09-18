@@ -1,6 +1,6 @@
-# Multiplayer workflow-document schema — v3
+# Multiplayer workflow-document schema — v4
 
-`SCHEMA_VERSION = 3`
+`SCHEMA_VERSION = 4`
 
 > **State: DRAFT — awaiting FE sign-off (FE-1330).**
 >
@@ -22,7 +22,7 @@
 
 This document is the authoritative reference for the Y.Doc layout and op
 semantics of `@comfyorg/comfy-multi-player`. It is versioned: a change to the
-layout bumps `SCHEMA_VERSION` and requires a `migrate()` path (§10) plus FE
+layout bumps `SCHEMA_VERSION` and requires an explicit old-layout disposition (§10) plus FE
 sign-off.
 
 Normative inputs, in precedence order:
@@ -62,7 +62,8 @@ Y.Doc
 │                        groups, extra, config, version, …          (§1.4)
 ├── Y.Map "__applied"    op_id → 1                                  (§4)
 ├── Y.Map "__stamps"     write-target key → [base_version, actor, op_id]  (§4)
-└── Y.Map "__link_state" normalized link id → imported durable descriptor (§1.5)
+├── Y.Map "__link_state" normalized link id → imported durable descriptor (§1.5)
+└── Y.Map "__clock_reservations" producer identity → reserved counter tuple (§1.6)
 ```
 
 ### 1.5 Durable link state
@@ -80,6 +81,25 @@ a winning endpoint re-add restores the exact tuple, slot and endpoint
 references. Winning disconnect, replacement, and explicitly named
 `delete_node.removed_links` retire the descriptor. Composed destinations remain
 undefined until a producer and public type contract exist.
+
+### 1.6 Durable clock reservations
+
+Schema v4 stores Lamport admissions separately from winning semantic stamps.
+`__clock_reservations` is created lazily on the first successful admission.
+Its key is `JSON.stringify(["__lamport_clock", workflow_id, lineage_id, producer_id])`;
+its value is exactly `[counter, producer_id, key]`. All identity fields are
+strings and the reserved counter is a positive safe integer. The key and tuple
+retain their pre-v4 encoding; only their root changes. Reservations never appear
+in `readStamps()` or projected workflow JSON.
+
+`observedDocCounter()` validates the current schema, both root types and every
+tuple, then returns the maximum across `__stamps` and `__clock_reservations`.
+Winning stamps may have counter zero; reservations may not. Missing ledgers
+are empty, and neither a read nor a rejected admission creates them. Snapshot
+roots are typed without writing structs; sequence content is refused rather
+than silently viewed as an empty map. A malformed entry fails the entire scan.
+Store wrappers for one caller-owned document still share ADR-021's weakly keyed
+transaction queue; no durable counter lives outside that document.
 
 ### 1.1 Per-node Y.Map
 
@@ -815,7 +835,7 @@ the epoch; cross-epoch struct updates never merge.
 
 ## 10. Versioning and `migrate()`
 
-- `SCHEMA_VERSION = 3`, stored in `meta.schema_version` at mint.
+- `SCHEMA_VERSION = 4`, stored in `meta.schema_version` at mint.
 - Private-alpha policy keeps one current format: old layouts are re-minted at
   their source and compatibility readers/migrations are not provided.
 - `migrate(doc, fromVersion)` contract: exact no-op when
@@ -2085,8 +2105,8 @@ reference, then installs its own tuple and exactly its own references. The
 separate input register still decides whether that identity may occupy the
 requested destination; losing that gate leaves no tuple or dangling reference.
 This adds an internal `__stamps` key, not a root-layout change, so
-this amendment did not itself require a version bump. The combined current
-document schema is v3.
+this amendment did not itself require a version bump. The combined document
+schema at that integration was v3; A20 advances it to v4.
 
 ---
 
@@ -2109,5 +2129,31 @@ The whole merge occurs in one Yjs transaction and claims the
 `("insert_workflow", op_id)` stamp target. Exact replay is stopped by the
 existing applied-op gate and is byte-identical. This adds graph content but no
 new root or node-map layout, so insertion did not itself require a version
-bump. The combined current document schema is v3. Other op payloads remain
+bump. The combined document schema at that integration was v3. Other op payloads remain
 closed to definition-bearing fields.
+
+---
+
+## Amendment A20 — 2026-09-18 — separate Lamport reservation ledger (schema v4)
+
+The carried finding by **coderabbitai[bot]**, submitted **2026-09-04T18:54:52Z**
+in [frontend PR #16644](https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#pullrequestreview-5116820123),
+identified `commitCounter()` writing non-write-target reservations into
+`__stamps`, which the public `readStamps()` returns as the LWW ledger. §1.6
+moves those rows to `__clock_reservations`, preserving their identity and tuple.
+ADR-021 Amendment CLK-3 records the clock contract and test scope. Prior QA is
+historical evidence, not approval of this new layout.
+
+**Version decision (KA-11): bump 3 → 4.** A v3 clock scans only `__stamps` and
+would miss reservations in the new root, potentially reusing counters even
+though graph projection looks unchanged. New readers refuse v1–v3, absent and
+future versions; no legacy-reservation lookup, conversion or relabelling is
+provided. Under private-alpha policy, the host re-mints source workflows into a
+new lineage and distributes that snapshot; this is not same-lineage recovery
+of old pending operations. Hosts must settle or discard those queues before
+cutover. `migrate()` remains a validator and refuses old layouts byte-identically.
+
+The wire-layout vector now names eight roots and schema v4. Semantic-op golden
+vectors remain unchanged: the op stamp and target namespaces did not change.
+Schema v4 requires coordinated reader adoption and FE sign-off before rollout;
+this implementation does not claim that sign-off or publish/deploy a package.

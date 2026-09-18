@@ -1,5 +1,6 @@
 import * as Y from "yjs";
-import { ROOT_STAMPS } from "./doc.js";
+import { ROOT_CLOCK_RESERVATIONS, ROOT_STAMPS } from "./doc.js";
+import { assertReadableSchema } from "./schema-version.js";
 import type { Actor } from "./types.js";
 
 export const MAX_LAMPORT_COUNTER = Number.MAX_SAFE_INTEGER;
@@ -24,16 +25,17 @@ const documentTransactionTails = new WeakMap<Y.Doc, Promise<void>>();
 
 /**
  * A caller-owned Lamport store whose floor is derived from this document's
- * winning stamp ledger on every transaction. The package keeps no producer
+ * winning stamps and reservations on every transaction. The package keeps no producer
  * counter: the Y.Doc is the caller-owned lineage snapshot and this store's
  * transaction queue is the serialization boundary.
  *
- * Stamp values are validated rather than silently skipped. A malformed
- * `__stamps` entry must fail closed before a producer mints an unsafe counter.
+ * Both ledgers are validated rather than silently skipped. Malformed state
+ * must fail closed before a producer mints an unsafe counter.
  * Incarnation-qualified target keys all belong to this document lineage, so
  * old node lives remain part of the observed floor (DQ-11 / ADR-021). A
- * successful transaction reserves its counter in the same ledger so the next
- * transaction observes it even before the producer's semantic op is applied.
+ * successful transaction writes `__clock_reservations` so the next transaction
+ * observes it even before the producer's semantic op is applied. `__stamps`
+ * remains exclusively the semantic write-target ledger exposed by readStamps.
  */
 export class DocDerivedLamportClockStore implements LamportClockStore {
   public constructor(private readonly doc: Y.Doc) {}
@@ -63,26 +65,46 @@ export class DocDerivedLamportClockStore implements LamportClockStore {
       identity.lineage_id,
       identity.producer_id,
     ]);
-    const stamps = this.doc.getMap<unknown>(ROOT_STAMPS);
-    this.doc.transact(() => stamps.set(reservationKey, [counter, identity.producer_id, reservationKey]));
+    const reservations = this.doc.getMap<unknown>(ROOT_CLOCK_RESERVATIONS);
+    this.doc.transact(() => reservations.set(reservationKey, [counter, identity.producer_id, reservationKey]));
   }
 }
 
-/** Return the maximum valid counter in the document's `__stamps` ledger. */
+/**
+ * Maximum counter across winning stamps and reservations in a current-schema
+ * document. Missing ledgers are empty; missing/unsupported schema is refused.
+ * Reads neither write structs nor create absent roots.
+ */
 export function observedDocCounter(doc: Y.Doc): number | undefined {
-  const root = doc.share.get(ROOT_STAMPS);
-  if (root === undefined) return undefined;
-  if (!(root instanceof Y.Map)) throw new TypeError("__stamps root is not a Y.Map");
-
+  assertReadableSchema(doc, "observedDocCounter");
   let maximum: number | undefined;
-  root.forEach((value) => {
-    if (!Array.isArray(value) || value.length < 3 || typeof value[1] !== "string" || typeof value[2] !== "string") {
-      throw new TypeError("__stamps contains a malformed stamp");
-    }
-    const counter = validateLamportCounter(value[0], true);
-    maximum = maximum === undefined ? counter : Math.max(maximum, counter);
-  });
+  for (const name of [ROOT_STAMPS, ROOT_CLOCK_RESERVATIONS]) {
+    const root = doc.share.get(name);
+    if (root === undefined) continue;
+    // Snapshot roots arrive as AbstractType, not Y.Map. Type only an existing
+    // root; reject sequence content before getMap can hide it in a map view.
+    if (root._start !== null) throw new TypeError(`${name} root contains non-map content`);
+    const ledger = doc.getMap<unknown>(name); // throws for a different concrete Y type
+    ledger.forEach((value, key) => {
+      if (!Array.isArray(value) || value.length !== 3 || typeof value[1] !== "string" ||
+          typeof value[2] !== "string" || value[2].length === 0) {
+        throw new TypeError(`${name} contains a malformed stamp tuple`);
+      }
+      if (name === ROOT_CLOCK_RESERVATIONS) validateReservation(key, value[1], value[2]);
+      const counter = validateLamportCounter(value[0], name === ROOT_STAMPS);
+      maximum = maximum === undefined ? counter : Math.max(maximum, counter);
+    });
+  }
   return maximum;
+}
+
+function validateReservation(key: string, producer: string, storedKey: string): void {
+  const identity: unknown = JSON.parse(key);
+  if (!Array.isArray(identity) || identity.length !== 4 || identity[0] !== "__lamport_clock" ||
+      typeof identity[1] !== "string" || typeof identity[2] !== "string" ||
+      identity[3] !== producer || storedKey !== key || JSON.stringify(identity) !== key) {
+    throw new TypeError(`${ROOT_CLOCK_RESERVATIONS} contains a malformed reservation identity`);
+  }
 }
 
 export function validateLamportCounter(value: unknown, allowZero = false): number {
