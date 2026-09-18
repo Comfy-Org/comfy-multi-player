@@ -140,9 +140,10 @@ describe("applyOps enforces the budget before any mutation", () => {
     const doc = mint(base, catalog);
     const before = bytes(doc);
     const opId = "e".repeat(32);
+    const trailingId = "f".repeat(32);
     // Only inert test fixtures are encoded here. A host receives JSON text;
     // stringify is not a sanitizer for caller-created getters or Proxies.
-    const wireText = JSON.stringify([setWidget(opId, value)]);
+    const wireText = JSON.stringify([setWidget(opId, value), setWidget(trailingId, 99)]);
     const decoded: Op[] = JSON.parse(wireText);
     for (let attempt = 0; attempt < 2; attempt++) {
       const result = applyOps(doc, decoded, catalog);
@@ -150,8 +151,13 @@ describe("applyOps enforces the budget before any mutation", () => {
         op_id: opId,
         outcome: "rejected",
         reason: { code, message: expect.stringMatching(message) },
+      }, {
+        op_id: trailingId,
+        outcome: "rejected",
+        reason: { code: "batch_aborted", message: expect.any(String) },
       }]);
       expect(result.ops_seen).toBe(0);
+      expect(doc.getMap("__applied").has(trailingId)).toBe(false);
       expect(bytes(doc)).toEqual(before);
     }
 
