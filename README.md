@@ -222,6 +222,10 @@ receives the migrated document over the struct stream and must not call this.
 `stampKey(op)`, `compareStampKeys(a, b)`, `writeTarget(op)`,
 `stampTargetKey(op)`, `codePointCompare(a, b)`. You need these only if you are
 building conflict UI or your own bookkeeping — `applyOps` uses them internally.
+Stamp counters are non-negative safe integers; `stampKey` and
+`compareStampKeys` throw `RangeError` when a direct caller supplies a counter
+outside that domain. An absent stamp still falls back to the envelope's
+`base_version` and `actor`, including the existing `0`/empty-string defaults.
 
 ### Follower read surface and document internals
 
