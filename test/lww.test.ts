@@ -101,6 +101,31 @@ describe("compareStampKeys (freeze doc §8.1)", () => {
     }
   });
 
+  it("accepts both safe-counter boundaries and rejects finite values outside them", () => {
+    const op: SetWidgetOp = {
+      op: "set_widget",
+      op_id: "f".repeat(32),
+      actor: "envelope-actor",
+      base_version: 7,
+      stamp: [0, "stamp-actor"],
+      node_id: 1,
+      widget: "steps",
+      value: 1,
+    };
+    for (const counter of [0, Number.MAX_SAFE_INTEGER]) {
+      const key: StampKey = [counter, "stamp-actor", op.op_id];
+      expect(stampKey({ ...op, stamp: [counter, "stamp-actor"] })).toEqual(key);
+      expect(compareStampKeys(key, key)).toBe(0);
+    }
+    for (const counter of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const invalid: StampKey = [counter, "stamp-actor", op.op_id];
+      const valid: StampKey = [0, "stamp-actor", op.op_id];
+      expect(() => stampKey({ ...op, stamp: [counter, "stamp-actor"] })).toThrow(RangeError);
+      expect(() => compareStampKeys(invalid, valid)).toThrow(RangeError);
+      expect(() => compareStampKeys(valid, invalid)).toThrow(RangeError);
+    }
+  });
+
   it("stampKey falls back to [base_version, actor] when stamp is absent", () => {
     const op = {
       op: "set_widget",
