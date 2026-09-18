@@ -2,10 +2,10 @@ import tsParser from "@typescript-eslint/parser";
 import sonarjs from "eslint-plugin-sonarjs";
 
 const sonarRecommended = sonarjs.configs.recommended;
-const sonarWarnings = Object.fromEntries(
+const sonarErrors = Object.fromEntries(
   Object.entries(sonarRecommended.rules).map(([ruleName, setting]) => [
     ruleName,
-    Array.isArray(setting) ? ["warn", ...setting.slice(1)] : "warn",
+    Array.isArray(setting) ? ["error", ...setting.slice(1)] : "error",
   ]),
 );
 
@@ -20,7 +20,26 @@ export default [
       ecmaVersion: 2024,
       parser: tsParser,
       sourceType: "module",
+      // Web-platform primitives used by the shared browser/Node implementation.
+      // Do not grant src/** Node-only or DOM globals (KA-3, FC-3).
+      globals: {
+        TextEncoder: "readonly",
+        structuredClone: "readonly",
+      },
     },
-    rules: sonarWarnings,
+    rules: sonarErrors,
+  },
+  {
+    files: ["test/**/*.ts"],
+    // Vitest runs in bare Node, not a DOM environment. Tests import Vitest APIs.
+    languageOptions: {
+      globals: {
+        Buffer: "readonly",
+        console: "readonly",
+        process: "readonly",
+        TextDecoder: "readonly",
+        URL: "readonly",
+      },
+    },
   },
 ];
