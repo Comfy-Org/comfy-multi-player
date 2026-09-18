@@ -14,6 +14,7 @@
     },
     "findings.json": {
       "generator": "crdt-spike/gen_fixtures.py: workflow_ops probe capture",
+      "notes": "Historical probe capture, not regenerated. The clear-scope prose was manually corrected on 2026-09-18 against test/clear-empty-removed-nodes.test.ts and the current applier; source request: https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#discussion_r3914401872. Executable vectors are unchanged.",
       "sha256": "d1462ed6786745e843f651dea8889b189f875f41358d14fa3cb7fca1b18d691e"
     },
     "lww-vectors.json": {
