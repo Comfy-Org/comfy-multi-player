@@ -143,14 +143,30 @@ function assertNonVacuous(coverage: Coverage): void {
   expect(coverage.permutations, "no applied permutation differed from forward order").toBeGreaterThan(0);
 }
 
-function applyInBatches(doc: Y.Doc, ops: Op[], sizes: number[]): void {
+function applyInBatches(doc: Y.Doc, ops: Op[], sizes: number[]): ReturnType<typeof applyOps>["outcomes"] {
   let cursor = 0;
   let batch = 0;
+  const outcomes: ReturnType<typeof applyOps>["outcomes"] = [];
   while (cursor < ops.length) {
     const size = sizes[batch++ % sizes.length]!;
     const result = applyOps(doc, ops.slice(cursor, cursor + size), catalog);
     expect(result.outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
+    outcomes.push(...result.outcomes);
     cursor += size;
+  }
+  return outcomes;
+}
+
+function assertRetriesAreNoOps(ops: Op[], outcomes: ReturnType<typeof applyOps>["outcomes"]): void {
+  expect(outcomes).toHaveLength(ops.length);
+  const seen = new Set<string>();
+  for (const [index, op] of ops.entries()) {
+    const outcome = outcomes[index]!;
+    expect(outcome.op_id).toBe(op.op_id);
+    if (seen.has(op.op_id)) {
+      expect(outcome.outcome, `retry occurrence ${index} for ${op.op} ${op.op_id} was not a no-op`).toBe("no-op");
+    }
+    seen.add(op.op_id);
   }
 }
 
@@ -174,7 +190,8 @@ describe("property-based convergence and idempotency", () => {
         const b = fork(snapshot);
 
         applyInBatches(a, forward, [forward.length || 1]);
-        applyInBatches(b, retried, scenario.batchSizes);
+        const retryOutcomes = applyInBatches(b, retried, scenario.batchSizes);
+        assertRetriesAreNoOps(retried, retryOutcomes);
 
         coverage.runs += 1;
         if (forward.some((op) => op.op === "delete_node")) coverage.deletes += 1;
