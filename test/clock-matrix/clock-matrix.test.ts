@@ -121,7 +121,8 @@ function deleteNode(label: string, actor: string, base_version: number, lamport:
 }
 
 function compareStrings(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
 }
 
 function compareBase(a: LogicalOp, b: LogicalOp): number {
@@ -205,7 +206,8 @@ function withDivergence(results: Record<Scheme, Omit<SchemeResult, "divergence_c
   return Object.fromEntries(SCHEMES.map((scheme) => {
     const candidate = results[scheme];
     const sameOrder = JSON.stringify(candidate.application_order) === JSON.stringify(baseline.application_order);
-    const divergence_class = candidate.final_state_hash !== baseline.final_state_hash ? "DIVERGENT" : sameOrder ? "identical" : "equivalent-semantics";
+    const semanticMatch = sameOrder ? "identical" : "equivalent-semantics";
+    const divergence_class = candidate.final_state_hash !== baseline.final_state_hash ? "DIVERGENT" : semanticMatch;
     return [scheme, { ...candidate, divergence_class }];
   })) as Record<Scheme, SchemeResult>;
 }

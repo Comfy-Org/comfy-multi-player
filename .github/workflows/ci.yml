@@ -57,6 +57,9 @@ jobs:
       - name: Type-check gate
         run: npm run typecheck
 
+      - name: Lint gate
+        run: npm run lint
+
       - name: Purity gate
         run: npm run check:purity
 

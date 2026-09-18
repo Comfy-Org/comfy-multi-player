@@ -22,6 +22,7 @@ import { readFileSync } from "node:fs";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { systemExecutable } from "./process-helpers.js";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const REGISTER = "docs/INVARIANTS.md";
@@ -40,7 +41,7 @@ const HEADING = /^### ((?:KA|FC)-\d+)(?![\w-])/gm;
 const TEXT_EXTENSIONS = new Set([".ts", ".js", ".mjs", ".cjs", ".md", ".json", ".yaml", ".yml"]);
 
 function trackedTextFiles(): string[] {
-  const listed = spawnSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+  const listed = spawnSync(systemExecutable("git"), ["ls-files", "-z"], { cwd: root, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
   if (listed.status !== 0) throw new Error(`git ls-files failed: ${listed.stderr || listed.error?.message}`);
   return listed.stdout
     .split("\0")

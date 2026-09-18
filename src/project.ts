@@ -42,7 +42,8 @@ function idCompare(a: unknown, b: unknown): number {
   if (typeof a === "number" && typeof b === "number") return a - b;
   const sa = String(a);
   const sb = String(b);
-  return sa < sb ? -1 : sa > sb ? 1 : 0;
+  if (sa < sb) return -1;
+  return sa > sb ? 1 : 0;
 }
 
 /** Source-output references are link identities, whose canonical order is numeric. */

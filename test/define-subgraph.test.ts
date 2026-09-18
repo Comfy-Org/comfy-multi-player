@@ -14,6 +14,7 @@ import {
 } from "../src/index.js"
 import { appliedMap, definitionsMap, metaMap, stampsMap } from "../src/doc.js"
 import { stampKey } from "../src/stamps.js"
+import { compareText } from "./helpers.js"
 
 const catalog: WidgetCatalog = {
   types: {
@@ -56,7 +57,7 @@ const rejectionCode = (doc: Y.Doc, op: Op) =>
 const winningReplacement = (incumbent: SubgraphDefinition, replacement: SubgraphDefinition) => {
   const canonical = (value: unknown): string => JSON.stringify(value, (_key, child: unknown) =>
     child && typeof child === "object" && !Array.isArray(child)
-      ? Object.fromEntries(Object.entries(child).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+      ? Object.fromEntries(Object.entries(child).sort(([a], [b]) => compareText(a, b)))
       : child)
   const digest = (value: unknown) => createHash("sha256").update(canonical(value)).digest("hex")
   const incumbentDigest = digest(incumbent)
@@ -145,7 +146,7 @@ describe("define_subgraph application", () => {
     expect(applyOps(doc, [op], catalog).outcomes[0]?.outcome).toBe("applied")
     const expected = createHash("sha256").update(JSON.stringify(definition(), (_key, child: unknown) =>
       child && typeof child === "object" && !Array.isArray(child)
-        ? Object.fromEntries(Object.entries(child).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+        ? Object.fromEntries(Object.entries(child).sort(([a], [b]) => compareText(a, b)))
         : child)).digest("hex")
     expect((metaMap(doc).get("__definition_digests") as Record<string, string>)[subgraphId]).toBe(expected)
   })

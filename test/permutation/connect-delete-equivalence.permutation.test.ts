@@ -50,6 +50,13 @@ const EXPECTED_EXECUTIONS = 12_288;
 type DeleteAxis = "source" | "destination";
 type BatchMode = "together" | "split";
 
+interface GraphCase {
+  axis: DeleteAxis;
+  presence: (typeof ENDPOINT_PRESENCE)[number];
+  slots: (typeof SLOT_PAIRS)[number];
+  incumbent: boolean;
+}
+
 interface LogicalState {
   projection: WorkflowJSON;
   outcomes: Array<{ opId: string; outcome: string }>;
@@ -156,6 +163,29 @@ function comparable(state: LogicalState): unknown {
   return state.projection;
 }
 
+function connectOutcome(state: LogicalState, connectId: string): string {
+  return state.outcomes.find((outcome) => outcome.opId === connectId)?.outcome ?? "batch-aborted";
+}
+
+function* graphCases(): Generator<GraphCase> {
+  for (const axis of ["source", "destination"] as const) {
+    for (const presence of ENDPOINT_PRESENCE) {
+      for (const slots of SLOT_PAIRS) {
+        for (const incumbent of [false, true] as const) yield { axis, presence, slots, incumbent };
+      }
+    }
+  }
+}
+
+function* stampCases() {
+  for (const actorA of ACTORS) {
+    for (const actorB of ACTORS) {
+      if (actorA === actorB) continue;
+      for (const versions of VERSION_PAIRS) yield { actors: [actorA, actorB] as const, versions };
+    }
+  }
+}
+
 describe("bounded exhaustive connect x delete equivalence", () => {
   it("classifies only Amendment A6 state-dependent slot races as divergent", () => {
     let executions = 0;
@@ -165,47 +195,44 @@ describe("bounded exhaustive connect x delete equivalence", () => {
     let equivalentPairs = 0;
     const unexpected: string[] = [];
 
-    for (const axis of ["source", "destination"] as const) {
-      for (const presence of ENDPOINT_PRESENCE) {
-        for (const slots of SLOT_PAIRS) {
-          for (const incumbent of [false, true] as const) {
-            for (const actorA of ACTORS) {
-              for (const actorB of ACTORS) {
-                if (actorA === actorB) continue;
-                for (const versions of VERSION_PAIRS) {
-                  const pair = operations(serial, [actorA, actorB], versions, slots, axis);
-                  serial += 2;
-                  for (const mode of ["together", "split"] as const) {
-                  const forward = run(base(presence, incumbent), pair, mode);
-                  const reverse = run(base(presence, incumbent), [pair[1], pair[0]], mode);
-                  executions += 2;
-                  const repro = JSON.stringify({ axis, presence, slots, incumbent, actors: [actorA, actorB], versions, mode });
-                  const divergent = JSON.stringify(comparable(forward)) !== JSON.stringify(comparable(reverse));
-                  const connectId = pair[0].op_id;
-                  const connectOutcome = (state: LogicalState): string =>
-                    state.outcomes.find((outcome) => outcome.opId === connectId)?.outcome ?? "batch-aborted";
-                  const forwardConnect = connectOutcome(forward);
-                  const reverseConnect = connectOutcome(reverse);
-                  const bothPresent = presence.source && presence.destination;
-                  const permittedA6Tuple = axis === "source"
-                    ? bothPresent && slots.from === 5 && slots.to === 0
-                    : mode === "together" && presence.destination &&
-                      (slots.to === 5 || bothPresent && slots.from === 5);
-                  const a6 = divergent && permittedA6Tuple &&
-                    (forwardConnect === "rejected") !== (reverseConnect === "rejected");
-                  const permittedAbortTuple = mode === "together" && axis === "source" &&
-                    bothPresent && slots.to === 5;
-                  const abortBoundary = divergent && permittedAbortTuple && !a6 &&
-                    forwardConnect === "rejected" && reverseConnect === "rejected";
-                  if (a6) a6DivergentPairs++;
-                  else if (abortBoundary) abortBoundaryPairs++;
-                  else if (divergent) unexpected.push(`${repro} outcomes=${JSON.stringify([forward.outcomes, reverse.outcomes])}`);
-                  else equivalentPairs++;
-                  }
-                }
-              }
-            }
-          }
+    function checkArrivalPair(
+      graph: GraphCase,
+      pair: readonly [ConnectOp, DeleteNodeOp],
+      mode: BatchMode,
+      repro: string,
+    ): void {
+      const { axis, presence, slots, incumbent } = graph;
+      const forward = run(base(presence, incumbent), pair, mode);
+      const reverse = run(base(presence, incumbent), [pair[1], pair[0]], mode);
+      executions += 2;
+      const divergent = JSON.stringify(comparable(forward)) !== JSON.stringify(comparable(reverse));
+      const connectId = pair[0].op_id;
+      const forwardConnect = connectOutcome(forward, connectId);
+      const reverseConnect = connectOutcome(reverse, connectId);
+      const bothPresent = presence.source && presence.destination;
+      const permittedA6Tuple = axis === "source"
+        ? bothPresent && slots.from === 5 && slots.to === 0
+        : mode === "together" && presence.destination &&
+          (slots.to === 5 || bothPresent && slots.from === 5);
+      const a6 = divergent && permittedA6Tuple &&
+        (forwardConnect === "rejected") !== (reverseConnect === "rejected");
+      const permittedAbortTuple = mode === "together" && axis === "source" &&
+        bothPresent && slots.to === 5;
+      const abortBoundary = divergent && permittedAbortTuple && !a6 &&
+        forwardConnect === "rejected" && reverseConnect === "rejected";
+      if (a6) a6DivergentPairs++;
+      else if (abortBoundary) abortBoundaryPairs++;
+      else if (divergent) unexpected.push(`${repro} outcomes=${JSON.stringify([forward.outcomes, reverse.outcomes])}`);
+      else equivalentPairs++;
+    }
+
+    for (const graph of graphCases()) {
+      for (const { actors, versions } of stampCases()) {
+        const pair = operations(serial, actors, versions, graph.slots, graph.axis);
+        serial += 2;
+        for (const mode of ["together", "split"] as const) {
+          const repro = JSON.stringify({ ...graph, actors, versions, mode });
+          checkArrivalPair(graph, pair, mode, repro);
         }
       }
     }

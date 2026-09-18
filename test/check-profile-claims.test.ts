@@ -10,7 +10,7 @@ const script = join(repoRoot, "scripts", "check-profile-claims.mjs");
 
 /** Run the gate against an isolated fixture root (its own checks dir + targets). */
 function runAgainst(root: string) {
-  return spawnSync("node", [script], {
+  return spawnSync(process.execPath, [script], {
     encoding: "utf8",
     env: {
       ...process.env,

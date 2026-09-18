@@ -525,6 +525,14 @@ export function referenceCyclePath(value: unknown): string | null {
     Array.isArray(obj)
       ? { obj, path, keys: [], next: 0, isArray: true }
       : { obj, path, keys: Object.keys(obj), next: 0, isArray: false };
+  const nextChild = (frame: Frame): [unknown, string] => {
+    const index = frame.next++;
+    if (frame.isArray) {
+      return [(frame.obj as unknown[])[index], `${frame.path}[${String(index)}]`];
+    }
+    const key = frame.keys[index]!;
+    return [(frame.obj as Record<string, unknown>)[key], `${frame.path}.${key}`];
+  };
 
   const onPath = new Set<object>([value]);
   const stack: Frame[] = [frameFor(value, "")];
@@ -536,17 +544,7 @@ export function referenceCyclePath(value: unknown): string | null {
       stack.pop();
       continue;
     }
-    const index = frame.next++;
-    let child: unknown;
-    let childPath: string;
-    if (frame.isArray) {
-      child = (frame.obj as unknown[])[index];
-      childPath = `${frame.path}[${String(index)}]`;
-    } else {
-      const key = frame.keys[index]!;
-      child = (frame.obj as Record<string, unknown>)[key];
-      childPath = `${frame.path}.${key}`;
-    }
+    const [child, childPath] = nextChild(frame);
     if (typeof child !== "object" || child === null) continue;
     if (child instanceof Uint8Array) continue;
     if (onPath.has(child)) return childPath;

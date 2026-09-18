@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -10,7 +10,10 @@ const distEntry = join(root, "dist", "index.js");
 
 describe("purity", () => {
   it("has exactly yjs as its declared and resolved production dependency root", () => {
-    const run = spawnSync("npm", ["ls", "--omit=dev", "--json", "--all"], {
+    const npmCli = process.env.npm_execpath;
+    expect(npmCli, "Run tests through npm test or npx vitest to supply the npm CLI path").toBeDefined();
+    expect(isAbsolute(npmCli!)).toBe(true);
+    const run = spawnSync(process.execPath, [npmCli!, "ls", "--omit=dev", "--json", "--all"], {
       cwd: root,
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,

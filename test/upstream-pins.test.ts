@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { systemExecutable } from "./process-helpers.js";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -103,8 +104,8 @@ describe("FC-10 — upstream citations are pinned by SHA, not by branch", () => 
           `esac\n`,
       );
       chmodSync(fakeGh, 0o755);
-      expect(spawnSync("git", ["init", "--quiet"], { cwd: fixture }).status).toBe(0);
-      expect(spawnSync("git", ["add", "."], { cwd: fixture }).status).toBe(0);
+      expect(spawnSync(systemExecutable("git"), ["init", "--quiet"], { cwd: fixture }).status).toBe(0);
+      expect(spawnSync(systemExecutable("git"), ["add", "."], { cwd: fixture }).status).toBe(0);
 
       const run = spawnSync(process.execPath, [join(root, "scripts", "check-pins.mjs"), "--verify-remote"], {
         encoding: "utf8",
@@ -284,8 +285,8 @@ describe("FC-10 — upstream citations are pinned by SHA, not by branch", () => 
           `esac\n`,
       );
       chmodSync(fakeGh, 0o755);
-      expect(spawnSync("git", ["init", "--quiet"], { cwd: fixture }).status).toBe(0);
-      expect(spawnSync("git", ["add", "."], { cwd: fixture }).status).toBe(0);
+      expect(spawnSync(systemExecutable("git"), ["init", "--quiet"], { cwd: fixture }).status).toBe(0);
+      expect(spawnSync(systemExecutable("git"), ["add", "."], { cwd: fixture }).status).toBe(0);
 
       const run = spawnSync(process.execPath, [join(root, "scripts", "check-pins.mjs"), "--verify-remote"], {
         encoding: "utf8",
@@ -339,8 +340,8 @@ describe("FC-10 — upstream citations are pinned by SHA, not by branch", () => 
       for (let index = 0; index < 20; index += 1) {
         writeFileSync(join(fixture, `tracked-${index}.md`), `fixture ${index}\n`);
       }
-      expect(spawnSync("git", ["init", "--quiet"], { cwd: fixture }).status).toBe(0);
-      expect(spawnSync("git", ["add", "."], { cwd: fixture }).status).toBe(0);
+      expect(spawnSync(systemExecutable("git"), ["init", "--quiet"], { cwd: fixture }).status).toBe(0);
+      expect(spawnSync(systemExecutable("git"), ["add", "."], { cwd: fixture }).status).toBe(0);
 
       const run = spawnSync(process.execPath, [join(root, "scripts", "check-pins.mjs")], {
         encoding: "utf8",

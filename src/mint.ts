@@ -116,28 +116,30 @@ export function mint(workflow: WorkflowJSON, catalog: WidgetCatalog, catalogVers
       else linkState.set(key, cloneForMap(state, `mint: link state ${key}`));
     }
 
-    const defsIn = workflow["definitions"];
-    if (defsIn !== undefined && defsIn !== null) {
-      if (typeof defsIn !== "object" || Array.isArray(defsIn)) {
-        throw new TypeError("mint: workflow.definitions must be an object");
-      }
-      const { subgraphs, ...rest } = defsIn as { subgraphs?: unknown; [key: string]: unknown };
-      // The fifth ungated passthrough write: `__definitions_extra` reached a
-      // Y.Map through a bare `structuredClone`. Shallow verdicts are unchanged
-      // (`rest` is always a plain object), but a cycle inside it would have
-      // bricked the document exactly as any other passthrough would.
-      const extra = cloneForMap(rest, "mint: workflow.definitions") as Record<string, unknown>;
-      // Preserve an explicitly-empty subgraphs array through the round trip.
-      if (Array.isArray(subgraphs) && subgraphs.length === 0) extra["subgraphs"] = [];
-      meta.set("__definitions_extra", extra);
-      const defsRoot = definitionsMap(doc);
-      for (const sg of Array.isArray(subgraphs) ? (subgraphs as SubgraphDef[]) : []) {
-        if (sg.id === undefined || sg.id === null) throw new TypeError("mint: definition is missing id");
-        defsRoot.set(String(sg.id), mintDefinition(sg, catalog));
-      }
-    }
+    mintWorkflowDefinitions(doc, workflow["definitions"], catalog);
   });
   return doc;
+}
+
+function mintWorkflowDefinitions(doc: Y.Doc, defsIn: unknown, catalog: WidgetCatalog): void {
+  if (defsIn === undefined || defsIn === null) return;
+  if (typeof defsIn !== "object" || Array.isArray(defsIn)) {
+    throw new TypeError("mint: workflow.definitions must be an object");
+  }
+  const { subgraphs, ...rest } = defsIn as { subgraphs?: unknown; [key: string]: unknown };
+  // The fifth ungated passthrough write: `__definitions_extra` reached a
+  // Y.Map through a bare `structuredClone`. Shallow verdicts are unchanged
+  // (`rest` is always a plain object), but a cycle inside it would have
+  // bricked the document exactly as any other passthrough would.
+  const extra = cloneForMap(rest, "mint: workflow.definitions") as Record<string, unknown>;
+  // Preserve an explicitly-empty subgraphs array through the round trip.
+  if (Array.isArray(subgraphs) && subgraphs.length === 0) extra["subgraphs"] = [];
+  metaMap(doc).set("__definitions_extra", extra);
+  const defsRoot = definitionsMap(doc);
+  for (const sg of Array.isArray(subgraphs) ? (subgraphs as SubgraphDef[]) : []) {
+    if (sg.id === undefined || sg.id === null) throw new TypeError("mint: definition is missing id");
+    defsRoot.set(String(sg.id), mintDefinition(sg, catalog));
+  }
 }
 
 function nodeId(value: unknown, context: string): string | number {
@@ -242,6 +244,75 @@ function definitionLinkKey(ln: unknown): string | undefined {
   return undefined;
 }
 
+function mintDefinitionNodes(dm: Y.Map<unknown>, nodes: WorkflowNode[], catalog: WidgetCatalog): void {
+  const nm = new Y.Map<Y.Map<unknown>>();
+  const order: string[] = [];
+  for (const node of nodes) {
+    if (node.id === undefined || node.id === null) throw new TypeError("mint: definition node is missing id");
+    const key = String(node.id);
+    if (order.includes(key)) throw new TypeError(`mint: duplicate definition node id '${key}'`);
+    order.push(key);
+    nm.set(key, createNodeMap(node, widgetOrderFor(catalog, node.type)));
+  }
+  dm.set("nodes", nm);
+  dm.set("node_order", order);
+}
+
+function mintDefinitionLinks(dm: Y.Map<unknown>, links: unknown[]): void {
+  const lm = new Y.Map<unknown>();
+  const order: string[] = [];
+  const usedKeys = new Set<string>();
+  for (const link of links) {
+    const key = definitionLinkKey(link);
+    if (key === undefined) continue;
+    if (usedKeys.has(key)) throw new TypeError(`mint: duplicate definition link id '${key}'`);
+    usedKeys.add(key);
+  }
+  links.forEach((ln, i) => {
+    // A definition's interior links are serialized by the frontend as
+    // OBJECTS (`{id, origin_id, origin_slot, target_id, target_slot,
+    // type}`), not top-level tuples. Keying every shape by `ln[0]` read
+    // `undefined` off each object, so every interior link of a real
+    // template collapsed onto one key and the round trip emitted the last
+    // one N times (found by the z-image turbo fixture, Amendment A15).
+    const explicitKey = definitionLinkKey(ln);
+    let key = explicitKey ?? `#${String(i)}`;
+    if (explicitKey === undefined) {
+      const base = key;
+      let suffix = 1;
+      while (usedKeys.has(key)) {
+        key = `${base}~${String(suffix)}`;
+        suffix += 1;
+      }
+      usedKeys.add(key);
+    }
+    order.push(key);
+    lm.set(key, cloneForMap(ln, `mint: definition link ${key}`));
+  });
+  dm.set("links", lm);
+  dm.set("link_order", order);
+}
+
+function mintNestedDefinitions(value: object, catalog: WidgetCatalog): Y.Map<unknown> {
+  const container = new Y.Map<unknown>();
+  const { subgraphs, ...extra } = value as { subgraphs?: unknown; [key: string]: unknown };
+  Object.entries(extra).forEach(([key, entry]) => container.set(key, cloneForMap(entry, `mint: definition.definitions.${key}`)));
+  if (Array.isArray(subgraphs)) {
+    const nested = new Y.Map<Y.Map<unknown>>();
+    const order: string[] = [];
+    for (const child of subgraphs as SubgraphDef[]) {
+      if (child.id === undefined || child.id === null) throw new TypeError("mint: nested definition is missing id");
+      const key = String(child.id);
+      if (order.includes(key)) throw new TypeError(`mint: duplicate nested definition id '${key}'`);
+      order.push(key);
+      nested.set(key, mintDefinition(child, catalog));
+    }
+    container.set("subgraphs", nested);
+    container.set("subgraph_order", order);
+  }
+  return container;
+}
+
 export function mintDefinition(sg: SubgraphDef, catalog: WidgetCatalog): Y.Map<unknown> {
   for (const key of ["node_order", "link_order", "__definition_digest"]) {
     if (Object.hasOwn(sg, key)) throw new TypeError(`mint: definition key '${key}' is reserved`);
@@ -249,64 +320,11 @@ export function mintDefinition(sg: SubgraphDef, catalog: WidgetCatalog): Y.Map<u
   const dm = new Y.Map<unknown>();
   for (const [k, v] of Object.entries(sg)) {
     if (k === "nodes" && Array.isArray(v)) {
-      const nm = new Y.Map<Y.Map<unknown>>();
-      const order: string[] = [];
-      for (const n of v as WorkflowNode[]) {
-        if (n.id === undefined || n.id === null) throw new TypeError("mint: definition node is missing id");
-        const key = String(n.id);
-        if (order.includes(key)) throw new TypeError(`mint: duplicate definition node id '${key}'`);
-        order.push(key);
-        nm.set(key, createNodeMap(n, widgetOrderFor(catalog, n.type)));
-      }
-      dm.set("nodes", nm);
-      dm.set("node_order", order);
+      mintDefinitionNodes(dm, v as WorkflowNode[], catalog);
     } else if (k === "links" && Array.isArray(v)) {
-      const lm = new Y.Map<unknown>();
-      const order: string[] = [];
-      const usedKeys = new Set<string>();
-      for (const link of v) {
-        const key = definitionLinkKey(link);
-        if (key === undefined) continue;
-        if (usedKeys.has(key)) throw new TypeError(`mint: duplicate definition link id '${key}'`);
-        usedKeys.add(key);
-      }
-      v.forEach((ln, i) => {
-        // A definition's interior links are serialized by the frontend as
-        // OBJECTS (`{id, origin_id, origin_slot, target_id, target_slot,
-        // type}`), not top-level tuples. Keying every shape by `ln[0]` read
-        // `undefined` off each object, so every interior link of a real
-        // template collapsed onto one key and the round trip emitted the last
-        // one N times (found by the z-image turbo fixture, Amendment A15).
-        const explicitKey = definitionLinkKey(ln);
-        let key = explicitKey ?? `#${String(i)}`;
-        if (explicitKey === undefined) {
-          const base = key;
-          for (let suffix = 1; usedKeys.has(key); suffix += 1) key = `${base}~${String(suffix)}`;
-          usedKeys.add(key);
-        }
-        order.push(key);
-        lm.set(key, cloneForMap(ln, `mint: definition link ${key}`));
-      });
-      dm.set("links", lm);
-      dm.set("link_order", order);
+      mintDefinitionLinks(dm, v);
     } else if (k === "definitions" && typeof v === "object" && v !== null && !Array.isArray(v)) {
-      const container = new Y.Map<unknown>();
-      const { subgraphs, ...extra } = v as { subgraphs?: unknown; [key: string]: unknown };
-      Object.entries(extra).forEach(([key, value]) => container.set(key, cloneForMap(value, `mint: definition.definitions.${key}`)));
-      if (Array.isArray(subgraphs)) {
-        const nested = new Y.Map<Y.Map<unknown>>();
-        const order: string[] = [];
-        for (const child of subgraphs as SubgraphDef[]) {
-          if (child.id === undefined || child.id === null) throw new TypeError("mint: nested definition is missing id");
-          const key = String(child.id);
-          if (order.includes(key)) throw new TypeError(`mint: duplicate nested definition id '${key}'`);
-          order.push(key);
-          nested.set(key, mintDefinition(child, catalog));
-        }
-        container.set("subgraphs", nested);
-        container.set("subgraph_order", order);
-      }
-      dm.set("definitions", container);
+      dm.set("definitions", mintNestedDefinitions(v, catalog));
     } else {
       dm.set(k, cloneForMap(v, `mint: definition.${k}`));
     }

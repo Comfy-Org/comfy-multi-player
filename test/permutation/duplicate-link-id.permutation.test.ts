@@ -139,6 +139,17 @@ function assertCoherentGraph(wf: WorkflowJSON, owner: ConnectOp, repro: string):
   expect(refs, repro).toEqual(["700", "700"]);
 }
 
+function* identityCases() {
+  for (const linkIds of LINK_ID_PAIRS) {
+    for (const actorA of ACTORS) {
+      for (const actorB of ACTORS) {
+        if (actorA === actorB) continue;
+        for (const versions of VERSION_PAIRS) yield { linkIds, actors: [actorA, actorB] as const, versions };
+      }
+    }
+  }
+}
+
 describe("bounded exhaustive normalized link_id collisions", () => {
   it("replays every language-neutral parity vector in both arrival orders", () => {
     let executions = 0;
@@ -162,24 +173,17 @@ describe("bounded exhaustive normalized link_id collisions", () => {
   it("covers every declared permutation with stamped complete-tuple ownership", () => {
     let executions = 0;
     let serial = 1;
-    for (const linkIds of LINK_ID_PAIRS) {
-      for (const actorA of ACTORS) {
-        for (const actorB of ACTORS) {
-          if (actorA === actorB) continue;
-          for (const versions of VERSION_PAIRS) {
-            for (const endpoints of ENDPOINT_PAIRS) {
-              const a = connect(serial++, actorA, versions[0], linkIds[0], endpoints[0]);
-              const b = connect(serial++, actorB, versions[1], linkIds[1], endpoints[1]);
-              for (const order of [[a, b], [b, a]] as const) {
-                for (const batched of [true, false]) {
-                  const repro = JSON.stringify({ linkIds, actors: [actorA, actorB], versions, endpoints, order: order.map((op) => op.op_id), batched });
-                  const wf = run(order, batched);
-                  expect(String(tuple(wf)[0]), repro).toBe("700");
-                  assertCoherentGraph(wf, winner(a, b), repro);
-                  executions++;
-                }
-              }
-            }
+    for (const { linkIds, actors, versions } of identityCases()) {
+      for (const endpoints of ENDPOINT_PAIRS) {
+        const a = connect(serial++, actors[0], versions[0], linkIds[0], endpoints[0]);
+        const b = connect(serial++, actors[1], versions[1], linkIds[1], endpoints[1]);
+        for (const order of [[a, b], [b, a]] as const) {
+          for (const batched of [true, false]) {
+            const repro = JSON.stringify({ linkIds, actors, versions, endpoints, order: order.map((op) => op.op_id), batched });
+            const wf = run(order, batched);
+            expect(String(tuple(wf)[0]), repro).toBe("700");
+            assertCoherentGraph(wf, winner(a, b), repro);
+            executions++;
           }
         }
       }

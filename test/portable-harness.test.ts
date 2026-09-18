@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it } from "vitest";
+import { systemExecutable } from "./process-helpers.js";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const temporary: string[] = [];
@@ -134,8 +135,8 @@ describe("portable harness regressions", () => {
     },
   ])("the documented SonarJS command classifies $name", ({ name, eslintStatus, output, expected, selectedFiles = ["fixture.ts"] }) => {
     const profile = readFileSync(join(repoRoot, ".agents/checks/sonarjs-lint.md"), "utf8");
-    const command = [...profile.matchAll(/```bash\n([\s\S]*?)\n\s*```/g)]
-      .map((match) => match[1])
+    const command = profile.split("```bash\n").slice(1)
+      .map((block) => block.split("```")[0])
       .find((block) => block?.includes("npx eslint"));
     expect(command).toBeDefined();
     expect(command).not.toContain("npm i");
@@ -146,7 +147,7 @@ describe("portable harness regressions", () => {
     writeFileSync(join(ambientBin, "node"), "#!/bin/sh\necho hostile ambient node >&2\nexit 127\n");
     chmodSync(join(bin, "npx"), 0o755);
     chmodSync(join(ambientBin, "node"), 0o755);
-    const run = spawnSync("bash", ["-c", command!, "sonarjs-lint-test", ...selectedFiles], {
+    const run = spawnSync(systemExecutable("bash"), ["-c", command!, "sonarjs-lint-test", ...selectedFiles], {
       encoding: "utf8",
       cwd: bin,
       env: { ...process.env, PATH: `${bin}:${ambientBin}:/usr/bin:/bin` },
@@ -200,7 +201,7 @@ describe("portable harness regressions", () => {
       const stages = join(root, "stages");
       mkdirSync(stages);
       const npmLog = join(root, "npm.log");
-      const run = spawnSync("bash", [join(repoRoot, "examples/dochost-poc/run.sh")], {
+      const run = spawnSync(systemExecutable("bash"), [join(repoRoot, "examples/dochost-poc/run.sh")], {
         encoding: "utf8",
         env: {
           ...process.env,
@@ -245,7 +246,7 @@ describe("portable harness regressions", () => {
     });
     try {
       const started = Date.now();
-      const run = spawnSync("bash", [join(repoRoot, "examples/dochost-poc/run.sh")], {
+      const run = spawnSync(systemExecutable("bash"), [join(repoRoot, "examples/dochost-poc/run.sh")], {
         encoding: "utf8",
         timeout: 2_000,
         env: { ...process.env, PATH: `${bin}:/usr/bin:/bin`, DOCHOST_SRC: sidecar, PORT: port, HARNESS_CURL_COUNT: join(root, "curl-count") },
@@ -266,7 +267,9 @@ describe("portable harness regressions", () => {
     const nodes = new Map([["1", { id: "1" }]]);
     const left = { nodes, links: new Map([["7", { id: "7", targetId: "1" }]]) };
     const right = { nodes, links: new Map([["7", { id: "7", targetId: "2" }]]) };
+    // eslint-disable-next-line sonarjs/code-eval -- Execute the checked-in benchmark assertion itself to kill its equal-count mutant; never caller input.
     expect(runInNewContext(assertion!, { ra: left, rb: right })).toBe(false);
+    // eslint-disable-next-line sonarjs/code-eval -- Same checked-in assertion, positive control proving the harness can accept equal readers.
     expect(runInNewContext(assertion!, { ra: left, rb: left })).toBe(true);
   });
 });
