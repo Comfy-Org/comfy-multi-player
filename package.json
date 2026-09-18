@@ -54,7 +54,7 @@
     "ajv6": "npm:ajv@6.15.0",
     "dependency-cruiser": "^18.2.0",
     "eslint": "^9.39.5",
-    "eslint-plugin-sonarjs": "^3.0.7",
+    "eslint-plugin-sonarjs": "^4.2.1",
     "fast-check": "^4.9.0",
     "typescript": "^5.9.0",
     "vitest": "^4.1.11",
