@@ -132,6 +132,7 @@ export function mint(workflow: WorkflowJSON, catalog: WidgetCatalog, catalogVers
       meta.set("__definitions_extra", extra);
       const defsRoot = definitionsMap(doc);
       for (const sg of Array.isArray(subgraphs) ? (subgraphs as SubgraphDef[]) : []) {
+        if (sg.id === undefined || sg.id === null) throw new TypeError("mint: definition is missing id");
         defsRoot.set(String(sg.id), mintDefinition(sg, catalog));
       }
     }
