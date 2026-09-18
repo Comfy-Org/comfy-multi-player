@@ -651,8 +651,8 @@ Published to npm as [`@comfyorg/comfy-multi-player`](https://www.npmjs.com/packa
 npm install @comfyorg/comfy-multi-player
 ```
 
-The server pins an **exact** published version. The frontend consumes the
-workspace source from the same commit that produces that release. Conflict
+The server and frontend must pin the same **exact** published version. Package
+development stays in the standalone repository; consumers do not vendor its source. Conflict
 resolution is a cross-process agreement about which write wins; two peers
 running different versions of these rules can disagree about the outcome.
 
@@ -665,21 +665,22 @@ superseded) remains documented for historical context.
 ## Develop
 
 ```bash
-pnpm install
-pnpm run build         # tsc → dist/
-pnpm test              # vitest: schema, purity, replay, lww, convergence, roundtrip, applier
-pnpm run check:purity  # dependency-tree + bare-Node import gate
-pnpm run check:imports # module-graph gate: no cycles, src imports yjs only, no Node builtins
-pnpm run check:pins    # cross-repo citations are pinned by SHA, not a moving ref
-pnpm run verify:corpus # conformance fixtures match their pinned SHAs
-pnpm run check:profile-claims # .agents/checks prose still matches the code it restates
-pnpm run check:coderabbit     # .coderabbit.yaml still matches the profiles that generate it
+npm ci
+npm run build         # tsc → dist/
+npm test              # vitest: schema, purity, replay, lww, convergence, roundtrip, applier
+npm run check:purity  # dependency-tree + bare-Node import gate
+npm run check:imports # module-graph gate: no cycles, src imports yjs only, no Node builtins
+npm run check:pins    # cross-repo citations are pinned by SHA, not a moving ref
+npm run verify:corpus # conformance fixtures match their pinned SHAs
+npm run check:profile-claims # .agents/checks prose still matches the code it restates
+npm run check:coderabbit     # .coderabbit.yaml still matches the profiles that generate it
 ```
 
-The canonical source lives at
-[`packages/comfy-multi-player`](https://github.com/Comfy-Org/ComfyUI_frontend/tree/main/packages/comfy-multi-player)
-in the ComfyUI frontend workspace. Run these commands from that package directory,
-or use `pnpm --filter @comfyorg/comfy-multi-player <command>` from the workspace root.
+The canonical writable source is
+[`Comfy-Org/comfy-multi-player`](https://github.com/Comfy-Org/comfy-multi-player).
+Run these commands from this repository's root. Target package code, tests, docs,
+and release tooling at standalone `main`. Frontend adapters belong on frontend
+`main`; the deferred frontend migration is not a development base.
 
 `fixtures/` holds the replay corpus: recorded op sessions with their starting
 and final workflows, six conflict-resolution vectors, and the pinned catalog.
