@@ -9,6 +9,7 @@ describe("creator-owned Lamport counter", () => {
   it("validates numeric boundaries without coercing unknown inputs", () => {
     for (const allowZero of [false, true]) {
       const message = `Lamport counter must be a ${allowZero ? "non-negative" : "positive"} safe integer`;
+      // eslint-disable-next-line sonarjs/no-primitive-wrappers -- A boxed counter must be rejected without coercion; a primitive would destroy this regression input.
       for (const value of ["1", 1n, true, null, undefined, Symbol("counter"), {}, new Number(1), -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
         expect(() => validateLamportCounter(value, allowZero)).toThrow(RangeError);
         expect(() => validateLamportCounter(value, allowZero)).toThrow(new RangeError(message));
