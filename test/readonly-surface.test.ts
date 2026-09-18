@@ -401,9 +401,9 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
   /**
    * The defect this block exists for: `project()` grew a schema-version read
    * gate in #60, and a surface that reads the SAME layout by the SAME key
-   * names without one is a way AROUND that gate — `readGraph` would hand back
-   * v1 key names for a v2 document, which is precisely the KA-11
-   * mis-projection #60 refused. A guard a consumer can walk around is
+   * names without one is a way AROUND that gate — `readGraph` could hand back
+   * old-layout key names for a current-schema document, which is precisely the
+   * KA-11 mis-projection #60 refused. A guard a consumer can walk around is
    * decorative.
    *
    * The rule has TWO clauses and both are load-bearing:
@@ -421,8 +421,9 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
    * bump trigger — a name-keyed probe is blind to exactly the document the
    * gate exists to refuse.
    *
-   * `SCHEMA_VERSION` is 2, so a v1 document exercises the older-than-reader
-   * arm through the same `assertReadableSchema` comparison used by project().
+   * `SCHEMA_VERSION` is 3, so a schema-v1 document exercises the
+   * older-than-reader arm through the same `assertReadableSchema` comparison
+   * used by project().
    */
 
   /** A document that carries real content, with `meta.schema_version` forced to `version`. */

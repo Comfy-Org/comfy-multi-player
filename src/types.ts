@@ -657,12 +657,12 @@ export interface ApplyFailure {
 /**
  * Outcome of `applyOps` — per-op accounting, never a throw for a rejected op.
  *
- * `applied` counts every op that consumed its `op_id` in this call — including
- * LWW-dropped writes and delete-wins no-ops, which are protocol-level applies
- * (comfy-cli records their op_id too). `skipped` is idempotency only: op_ids
- * already applied before this call. On failure, `failed` is set, ops after
- * `failed.index` are NOT applied (abort-remainder), and the applied prefix is
- * retained — a retried batch converges via the op_id gate.
+ * Each submitted op receives an ordered discriminated outcome. A refused op
+ * has `outcome: "rejected"` and a machine-readable and human-readable
+ * `reason`. On rejection while processing a batch, later operations receive
+ * `batch_aborted` rejection reasons and are not applied (abort-remainder);
+ * the processed prefix is retained, so a retried batch converges via the
+ * op_id gate. An oversized batch is refused before processing any operation.
  */
 export type ApplyOutcome =
   | { op_id: string; outcome: "applied" }
@@ -701,8 +701,9 @@ export interface CanonicalOpInspection {
 
 /**
  * A rejected op (unknown/deferred kind, malformed payload, unknown widget,
- * missing slot, …). `applyOps` converts this into `ApplyResult.failed` —
- * rejection is loud but never a throw at the batch surface.
+ * missing slot, …). `applyOps` converts this into an `ApplyOutcome` whose
+ * `outcome` is `"rejected"` and whose `reason` carries this error's code and
+ * message. Rejection is loud but never a throw at the batch surface.
  */
 export class OpRejectedError extends Error {
   override name = "OpRejectedError";
