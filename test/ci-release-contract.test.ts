@@ -25,6 +25,9 @@ const REQUIRED_STEPS = {
 interface Step {
   name?: string;
   run?: string;
+  uses?: string;
+  with?: Record<string, unknown>;
+  env?: Record<string, unknown>;
   if?: unknown;
   shell?: unknown;
   "continue-on-error"?: unknown;
@@ -66,6 +69,34 @@ function requireWorkflow(document: unknown, jobId: string): void {
   const buildIndex = steps.findIndex((step) => step.name === "Build");
   const packIndex = steps.findIndex((step) => step.name === "Verify package contents");
   if (packIndex <= buildIndex) throw new Error("Verify package contents must run after Build");
+  if (jobId === "publish") requireRelease(steps);
+}
+
+function requireRelease(steps: Step[]): void {
+  const recovery = steps.filter((step) => step.name === "Verify identity and recover release");
+  if (recovery.length !== 1 || !unconditionalGate(recovery[0]!) ||
+    recovery[0]!.run !== "node scripts/release-retry.mjs" || recovery[0]!.env?.GH_TOKEN !== "${{ github.token }}") {
+    throw new Error("missing failure-propagating release identity/recovery gate");
+  }
+  const recoveryIndex = steps.indexOf(recovery[0]!);
+  for (const name of Object.keys(REQUIRED_STEPS)) {
+    if (steps.findIndex((step) => step.name === name) >= recoveryIndex) {
+      throw new Error(`release recovery must follow ${name}`);
+    }
+  }
+  const toolchain = steps.filter((step) => step.name === "Pin release npm");
+  if (toolchain.length !== 1 || !unconditionalGate(toolchain[0]!) ||
+    toolchain[0]!.run !== "npm install --global npm@11.19.0 --ignore-scripts" ||
+    steps.indexOf(toolchain[0]!) >= steps.findIndex((step) => step.name === "Install")) {
+    throw new Error("missing supported pinned npm before Install");
+  }
+  const node = steps.find((step) => step.uses?.startsWith("actions/setup-node@"));
+  if (!node || !unconditionalGate(node) || node.with?.["node-version"] !== "24.21.0") {
+    throw new Error("missing pinned release Node");
+  }
+  if (steps.some((step) => /npm publish|gh release create/.test(step.run ?? ""))) {
+    throw new Error("release writes must go through identity/recovery gate");
+  }
 }
 
 const loadYaml = (relative: string) => parse(readFileSync(join(root, relative), "utf8")) as unknown;
@@ -75,6 +106,28 @@ describe("parsed CI and release contracts", () => {
     "%s runs every required gate and propagates failure",
     (file, job) => requireWorkflow(loadYaml(`.github/workflows/${file}.yml`), job),
   );
+
+  it.each(Object.keys(REQUIRED_STEPS))("rejects release recovery before %s", (name) => {
+    const document = loadYaml(".github/workflows/release.yml") as { jobs: { publish: { steps: Step[] } } };
+    const steps = document.jobs.publish.steps;
+    const index = steps.findIndex((step) => step.name === "Verify identity and recover release");
+    const recovery = steps.splice(index, 1)[0]!;
+    steps.splice(steps.findIndex((step) => step.name === name), 0, recovery);
+    expect(() => requireWorkflow(document, "publish")).toThrow("release recovery must follow");
+  });
+
+  it.each([
+    ["conditional recovery", (steps: Step[]) => { steps.find((step) => step.name === "Verify identity and recover release")!.if = "${{ success() }}"; }],
+    ["non-fatal recovery", (steps: Step[]) => { steps.find((step) => step.name === "Verify identity and recover release")!["continue-on-error"] = true; }],
+    ["changed helper", (steps: Step[]) => { steps.find((step) => step.name === "Verify identity and recover release")!.run = "echo skipped"; }],
+    ["old npm", (steps: Step[]) => { steps.find((step) => step.name === "Pin release npm")!.run = "npm install --global npm@10.9.7"; }],
+    ["moving Node", (steps: Step[]) => { steps.find((step) => step.uses?.startsWith("actions/setup-node@"))!.with!["node-version"] = 24; }],
+    ["unguarded publication", (steps: Step[]) => { steps.push({ run: "npm publish --provenance --access public" }); }],
+  ] as const)("rejects %s", (_name, change) => {
+    const document = loadYaml(".github/workflows/release.yml") as { jobs: { publish: { steps: Step[] } } };
+    change(document.jobs.publish.steps);
+    expect(() => requireWorkflow(document, "publish")).toThrow();
+  });
 
   it("CodeRabbit protects the workflow verifier by structured rule fields", () => {
     const config = loadYaml(".coderabbit.yaml") as {
