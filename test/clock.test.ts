@@ -1,11 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { applyOps, DocDerivedLamportClockStore, freezeLamportEnvelope, MAX_LAMPORT_COUNTER,
-  mint, observedDocCounter, observeLamport, persistLamportTick, tickLamport, type LamportClockStore } from "../src/index.js";
+  mint, observedDocCounter, observeLamport, persistLamportTick, tickLamport, validateLamportCounter, type LamportClockStore } from "../src/index.js";
 import { loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
 
 describe("creator-owned Lamport counter", () => {
+  it("validates numeric boundaries without coercing unknown inputs", () => {
+    for (const allowZero of [false, true]) {
+      const message = `Lamport counter must be a ${allowZero ? "non-negative" : "positive"} safe integer`;
+      for (const value of ["1", 1n, true, null, undefined, Symbol("counter"), {}, new Number(1), -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+        expect(() => validateLamportCounter(value, allowZero)).toThrow(RangeError);
+        expect(() => validateLamportCounter(value, allowZero)).toThrow(new RangeError(message));
+      }
+      expect(validateLamportCounter(1, allowZero)).toBe(1);
+      expect(validateLamportCounter(Number.MAX_SAFE_INTEGER, allowZero)).toBe(Number.MAX_SAFE_INTEGER);
+    }
+    expect(() => validateLamportCounter(0)).toThrow(new RangeError("Lamport counter must be a positive safe integer"));
+    expect(validateLamportCounter(0, true)).toBe(0);
+    expect(validateLamportCounter(-0, true)).toBe(-0);
+  });
+
   it("observes, ticks, and refuses overflow", () => {
     expect(observeLamport(2, 9, 4)).toBe(9);
     expect(tickLamport(2, 9, 4)).toBe(10);
