@@ -127,6 +127,43 @@ describe("creator-owned Lamport counter", () => {
     expect(readStamps(replicaOf(doc))).toEqual({});
   });
 
+  it.each(["workflow_id", "lineage_id", "producer_id"] as const)(
+    "rejects an invalid reservation %s before invoking the callback",
+    async (field) => {
+      const doc = mint({ nodes: [], links: [] }, catalog);
+      const store = new DocDerivedLamportClockStore(doc);
+      const before = Y.encodeStateAsUpdate(doc);
+      const roots = [...doc.share.keys()];
+      const update = vi.fn(async () => ({ counter: 1, value: 1 }));
+      for (const value of [undefined, 17]) {
+        const invalid = { ...identity, [field]: value } as unknown as typeof identity;
+        await expect(store.transaction(invalid, update)).rejects.toThrow(TypeError);
+        expect(update).not.toHaveBeenCalled();
+        expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+        expect([...doc.share.keys()]).toEqual(roots);
+      }
+      await expect(persistLamportTick(store, identity, [])).resolves.toBe(1);
+      expect(doc.getMap("__clock_reservations").toJSON()).toEqual({
+        [reservationKey]: [1, "agent:clock", reservationKey],
+      });
+    },
+  );
+
+  it("captures the reservation identity before the callback can change it", async () => {
+    const doc = mint({ nodes: [], links: [] }, catalog);
+    const callerIdentity = { ...identity };
+    await new DocDerivedLamportClockStore(doc).transaction(callerIdentity, async () => {
+      callerIdentity.workflow_id = "other-workflow";
+      callerIdentity.lineage_id = "other-lineage";
+      callerIdentity.producer_id = "other-producer";
+      return { counter: 7, value: 7 };
+    });
+    expect(doc.getMap("__clock_reservations").toJSON()).toEqual({
+      [reservationKey]: [7, "agent:clock", reservationKey],
+    });
+    expect(observedDocCounter(replicaOf(doc))).toBe(7);
+  });
+
   it("continues unapplied reservations after a fresh module and snapshot restart", async () => {
     const doc = mint({ nodes: [], links: [] }, catalog);
     await persistLamportTick(new DocDerivedLamportClockStore(doc), identity, [31]);
