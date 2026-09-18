@@ -60,7 +60,8 @@ function requireWorkflow(document: unknown, jobId: string): void {
     throw new Error("required gates must use the default runner shell");
   }
   const steps = job.steps ?? [];
-  for (const [name, command] of Object.entries(REQUIRED_STEPS)) {
+  const requiredSteps = jobId === "ci" ? { ...REQUIRED_STEPS, "Lint gate": "npm run lint" } : REQUIRED_STEPS;
+  for (const [name, command] of Object.entries(requiredSteps)) {
     const matches = steps.filter((step) => step.name === name);
     if (matches.length !== 1 || !unconditionalGate(matches[0]!) || matches[0]!.run?.trim() !== command) {
       throw new Error(`missing active, failure-propagating ${name}: ${command}`);
@@ -149,6 +150,19 @@ describe("standalone package ownership", () => {
 });
 
 describe("parsed CI and release contracts", () => {
+  it.each([
+    ["missing", (step: Step) => { step.name = "comment-only lint"; }],
+    ["conditional", (step: Step) => { step.if = "${{ false }}"; }],
+    ["non-fatal", (step: Step) => { step["continue-on-error"] = true; }],
+    ["masked exit", (step: Step) => { step.run = "npm run lint || true"; }],
+  ] as const)("rejects a %s lint gate", (_name, change) => {
+    const document = loadYaml(".github/workflows/ci.yml") as CiFixture;
+    const lint = document.jobs.ci.steps.find((step) => step.name === "Lint gate");
+    expect(lint).toBeDefined();
+    change(lint!);
+    expect(() => requireWorkflow(document, "ci")).toThrow("missing active, failure-propagating Lint gate");
+  });
+
   it.each([["ci", "ci"], ["release", "publish"]])(
     "%s runs every required gate and propagates failure",
     (file, job) => requireWorkflow(loadYaml(`.github/workflows/${file}.yml`), job),
