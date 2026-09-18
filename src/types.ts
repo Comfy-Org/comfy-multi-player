@@ -123,7 +123,7 @@ export type BatchableOpKind = (typeof BATCHABLE_OPS)[number];
 // ---------------------------------------------------------------------------
 
 /** Who minted an op — a frozen origin string (vocabulary §7): `agent:<thread>:<turn>`, `human:<user>:<tab>`, `system:mint`, legacy `cli`. MUST be ASCII (§8.1). */
-export type Actor = string;
+export type Actor = OpBase["actor"];
 
 /**
  * Node / link identity. comfy-cli mints ints (`mint_id()`, `[2^40, 2^53)`),
@@ -160,7 +160,7 @@ export type StampKey = [baseVersion: number, actor: Actor, opId: string];
 export interface OpBase {
   /** Unique op identity: uuid4 hex, 32 lowercase `[0-9a-f]` chars (vocabulary §8.2 — LWW-load-bearing, never regenerated). */
   op_id: string;
-  actor: Actor;
+  actor: string;
   /** Doc version the op was minted against. */
   base_version: number;
   /** `[base_version, actor]` — see {@link Stamp}. */

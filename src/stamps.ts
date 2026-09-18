@@ -30,7 +30,8 @@ export function codePointCompare(a: string, b: string): -1 | 0 | 1 {
   }
   const ra = a.length - i;
   const rb = b.length - j;
-  return ra === rb ? 0 : ra < rb ? -1 : 1;
+  if (ra === rb) return 0;
+  return ra < rb ? -1 : 1;
 }
 
 function validStampCounter(counter: number): number {
