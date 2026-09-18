@@ -648,8 +648,11 @@ way.
 Published to npm as [`@comfyorg/comfy-multi-player`](https://www.npmjs.com/package/@comfyorg/comfy-multi-player):
 
 ```bash
-npm install @comfyorg/comfy-multi-player
+npm install --save-exact @comfyorg/comfy-multi-player@0.2.1
 ```
+
+This is an exact published-version example, not a claim that unreleased main
+changes are included. Coordinate version upgrades across consumers.
 
 The server and frontend must pin the same **exact** published version. Package
 development stays in the standalone repository; consumers do not vendor its source. Conflict

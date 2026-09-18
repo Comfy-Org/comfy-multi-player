@@ -112,6 +112,13 @@ describe("standalone package ownership", () => {
     expect(develop).not.toMatch(/pnpm|packages\/comfy-multi-player/);
   });
 
+  it("installs a specific published version and saves an exact dependency", () => {
+    const readme = readFileSync(join(root, "README.md"), "utf8");
+    const install = readme.split("## Install\n")[1]?.split("\n## ")[0];
+    expect(install).toBeDefined();
+    expect(install).toContain("npm install --save-exact @comfyorg/comfy-multi-player@0.2.1");
+  });
+
   it("keeps the roadmap migration deferred and standalone development writable", () => {
     const roadmap = readFileSync(join(root, "docs/ROADMAP.md"), "utf8");
     const plan = roadmap.split("## Repository plan\n")[1];
