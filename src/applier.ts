@@ -185,7 +185,34 @@ export function applyOps(doc: Y.Doc, ops: Op[], catalog?: WidgetCatalog, context
     return result;
   }
 
-  for (let index = 0; index < ops.length; index++) {
+  function rejectRemainder(err: unknown, op: Op, index: number): void {
+    const op_id = opIdentity(op);
+    const code = err instanceof OpRejectedError ? err.code : "apply_failed";
+    const message = err instanceof Error ? err.message : String(err);
+    outcomes.push({ op_id, outcome: "rejected", reason: { code, message } });
+    for (const remainder of ops.slice(index + 1)) {
+      outcomes.push({
+        op_id: opIdentity(remainder),
+        outcome: "rejected",
+        reason: { code: "batch_aborted", message: `not processed because op at index ${index} was rejected` },
+      });
+    }
+    if (context?.eventSink !== undefined) {
+      const errorClass = err instanceof Error ? "Error" : "NonError";
+      emitCmpEvent(context.eventSink, {
+        schema_version: CMP_EVENT_SCHEMA_VERSION,
+        type: err instanceof OpRejectedError ? "op_rejected" : "applier_error",
+        source: "applyOps",
+        code,
+        message,
+        error_name: err instanceof OpRejectedError ? "OpRejectedError" : errorClass,
+        op_id,
+        batch_index: index,
+      });
+    }
+  }
+
+  function applyOne(index: number): boolean {
     const op = ops[index]!;
     try {
       validateEnvelope(op);
@@ -205,7 +232,7 @@ export function applyOps(doc: Y.Doc, ops: Op[], catalog?: WidgetCatalog, context
         // is a true no-op (byte-identical encodeStateAsUpdate).
         outcomes.push({ op_id: op.op_id, outcome: "no-op" });
         duplicateIds.add(op.op_id);
-        continue;
+        return true;
       }
       let outcome: Exclude<ApplyOutcome["outcome"], "rejected"> = "applied";
       doc.transact(() => {
@@ -226,31 +253,14 @@ export function applyOps(doc: Y.Doc, ops: Op[], catalog?: WidgetCatalog, context
         });
       }
     } catch (err) {
-      const op_id = opIdentity(op);
-      const code = err instanceof OpRejectedError ? err.code : "apply_failed";
-      const message = err instanceof Error ? err.message : String(err);
-      outcomes.push({ op_id, outcome: "rejected", reason: { code, message } });
-      for (const remainder of ops.slice(index + 1)) {
-        outcomes.push({
-          op_id: opIdentity(remainder),
-          outcome: "rejected",
-          reason: { code: "batch_aborted", message: `not processed because op at index ${index} was rejected` },
-        });
-      }
-      if (context?.eventSink !== undefined) {
-        emitCmpEvent(context.eventSink, {
-          schema_version: CMP_EVENT_SCHEMA_VERSION,
-          type: err instanceof OpRejectedError ? "op_rejected" : "applier_error",
-          source: "applyOps",
-          code,
-          message,
-          error_name: err instanceof OpRejectedError ? "OpRejectedError" : err instanceof Error ? "Error" : "NonError",
-          op_id,
-          batch_index: index,
-        });
-      }
-      break; // abort-remainder (vocabulary §4)
+      rejectRemainder(err, op, index);
+      return false;
     }
+    return true;
+  }
+
+  for (let index = 0; index < ops.length; index++) {
+    if (!applyOne(index)) break; // abort-remainder (vocabulary §4)
   }
 
   return makeResult({ outcomes, ops_seen: bookkeeping.size }, ops, duplicateIds);
@@ -282,30 +292,14 @@ function opIdentity(op: unknown): string {
     : "";
 }
 
-/**
- * Stable, key-order-independent JSON for an op: object keys sorted by code
- * point at every depth, array order preserved, whole envelope included.
- *
- * NOT stored — see {@link opDigest}. Exposed to tests as the definition of
- * what the digest is taken over.
- */
-function canonicalJson(value: unknown): string {
+function rejectBigIntPayload(value: unknown): void {
   // BigInt classification takes precedence over the generic depth/cost gates.
   // Keep this walk iterative and bounded so even a hostile envelope cannot
   // turn the diagnostic into unbounded work.
   const bigintStack: Array<{ value: unknown; path: string }> = [{ value, path: "$" }];
   const bigintVisited = new Set<object>();
   let bigintVisits = 0;
-  while (bigintStack.length > 0 && bigintVisits++ <= MAX_OP_COST) {
-    const { value, path } = bigintStack.pop()!;
-    if (typeof value === "bigint") {
-      throw new OpRejectedError(
-        "malformed_op",
-        `op payload at ${path} is a BigInt and cannot be encoded as JSON`,
-      );
-    }
-    if (typeof value !== "object" || value === null || bigintVisited.has(value)) continue;
-    bigintVisited.add(value);
+  function queueChildren(value: object, path: string): void {
     if (Array.isArray(value)) {
       const firstIndex = Math.max(0, value.length - (MAX_OP_COST - bigintVisits));
       for (let index = value.length - 1; index >= firstIndex; index--) {
@@ -324,7 +318,29 @@ function canonicalJson(value: unknown): string {
       }
     }
   }
+  while (bigintStack.length > 0 && bigintVisits++ <= MAX_OP_COST) {
+    const { value, path } = bigintStack.pop()!;
+    if (typeof value === "bigint") {
+      throw new OpRejectedError(
+        "malformed_op",
+        `op payload at ${path} is a BigInt and cannot be encoded as JSON`,
+      );
+    }
+    if (typeof value !== "object" || value === null || bigintVisited.has(value)) continue;
+    bigintVisited.add(value);
+    queueChildren(value, path);
+  }
+}
 
+/**
+ * Stable, key-order-independent JSON for an op: object keys sorted by code
+ * point at every depth, array order preserved, whole envelope included.
+ *
+ * NOT stored — see {@link opDigest}. Exposed to tests as the definition of
+ * what the digest is taken over.
+ */
+function canonicalJson(value: unknown): string {
+  rejectBigIntPayload(value);
   // Amendment A11 extends A8's whole-envelope, pre-idempotency gate with a
   // breadth/size budget. Its iterative depth check keeps A8's
   // `payload_too_deep` vocabulary while avoiding hostile recursion.
@@ -586,12 +602,7 @@ function applyDefineSubgraph(
     if (existingDigest === digest) return "no-op";
     if (digest > existingDigest) {
       assertDefinitionIdsAvailable(doc, op.subgraph_definition, op.subgraph_id);
-      let replacement: Y.Map<unknown>;
-      try {
-        replacement = mintDefinition(op.subgraph_definition, catalog);
-      } catch (error) {
-        throw new OpRejectedError("malformed_op", `define_subgraph(${op.subgraph_id}): ${error instanceof Error ? error.message : String(error)}`);
-      }
+      const replacement = mintSubmittedDefinition(op, catalog);
       const widgetEdits = definitionWidgetEdits(doc, existing);
       mset(definitions, op.subgraph_id, replacement);
       restoreDefinitionWidgetEdits(doc, replacement, widgetEdits);
@@ -608,18 +619,21 @@ function applyDefineSubgraph(
     );
   }
   assertDefinitionIdsAvailable(doc, op.subgraph_definition);
-  let definition: Y.Map<unknown>;
+  const definition = mintSubmittedDefinition(op, catalog);
+  mset(definitions, op.subgraph_id, definition);
+  setDefinitionDigest(doc, op.subgraph_id, digest);
+  return "applied";
+}
+
+function mintSubmittedDefinition(op: DefineSubgraphOp, catalog: WidgetCatalog): Y.Map<unknown> {
   try {
-    definition = mintDefinition(op.subgraph_definition, catalog);
+    return mintDefinition(op.subgraph_definition, catalog);
   } catch (error) {
     throw new OpRejectedError(
       "malformed_op",
       `define_subgraph(${op.subgraph_id}): ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  mset(definitions, op.subgraph_id, definition);
-  setDefinitionDigest(doc, op.subgraph_id, digest);
-  return "applied";
 }
 
 function definitionDigest(definition: SubgraphDefinition | Y.Map<unknown>, catalog: WidgetCatalog): string {
@@ -853,7 +867,9 @@ function assertUniqueNormalizedIds(
 ): void {
   const ids = new Set<string>();
   values.forEach((value, index) => {
-    const id = Array.isArray(value) ? value[0] : isPlainRecord(value) ? value.id : undefined;
+    let id: unknown;
+    if (Array.isArray(value)) id = value[0];
+    else if (isPlainRecord(value)) id = value.id;
     if (id === undefined || id === null) {
       if (required) throw new OpRejectedError("malformed_op", `${operation}: missing id at ${path}[${index}]`);
       return;
