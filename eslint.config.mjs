@@ -2,11 +2,15 @@ import tsParser from "@typescript-eslint/parser";
 import sonarjs from "eslint-plugin-sonarjs";
 
 const sonarRecommended = sonarjs.configs.recommended;
+// The former unconditional mapping accidentally enabled all 65 rules disabled
+// by SonarJS 3.0.7's recommendation. Keep upstream rule selection and options;
+// only promote enabled severities so findings cannot produce a successful lint.
 const sonarErrors = Object.fromEntries(
-  Object.entries(sonarRecommended.rules).map(([ruleName, setting]) => [
-    ruleName,
-    Array.isArray(setting) ? ["error", ...setting.slice(1)] : "error",
-  ]),
+  Object.entries(sonarRecommended.rules).map(([ruleName, setting]) => {
+    const severity = Array.isArray(setting) ? setting[0] : setting;
+    if (severity === "off" || severity === 0) return [ruleName, setting];
+    return [ruleName, Array.isArray(setting) ? ["error", ...setting.slice(1)] : "error"];
+  }),
 );
 
 export default [
