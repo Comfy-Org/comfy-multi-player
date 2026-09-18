@@ -90,6 +90,50 @@ describe("set_widget LWW gate current-behavior characterization (cmp-sw-lww-1)",
     expect(hasAppliedOp(doc, loser.op_id)).toBe(true);
   });
 
+  it("applies a later-arriving higher op_id at an equal counter and actor (reverse arrival order)", () => {
+    // The forward order (higher op_id first) also passes if the top-level gate
+    // compares only the counter, so pin the reverse order too: the second op
+    // wins purely on the op_id tiebreak.
+    const doc = mint(base(), catalog);
+    const first = setWidget("a".repeat(32), 5, "agent:a", "first");
+    const winner = setWidget("f".repeat(32), 5, "agent:a", "winner");
+
+    applyOps(doc, [first], catalog);
+    const bytesBefore = Y.encodeStateAsUpdate(doc);
+
+    expect(applyOps(doc, [winner], catalog).outcomes).toEqual([
+      { op_id: winner.op_id, outcome: "applied" },
+    ]);
+    expect(widgetValue(doc)).toBe("winner");
+    expect(readStamps(doc)[targetKey]).toEqual([5, "agent:a", winner.op_id]);
+    expect(hasAppliedOp(doc, first.op_id)).toBe(true);
+    expect(Y.encodeStateAsUpdate(doc)).not.toEqual(bytesBefore);
+  });
+
+  it("resolves equal-counter different-actor stamps by actor in both arrival orders", () => {
+    const docForward = mint(base(), catalog);
+    const docReverse = mint(base(), catalog);
+    const fromA = setWidget("a".repeat(32), 5, "agent:a", "from-a");
+    const fromB = setWidget("b".repeat(32), 5, "agent:b", "from-b");
+
+    applyOps(docForward, [fromA], catalog);
+    expect(applyOps(docForward, [fromB], catalog).outcomes).toEqual([
+      { op_id: fromB.op_id, outcome: "applied" },
+    ]);
+
+    applyOps(docReverse, [fromB], catalog);
+    expect(applyOps(docReverse, [fromA], catalog).outcomes).toEqual([
+      { op_id: fromA.op_id, outcome: "lww-dropped" },
+    ]);
+
+    expect(widgetValue(docForward)).toBe("from-b");
+    expect(widgetValue(docReverse)).toBe("from-b");
+    expect(readStamps(docForward)[targetKey]).toEqual([5, "agent:b", fromB.op_id]);
+    expect(readStamps(docReverse)[targetKey]).toEqual([5, "agent:b", fromB.op_id]);
+    expect(hasAppliedOp(docReverse, fromA.op_id)).toBe(true);
+    expect(project(docForward, catalog)).toEqual(project(docReverse, catalog));
+  });
+
   it("applies a higher stamp and replaces the widget register", () => {
     const doc = mint(base(), catalog);
     const first = setWidget("a".repeat(32), 5, "agent:a", "first");
