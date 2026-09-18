@@ -1622,7 +1622,7 @@ function applyPromotedHostWrite(
   }
 }
 
-function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): SuccessfulOutcome {
+function validateWidgetOp(op: SetWidgetOp) {
   const interior: InteriorSetWidgetOp | null = isInteriorWrite(op) ? op : null;
   if (interior !== null && typeof interior.inner_widget !== "string") {
     throw new OpRejectedError("malformed_op", "set_widget: interior write without inner_widget");
@@ -1641,7 +1641,11 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
   if (promoted !== null && interior !== null) {
     throw new OpRejectedError("malformed_op", "set_widget: a promoted host write carries no interior path");
   }
+  return { interior, promoted };
+}
 
+function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): SuccessfulOutcome {
+  const { interior, promoted } = validateWidgetOp(op);
   // Interior paths have several legal spellings (definition id and instance
   // id), but all of them can resolve to the same node. Resolve first
   // so that node owns one register rather than letting each raw alias claim a
@@ -1672,8 +1676,7 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
     return applyPromotedHostWrite(doc, op, promoted, stamps, targetKey, key, catalog);
   }
 
-  if (interior !== null) {
-    const target = interiorResolution!.node;
+  function applyInteriorWidget(target: Y.Map<unknown>, interior: InteriorSetWidgetOp): SuccessfulOutcome {
     if (nodeIncarnation(target) !== (op.node_incarnation ?? LEGACY_NODE_INCARNATION)) return "no-op";
     const nodeType = String(target.get("type") ?? "");
     const widget = interior.inner_widget;
@@ -1706,6 +1709,7 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
     return "applied";
   }
 
+  if (interior !== null) return applyInteriorWidget(interiorResolution!.node, interior);
   const node = nodesMap(doc).get(String(op.node_id));
   if (!node) return "no-op"; // target concurrently deleted → no-op (delete wins)
   if (nodeIncarnation(node) !== (op.node_incarnation ?? LEGACY_NODE_INCARNATION)) return "no-op";
@@ -1755,16 +1759,14 @@ function resolveInteriorNode(
   allowRetainedRoute = true,
 ): InteriorResolution | null {
   const head = nodesMap(doc).get(path[0]!);
-  if (!head) {
+  function resolveMissingHead(): InteriorResolution | null {
     const directDefinition = resolveDefinition(doc, path[0]!);
     const retainedDefinitionId = allowRetainedRoute
       ? stampsMap(doc).get(interiorRouteKey(path[0]!, incarnation))
       : undefined;
-    const definition = directDefinition && String(directDefinition.get("id")) === path[0]
-      ? directDefinition
-      : typeof retainedDefinitionId === "string"
-        ? resolveDefinition(doc, retainedDefinitionId)
-        : null;
+    let definition: Y.Map<unknown> | null = null;
+    if (directDefinition && String(directDefinition.get("id")) === path[0]) definition = directDefinition;
+    else if (typeof retainedDefinitionId === "string") definition = resolveDefinition(doc, retainedDefinitionId);
     if (!definition) return null;
     const definitionId = String(definition.get("id"));
     // A retained route represents the deleted routing instance for authority
@@ -1790,6 +1792,7 @@ function resolveInteriorNode(
     if (path.length === 2) return { node: inner, canonicalPath };
     return resolveInteriorDescendants(doc, inner, path.slice(2), canonicalPath, catalog);
   }
+  if (!head) return resolveMissingHead();
   const definition = resolveDefinition(doc, String(head.get("type") ?? ""));
   const canonicalPath = definition === null
     ? [path[0]!]
