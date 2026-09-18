@@ -22,6 +22,7 @@ import {
   mint,
   project,
   writeTarget,
+  type AddNodeOp,
   type ConnectOp,
   type Op,
   type SetWidgetOp,
@@ -196,5 +197,74 @@ describe("stamp targets normalize node ids to strings", () => {
     // Exactly one link survives — the loser leaves no record in either order.
     expect(forward.links.map((l) => (l as unknown[])[0])).toEqual([502]);
     expect(reverse.links.map((l) => (l as unknown[])[0])).toEqual([502]);
+  });
+
+  it("add_node: same-type duplicate ids converge on one higher-stamped payload", () => {
+    const makeCreate = (
+      tag: string,
+      actor: string,
+      baseVersion: number,
+      stepsValue: number,
+      pos: [number, number],
+    ): AddNodeOp => ({
+      op: "add_node",
+      op_id: opId(tag),
+      actor,
+      base_version: baseVersion,
+      stamp: [baseVersion, actor],
+      node_id: 10,
+      class_type: "KSampler",
+      pos,
+      node: {
+        ...base().nodes[0]!,
+        id: 10,
+        pos,
+        widgets_values: [stepsValue, "fixed", 20, 8.0, "euler", "simple", 1.0],
+      },
+    });
+    const lower = makeCreate("a3", AGENT, 5, 111, [10, 10]);
+    const higher = makeCreate("b3", HUMAN, 9, 999, [20, 20]);
+    const snapshot = Y.encodeStateAsUpdate(mint(base(), catalog));
+    const applyOrder = (ops: AddNodeOp[]): Y.Doc => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      expect(applyOps(doc, ops, catalog).failed).toBeNull();
+      return doc;
+    };
+    const sortedEntries = (doc: Y.Doc, name: "__stamps" | "__applied"): [string, unknown][] =>
+      [...doc.getMap(name).entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+
+    const forward = applyOrder([lower, higher]);
+    const reverse = applyOrder([higher, lower]);
+    const forwardProjection = canonicalize(project(forward, catalog));
+    const reverseProjection = canonicalize(project(reverse, catalog));
+    const created = forwardProjection.nodes.filter((node) => node.id === 10);
+
+    expect(forwardProjection).toEqual(reverseProjection);
+    expect(created).toHaveLength(1);
+    expect(created[0]!.pos).toEqual([20, 20]);
+    expect(created[0]!.widgets_values?.[0]).toBe(999);
+    expect(sortedEntries(forward, "__stamps")).toEqual(sortedEntries(reverse, "__stamps"));
+    expect(sortedEntries(forward, "__stamps")).toHaveLength(1);
+    expect(sortedEntries(forward, "__applied")).toEqual(sortedEntries(reverse, "__applied"));
+    expect(sortedEntries(forward, "__applied")).toHaveLength(2);
+
+    // Reapplying an already-applied operation is a no-op in both orders: take
+    // each order's first (losing) op and apply it a second time, then assert
+    // the projection and both ledgers are unchanged.
+    const snapshotOf = (doc: Y.Doc) => ({
+      projection: canonicalize(project(doc, catalog)),
+      stamps: sortedEntries(doc, "__stamps"),
+      applied: sortedEntries(doc, "__applied"),
+    });
+    const forwardAgain = applyOrder([lower, higher]);
+    const forwardBefore = snapshotOf(forwardAgain);
+    expect(applyOps(forwardAgain, [lower], catalog).failed).toBeNull();
+    expect(snapshotOf(forwardAgain)).toEqual(forwardBefore);
+
+    const reverseAgain = applyOrder([higher, lower]);
+    const reverseBefore = snapshotOf(reverseAgain);
+    expect(applyOps(reverseAgain, [higher], catalog).failed).toBeNull();
+    expect(snapshotOf(reverseAgain)).toEqual(reverseBefore);
   });
 });
