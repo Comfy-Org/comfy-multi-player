@@ -439,6 +439,12 @@ export function readStamps(doc: Y.Doc): Readonly<Record<string, unknown>> {
   return snapshotRoot(doc, ROOT_STAMPS);
 }
 
+/** Descriptor fields have already been copied into inert snapshot data. */
+function descriptorRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
 /** Durable imported and operation-owned link descriptors as deep-frozen plain data. */
 export function readLinkState(doc: Y.Doc): Readonly<Record<string, unknown>> {
   assertSnapshotReadable(doc, "readLinkState");
@@ -450,19 +456,14 @@ export function readLinkState(doc: Y.Doc): Readonly<Record<string, unknown>> {
     const descriptor = raw as Record<string, unknown>;
     const tuple = descriptor["tuple"];
     const destinationValue = descriptor["destination"];
-    const destination = typeof destinationValue === "object" && destinationValue !== null && !Array.isArray(destinationValue)
-      ? destinationValue as Record<string, unknown>
-      : undefined;
+    const destination = descriptorRecord(destinationValue);
     const validId = (value: unknown): boolean =>
       (typeof value === "string" && value.length > 0) || (typeof value === "number" && Number.isSafeInteger(value));
     const validSlot = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) >= 0;
-    const validSlotRecord = destination !== undefined && typeof destination["slot"] === "object" &&
-      destination["slot"] !== null && !Array.isArray(destination["slot"]);
-    const slotRecord = validSlotRecord ? destination!["slot"] as Record<string, unknown> : undefined;
+    const slotRecord = descriptorRecord(destination?.["slot"]);
+    const validSlotRecord = slotRecord !== undefined;
     const authority = descriptor["authority"];
-    const operationAuthority = typeof authority === "object" && authority !== null && !Array.isArray(authority)
-      ? authority as Record<string, unknown>
-      : undefined;
+    const operationAuthority = descriptorRecord(authority);
     const operationStamp = operationAuthority?.["stamp"];
     // Match validateEnvelope/stampKey, including the empty fallback actor and
     // non-empty opaque op IDs. Reading must not reject records our writer emits.
@@ -472,13 +473,9 @@ export function readLinkState(doc: Y.Doc): Readonly<Record<string, unknown>> {
        typeof operationStamp[1] === "string" &&
        typeof operationStamp[2] === "string" && operationStamp[2].length > 0);
     const requestValue = destination?.["request"];
-    const request = typeof requestValue === "object" && requestValue !== null && !Array.isArray(requestValue)
-      ? requestValue as Record<string, unknown>
-      : undefined;
+    const request = descriptorRecord(requestValue);
     const inputcountValue = request?.["inputcount"];
-    const inputcount = typeof inputcountValue === "object" && inputcountValue !== null && !Array.isArray(inputcountValue)
-      ? inputcountValue as Record<string, unknown>
-      : undefined;
+    const inputcount = descriptorRecord(inputcountValue);
     const validRequest = destination?.["kind"] !== "autogrow" || authority === "imported" ||
       (request !== undefined && typeof request["name"] === "string" &&
        typeof request["type"] === "string" &&
