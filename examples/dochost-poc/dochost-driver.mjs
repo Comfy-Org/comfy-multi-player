@@ -209,15 +209,16 @@ check("host: agent link present", eq(hostProj.links.find((link) => String(link[0
 // A real refusal pins comparison of the stable reason code (never its
 // intentionally human/volatile message).
 const rejectedOp = { ...humanOp, op_id: opId(), stamp: [2, "human:jo"], widget: "not_a_real_widget" };
+const abortedOp = { ...humanOp, op_id: opId(), stamp: [3, "human:jo"], value: 515151 };
 const r3 = await post("/apply", {
   snapshot_b64,
   updates_b64: [r1.update_b64, r2.update_b64],
-  ops: [rejectedOp],
+  ops: [rejectedOp, abortedOp],
   actor: "human:jo",
   turn_id: "t3-rejection-probe",
   catalog,
 });
-const d3 = directApply([r1.update_b64, r2.update_b64], [rejectedOp]);
+const d3 = directApply([r1.update_b64, r2.update_b64], [rejectedOp, abortedOp]);
 check(
   "rejected ApplyResult and stable reason code match local executable package",
   eq(stableOutcomes(r3.apply_result), stableOutcomes(d3.apply_result)),
@@ -225,8 +226,36 @@ check(
 );
 check("unknown widget is rejected", r3.apply_result.outcomes?.[0]?.outcome === "rejected"
   && r3.apply_result.outcomes[0].reason?.code === "unknown_widget");
+check("valid trailing operation is batch_aborted", r3.apply_result.outcomes?.[1]?.op_id === abortedOp.op_id
+  && r3.apply_result.outcomes[1].outcome === "rejected"
+  && r3.apply_result.outcomes[1].reason?.code === "batch_aborted");
 check("rejected batch projection matches local executable package", eq(r3.projection, d3.projection));
 check("rejection leaves graph unchanged", eq(r3.projection, hostProj));
+
+// Reconstruct both documents from the same bootstrap and prior HOST deltas,
+// then fold the returned rejection delta into only the after-document. This
+// direct comparison never enters either the host or follower update stream.
+const rejectionBefore = new Y.Doc();
+const rejectionAfter = new Y.Doc();
+try {
+  for (const doc of [rejectionBefore, rejectionAfter]) {
+    Y.applyUpdate(doc, Buffer.from(snapshot_b64, "base64"));
+    Y.applyUpdate(doc, Buffer.from(r1.update_b64, "base64"));
+    Y.applyUpdate(doc, Buffer.from(r2.update_b64, "base64"));
+  }
+  Y.applyUpdate(rejectionAfter, Buffer.from(r3.update_b64, "base64"));
+  check(
+    "rejected batch leaves encoded document state unchanged",
+    Buffer.from(Y.encodeStateAsUpdate(rejectionBefore)).equals(Buffer.from(Y.encodeStateAsUpdate(rejectionAfter))),
+  );
+  check(
+    "batch-aborted trailing operation is absent from __applied",
+    !rejectionAfter.getMap("__applied").has(abortedOp.op_id),
+  );
+} finally {
+  rejectionBefore.destroy();
+  rejectionAfter.destroy();
+}
 
 // 4. FOLLOWER converges from the host DELTAS only (raw-struct fan-out).
 //    /project folds snapshot + the two host updates and projects — this is

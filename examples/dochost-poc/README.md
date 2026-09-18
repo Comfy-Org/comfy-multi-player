@@ -43,7 +43,9 @@ Checked-out package ── pack ──► disposable sidecar ──► HTTP resu
 - Each ordered `ApplyResult` matches the direct build: operation identity,
   outcome, stable rejection code and `ops_seen`. Human-readable error prose is
   deliberately excluded. Legacy-only result shapes fail.
-- Projections match after each batch, including a real unknown-widget refusal.
+- Projections match after each batch. A real unknown-widget refusal aborts a
+  valid trailing operation; folding its returned delta must leave encoded state
+  byte-identical and must not record the trailing operation in `__applied`.
 - Followers consuming only host deltas converge; duplicate and reversed delta
   delivery preserve the projection.
 
