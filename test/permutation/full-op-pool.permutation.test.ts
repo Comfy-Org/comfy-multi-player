@@ -262,8 +262,9 @@ function run(
     if (mode === "split" && result.outcomes[0]?.outcome === "rejected") {
       expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
     }
-    if (mode === "together" && result.outcomes.some((outcome) => outcome.outcome === "rejected")) {
-      assertRejectedOpDoesNotMutate(before, group);
+    const rejectedIndex = result.outcomes.findIndex((outcome) => outcome.outcome === "rejected");
+    if (mode === "together" && rejectedIndex !== -1) {
+      assertRejectedOpDoesNotMutate(doc, before, group, rejectedIndex);
     }
     for (const op of group) {
       const outcome = result.outcomes.find((candidate) => candidate.op_id === op.op_id);
@@ -281,7 +282,17 @@ function run(
   return { projection: canonicalize(project(doc, catalog)), outcomes, appliedIds };
 }
 
-function assertRejectedOpDoesNotMutate(encodedDoc: Uint8Array, group: readonly WireOp[]): void {
+function assertRejectedOpDoesNotMutate(
+  actual: Y.Doc, encodedDoc: Uint8Array, group: readonly WireOp[], rejectedIndex: number,
+): void {
+  const prefix = new Y.Doc();
+  Y.applyUpdate(prefix, encodedDoc);
+  // Recreate the same writer's structs for an exact byte comparison, not a
+  // second independently edited replica intended for merging.
+  prefix.clientID = actual.clientID;
+  if (rejectedIndex > 0) applyOps(prefix, group.slice(0, rejectedIndex) as Op[], catalog);
+  expect(Y.encodeStateAsUpdate(actual)).toEqual(Y.encodeStateAsUpdate(prefix));
+
   const oracle = new Y.Doc();
   Y.applyUpdate(oracle, encodedDoc);
   for (const op of group) {
