@@ -249,6 +249,10 @@ try {
     Buffer.from(Y.encodeStateAsUpdate(rejectionBefore)).equals(Buffer.from(Y.encodeStateAsUpdate(rejectionAfter))),
   );
   check(
+    "rejected operation is absent from __applied",
+    !rejectionAfter.getMap("__applied").has(rejectedOp.op_id),
+  );
+  check(
     "batch-aborted trailing operation is absent from __applied",
     !rejectionAfter.getMap("__applied").has(abortedOp.op_id),
   );

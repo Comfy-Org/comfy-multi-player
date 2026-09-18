@@ -85,6 +85,10 @@ async function serveFixtureRequest(
   if (mode === "hidden-rejection-mutation" && state.applyNumber === 3) {
     doc.getMap("meta").set("fixture_hidden_rejection_mutation", true);
   }
+  if (mode === "rejected-operation-recorded" && state.applyNumber === 3) {
+    const rejected = (body.ops as Op[])[0]!;
+    doc.getMap("__applied").set(rejected.op_id, true);
+  }
   if (mode === "trailing-operation-applied" && state.applyNumber === 3) {
     const trailing = (body.ops as Op[])[1];
     if (!trailing) throw new Error("trailing-operation fixture requires a second rejected-batch operation");
@@ -143,6 +147,7 @@ describe("dochost driver executable-package oracle (tiny loopback fixture, not c
 
   it.each([
     ["hidden-rejection-mutation", "FAIL  rejected batch leaves encoded document state unchanged"],
+    ["rejected-operation-recorded", "FAIL  rejected operation is absent from __applied"],
     ["trailing-operation-applied", "FAIL  batch-aborted trailing operation is absent from __applied"],
   ])("fails closed for %s", async (mode, expectedFailure) => {
     const result = await run(mode);
