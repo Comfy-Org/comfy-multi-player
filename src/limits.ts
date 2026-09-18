@@ -29,7 +29,10 @@
  * or custom iterator can execute arbitrary code before the next budget check.
  * This function is not an execution sandbox. Hosts must decode untrusted
  * wire bytes before calling the package; copying an arbitrary JavaScript
- * object here cannot guarantee trap-free traversal.
+ * object here cannot guarantee trap-free traversal. Bound wire bytes before
+ * JSON.parse without a reviver; parsing/allocation costs belong to the host.
+ * structuredClone reads getters and JSON.stringify can invoke toJSON, so
+ * neither sanitizes an arbitrary caller-controlled object without executing it.
  */
 /** Ops per `applyOps` batch. Checked before ANY op is processed (#14). */
 export const MAX_OPS_PER_BATCH = 1024;

@@ -23,8 +23,8 @@ This is the machine-addressable review log for the package. IDs are stable; do n
 ### KA-3 — The op layer stays pure & portable
 **Rule:** Applier, projection, and mint have zero DOM/framework/LiteGraph/server-only dependencies and run identically in browser and host; assert `yjs`-only directly, not merely by denylist.  
 **Why:** A peer, edge, browser, and Node host must execute one implementation identically.  
-Schema v3 adds the first-class `__link_state` root to the shared wire layout. Private alpha has no compatibility reader: old layouts are re-minted, while `migrate()` refuses to relabel them.
-**Enforced by:** `scripts/check-purity.mjs` (package level), `scripts/check-import-graph.mjs` + `.dependency-cruiser.cjs` rule `src-runtime-dep-is-yjs-only` (module-graph level, per source module), `test/purity.test.ts`, `test/parity.test.ts`, and [`purity`](../.agents/checks/purity.md). Cross-language implementations must pass the canonical golden vectors in `fixtures/golden-vectors/`. The current schema §1 root-map NAMES (`nodes`, `links`, `definitions`, `meta`, `__applied`, `__stamps`, `__link_state`) and the reserved per-node `__widgets_opaque` key are the shared wire layout. Before schema v3 added `__link_state`, the historical inventory was seven names: six roots plus that reserved widget key. Those seven were pinned by name in `test/doc-mint-mutation-survivors.test.ts`; every other reader in this package went through `nodesMap()`/`linksMap()`/… , so a consistent rename was invisible to most of the suite: measured one key at a time against the pre-existing tests, renaming `links`, `definitions`, `__applied` or `__stamps` left 277/277 green, while `nodes` reddened 2 and `meta` reddened 6. Four of those historical seven names had no holder at all before this file. The current eight names are additionally published as the language-agnostic vector `fixtures/golden-vectors/wire-layout.json` and held against the ENCODED bootstrap snapshot, against a replica that has only those bytes, and against this file and schema §1, by `test/wire-layout-contract.test.ts` — so a rename must move code, vector and both documents together, which is what makes a deliberate one visible in review. **Scoped, because the wording invites the wider reading:** that test does NOT force the `SCHEMA_VERSION` bump or the `migrate()` step KA-11 and schema §1/§10 require of a layout change. Its last case checks only that the three declarations of `SCHEMA_VERSION` agree with each other, and a rename applied consistently to all four places leaves them agreeing at 1 — measured, with that file fully green. The bump obligation is **UNGUARDED — see roadmap**; only its consistency once taken is held.
+Schema v3 added the first-class `__link_state` root; v4 adds `__clock_reservations`, keeping `__stamps` limited to winning write-target stamps. Private alpha has no compatibility reader: old layouts are re-minted, while `migrate()` refuses to relabel them.
+**Enforced by:** `scripts/check-purity.mjs` (package level), `scripts/check-import-graph.mjs` + `.dependency-cruiser.cjs` rule `src-runtime-dep-is-yjs-only` (module-graph level, per source module), `test/purity.test.ts`, `test/parity.test.ts`, and [`purity`](../.agents/checks/purity.md). Cross-language implementations must pass the canonical golden vectors in `fixtures/golden-vectors/`. The current schema §1 root-map NAMES (`nodes`, `links`, `definitions`, `meta`, `__applied`, `__stamps`, `__link_state`, `__clock_reservations`) and the reserved per-node `__widgets_opaque` key are the shared wire layout. Before schema v3 added `__link_state`, the historical inventory was seven names: six roots plus that reserved widget key. Those seven were pinned by name in `test/doc-mint-mutation-survivors.test.ts`; every other reader in this package went through `nodesMap()`/`linksMap()`/… , so a consistent rename was invisible to most of the suite: measured one key at a time against the pre-existing tests, renaming `links`, `definitions`, `__applied` or `__stamps` left 277/277 green, while `nodes` reddened 2 and `meta` reddened 6. Four of those historical seven names had no holder at all before this file. The current nine names are additionally published as the language-agnostic vector `fixtures/golden-vectors/wire-layout.json` and held against the ENCODED bootstrap snapshot, against a replica that has only those bytes, and against this file and schema §1, by `test/wire-layout-contract.test.ts` — so a rename must move code, vector and both documents together, which is what makes a deliberate one visible in review. **Scoped, because the wording invites the wider reading:** that test does NOT force the `SCHEMA_VERSION` bump or the old-layout disposition KA-11 and schema §1/§10 require of a layout change. Its last case checks only that the three declarations of `SCHEMA_VERSION` agree with each other, and a rename applied consistently to all four places leaves them agreeing at 1 — measured, with that file fully green. The bump obligation is **UNGUARDED — see roadmap**; only its consistency once taken is held.
 
 ### KA-4 — The applier is deterministic and idempotent
 **Rule:** Same op-set + causal order gives the same projection; an identical duplicate `op_id` is a true no-op with byte-identical `encodeStateAsUpdate`, while reuse with a different canonical payload is rejected without mutation.
@@ -77,6 +77,13 @@ Two corrections recorded by MUT-GLOB-KA4-1, both measured on this tree rather th
 **Why:** Readers must not silently mis-project an incompatible document.  
 **Enforced by:** `test/roundtrip.test.ts`, `test/schema-version-on-read.test.ts`, `test/readonly-surface.test.ts`, and the 22 byte-identical old-layout refusal counterexamples retained by the schema-v3 integration. `project()` and `migrate()` share `readSchemaVersion`; both refuse old, absent, unreadable, or newer versions without mutation. Snapshot reads use the same predicate but return empty data for a document carrying no structs, as recorded by Amendment A12. Old private-alpha layouts are re-minted from source rather than relabelled.
 
+Schema v4 adds the separate clock reservation root (schema A20 / ADR-021 CLK-3).
+A v3 clock would miss those counters, so the layout is not silently extended.
+`observedDocCounter()` also requires the current schema, even for an empty doc;
+clock admission is not a follower's empty snapshot read. `test/clock.test.ts`
+holds refusal of v1–v3, absent and future schemas without writes or relabelling,
+and restart recovery from current-layout winning stamps and reservations.
+
 ### KA-12 — Catalog pinned at mint
 **Rule:** `meta.catalog_version` cites the catalog by SHA, not branch; reject NAMED widget writes to uncatalogued classes loudly. A subgraph instance's `type` is a definition UUID that no catalog describes, and its promoted widget values are POSITIONAL by frontend contract (ADR 0009), so a promoted host write (schema Amendment A15) is not a widget-name resolution and needs no catalog entry for the instance — it still needs A CATALOG (`catalog_required` without one) to tell an instance from an unseen class, and still refuses (`uncatalogued_widget_write`) to lay a positional array over named values the catalog cannot describe.  
 **Why:** Replay semantics must not drift with a moving vocabulary.  
@@ -94,7 +101,7 @@ Two corrections recorded by MUT-GLOB-KA4-1, both measured on this tree rather th
 carry that token, and `__stamps` keys include it. A write for a non-current
 incarnation is a consumed no-op. The v1→v2 migration translates missing tokens
 and legacy widget keys to life `"0"`. This records the schema-v2 amendment;
-the current schema is v3 and does not run that migration for an old document.
+the current schema is v4 and does not run that migration for an old document.
 Old private-alpha layouts are refused without mutation and source workflows
 are re-minted, with no compatibility reader or relabelling path.
 
@@ -109,7 +116,7 @@ creator-owned Lamport counter. The winner remains the tuple-generic
 `[counter, actor, op_id]`; DQ-11's A16 incarnation-qualified target keys and
 the already-shipped legacy incarnation token `"0"` remain unchanged. At that
 decision point there was no schema-v3, migration, legacy shim, or dual-format
-reader. The current schema-v3 release preserves the ordering decision but
+reader. The current schema-v4 layout preserves the ordering decision but
 refuses old layouts; it re-mints source workflows rather than providing a
 compatibility reader or relabelling an old document.
 

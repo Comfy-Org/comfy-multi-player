@@ -151,6 +151,12 @@ import { NODE_INCARNATION_KEY } from "./types.js";
  * Idempotent per op_id; convergent under reordering via the
  * `[base_version, actor, op_id]` stamp order (schema §3).
  *
+ * Untrusted producers supply inert decoded wire data; in-process objects and
+ * callbacks must be trusted. Hosts own wire-size limits and JSON decoding
+ * without a reviver. Payload limits do not sandbox getters, Proxy traps or
+ * iterators, and rejection guarantees do not cover caller-code mutations.
+ * See README's input trust boundary and src/limits.ts.
+ *
  * `catalog` (the pinned object_info projection) is needed to decompose an
  * `add_node` payload's positional `widgets_values` into the name-keyed
  * widgets map, for autogrow collision renames, and to validate widget names;

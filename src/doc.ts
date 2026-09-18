@@ -1,5 +1,5 @@
 /**
- * Doc layout helpers (schema v2 — docs/multiplayer-schema.md §1) and the
+ * Doc layout helpers (schema v4 — docs/multiplayer-schema.md §1) and the
  * node ⇄ Y conversion used by mint and the applier.
  *
  *   doc
@@ -17,7 +17,9 @@
  *   ├── Y.Map '__applied'   — op_id → sha256 of the canonical op payload
  *   │                         (idempotency + op_id-reuse detection, §4
  *   │                         amendment A8; a legacy `1` is a pre-A8 record)
- *   └── Y.Map '__stamps'    — write-target key → [base_version, actor, op_id] (§4)
+ *   ├── Y.Map '__stamps'    — write-target key → [base_version, actor, op_id] (§4)
+ *   ├── Y.Map '__link_state' — normalized link id → durable descriptor (§1.5)
+ *   └── Y.Map '__clock_reservations' — producer identity → reserved counter tuple (§1.6)
  */
 
 import * as Y from "yjs";
@@ -159,6 +161,8 @@ export const ROOT_META = "meta";
 export const ROOT_APPLIED = "__applied";
 export const ROOT_STAMPS = "__stamps";
 export const ROOT_LINK_STATE = "__link_state";
+/** Created lazily by a successful clock admission, never exported from the entrypoint. */
+export const ROOT_CLOCK_RESERVATIONS = "__clock_reservations";
 
 /** Root map holding one Y.Map per node, keyed by String(node id). */
 export function nodesMap(doc: Y.Doc): Y.Map<Y.Map<unknown>> {
