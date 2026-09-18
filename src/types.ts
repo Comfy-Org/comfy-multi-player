@@ -19,7 +19,7 @@
  * Version of the Y.Doc layout. Bump requires FE sign-off and an explicit old-layout disposition.
  * The authoritative layout + op-semantics reference is docs/multiplayer-schema.md.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** Version of an imported destination reconstruction descriptor in `__link_state`. */
 export const LINK_STATE_DESCRIPTOR_VERSION = 1;
