@@ -1,3 +1,4 @@
+// fallow-ignore-file unused-file -- invoked by run.sh and spawn-based portable harness tests
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";

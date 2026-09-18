@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,51 +8,90 @@ import * as Y from "yjs";
 import { applyOps, mint, project, type Op, type WidgetCatalog, type WorkflowJSON } from "../src/index.js";
 
 type Body = Record<string, unknown>;
+type FixtureState = { applyNumber: number };
 const servers: ReturnType<typeof createServer>[] = [];
+
+async function readBody(req: IncomingMessage): Promise<Body> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  return chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) as Body : {};
+}
+
+type Drift = (applyNumber: number, body: Body, result: Body) => Body;
+
+function driftOutcome(applyNumber: number, _body: Body, result: Body) {
+  if (applyNumber !== 1) return result;
+  const changed = structuredClone(result);
+  (changed.outcomes as { outcome: string }[])[0]!.outcome = "no-op";
+  return changed;
+}
+
+function driftOrder(applyNumber: number, _body: Body, result: Body) {
+  if (applyNumber !== 2) return result;
+  const changed = structuredClone(result);
+  (changed.outcomes as unknown[]).reverse();
+  return changed;
+}
+
+function driftReason(applyNumber: number, _body: Body, result: Body, code?: string) {
+  if (applyNumber !== 3) return result;
+  const changed = structuredClone(result);
+  const reason = ((changed.outcomes as Body[])[0]!.reason as Body);
+  if (code) reason.code = code;
+  reason.message = code ? "message changes are deliberately ignored" : "different volatile prose";
+  return changed;
+}
+
+const drifts: Record<string, Drift> = {
+  count: (applyNumber, _body, result) => applyNumber === 1
+    ? { ...result, ops_seen: (result.ops_seen as number) + 1 }
+    : result,
+  legacy: (applyNumber, body, result) => applyNumber === 1
+    ? { applied: [(body.ops as Op[])[0]!.op_id] }
+    : result,
+  message: (applyNumber, body, result) => driftReason(applyNumber, body, result),
+  order: driftOrder,
+  outcome: driftOutcome,
+  reason: (applyNumber, body, result) => driftReason(applyNumber, body, result, "different_code"),
+};
+
+function applyFixtureDrift(mode: string, applyNumber: number, body: Body, result: Body): Body {
+  return drifts[mode]?.(applyNumber, body, result) ?? result;
+}
+
+async function serveFixtureRequest(
+  mode: string,
+  state: FixtureState,
+  url: string | undefined,
+  body: Body,
+  res: ServerResponse,
+) {
+  res.setHeader("content-type", "application/json");
+  if (url === "/health") return res.end('{"ok":true,"fixture":"loopback-not-cloud"}');
+  if (url === "/mint") {
+    const doc = mint(body.workflow as WorkflowJSON, body.catalog as WidgetCatalog);
+    return res.end(JSON.stringify({ snapshot_b64: Buffer.from(Y.encodeStateAsUpdate(doc)).toString("base64") }));
+  }
+  const doc = new Y.Doc();
+  Y.applyUpdate(doc, Buffer.from(body.snapshot_b64 as string, "base64"));
+  for (const update of body.updates_b64 as string[]) Y.applyUpdate(doc, Buffer.from(update, "base64"));
+  if (url === "/project") return res.end(JSON.stringify({ projection: project(doc, body.catalog as WidgetCatalog) }));
+  const before = Y.encodeStateVector(doc);
+  state.applyNumber++;
+  const rawResult = applyOps(doc, body.ops as Op[], body.catalog as WidgetCatalog) as unknown as Body;
+  const apply_result = applyFixtureDrift(mode, state.applyNumber, body, rawResult);
+  const projected = project(doc, body.catalog as WidgetCatalog);
+  const projection = mode === "projection" && state.applyNumber === 1 ? { ...projected, extra: true } : projected;
+  res.end(JSON.stringify({ apply_result, projection, update_b64: Buffer.from(Y.encodeStateAsUpdate(doc, before)).toString("base64") }));
+}
 
 async function run(mode = "match", packageRoot = resolve(".")) {
   const requests: { path: string; body: Body }[] = [];
-  let applyNumber = 0;
+  const state: FixtureState = { applyNumber: 0 };
   const server = createServer(async (req, res) => {
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) chunks.push(Buffer.from(chunk));
-    const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) as Body : {};
+    const body = await readBody(req);
     requests.push({ path: req.url!, body });
-    res.setHeader("content-type", "application/json");
-    if (req.url === "/health") return res.end('{"ok":true,"fixture":"loopback-not-cloud"}');
-    if (req.url === "/mint") {
-      const doc = mint(body.workflow as WorkflowJSON, body.catalog as WidgetCatalog);
-      return res.end(JSON.stringify({ snapshot_b64: Buffer.from(Y.encodeStateAsUpdate(doc)).toString("base64") }));
-    }
-    const doc = new Y.Doc();
-    Y.applyUpdate(doc, Buffer.from(body.snapshot_b64 as string, "base64"));
-    for (const update of body.updates_b64 as string[]) Y.applyUpdate(doc, Buffer.from(update, "base64"));
-    if (req.url === "/project") return res.end(JSON.stringify({ projection: project(doc, body.catalog as WidgetCatalog) }));
-    const before = Y.encodeStateVector(doc);
-    let apply_result: Body = applyOps(doc, body.ops as Op[], body.catalog as WidgetCatalog) as unknown as Body;
-    const projectionResult = project(doc, body.catalog as WidgetCatalog);
-    applyNumber++;
-    if (mode === "legacy" && applyNumber === 1) apply_result = { applied: [(body.ops as Op[])[0]!.op_id] };
-    if (mode === "outcome" && applyNumber === 1) {
-      apply_result = structuredClone(apply_result);
-      (apply_result.outcomes as { outcome: string }[])[0]!.outcome = "no-op";
-    }
-    if (mode === "order" && applyNumber === 2) {
-      apply_result = structuredClone(apply_result);
-      (apply_result.outcomes as unknown[]).reverse();
-    }
-    if (mode === "count" && applyNumber === 1) apply_result = { ...apply_result, ops_seen: (apply_result.ops_seen as number) + 1 };
-    if (mode === "reason" && applyNumber === 3) {
-      apply_result = structuredClone(apply_result);
-      ((apply_result.outcomes as Body[])[0]!.reason as Body).code = "different_code";
-      ((apply_result.outcomes as Body[])[0]!.reason as Body).message = "message changes are deliberately ignored";
-    }
-    if (mode === "message" && applyNumber === 3) {
-      apply_result = structuredClone(apply_result);
-      ((apply_result.outcomes as Body[])[0]!.reason as Body).message = "different volatile prose";
-    }
-    const projection = mode === "projection" && applyNumber === 1 ? { ...projectionResult, extra: true } : projectionResult;
-    res.end(JSON.stringify({ apply_result, projection, update_b64: Buffer.from(Y.encodeStateAsUpdate(doc, before)).toString("base64") }));
+    await serveFixtureRequest(mode, state, req.url, body, res);
   });
   servers.push(server);
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
