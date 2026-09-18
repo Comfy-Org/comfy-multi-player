@@ -56,7 +56,7 @@ export default {
   // the first uncovered line any sibling PR adds, a failure that would say
   // "mutation score regression" while meaning "new code arrived". Raise it
   // whenever the score is raised; the margin is for new code, NOT for
-  // measurement noise, which is now zero.
+  // measurement noise. Pinning alone does not prove noise is zero.
   thresholds: {
     break: 84,
     low: 84,

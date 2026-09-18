@@ -10,11 +10,24 @@ Stryker classifies each mutant as `Killed`, `Survived`, `Timeout`, `NoCoverage`,
 
 `stryker.config.mjs` pins `timeoutMS`, `timeoutFactor`, `concurrency`, and `coverageAnalysis` for this reason. A score produced with other values is not comparable. `dryRunTimeoutMinutes` separately bounds the initial unmutated Vitest pass and does not classify individual mutants.
 
+The scheduled workflow reached Stryker's default five-minute initial dry-run
+ceiling on 2026-08-31 before writing `reports/mutation/mutation.json`.
+The missing checker report and artifact were downstream symptoms. Raising
+`dryRunTimeoutMinutes` lets the unmutated suite finish without changing
+per-mutant classification settings.
+
 Incremental mode reuses a result only when Stryker determines that the mutant and its covering tests are unchanged. CI keys the incremental report by the operating system, dependency lock, and Stryker configuration, so changing a dependency or pinned measurement setting starts a full run.
+
+Each workflow run uses a unique cache save key and restores the newest compatible
+report, avoiding immutable cache-key reuse while carrying results forward.
 
 ## Baseline policy
 
 No measured baseline is published here without retained output from `npm run check:mutation-report`. The available archived report belongs to a different historical checkout and configuration, so it cannot validate the figures formerly quoted here or in `stryker.config.mjs`.
+
+The removed tables and withdrawn measurements remain in Git history; they are
+not a current baseline and must not be re-cited without their matching report,
+configuration, source revision, host conditions, and passing checker receipt.
 
 The configured break threshold remains **84**. Keep a threshold below a freshly checked baseline rather than equal to it: zero margin turns the first uncovered line in a sibling change into a nominal score regression. Raise the threshold when the checked baseline rises. That headroom is for new code, not measurement noise.
 

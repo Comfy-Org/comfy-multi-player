@@ -38,9 +38,12 @@ reviews:
         conformance corpus and lww-vectors are SHA-pinned and one-way. Flag any
         change that edits a pinned fixture without a corresponding manifest/SHA
         update, cites the catalog/vocabulary by a moving branch instead of a
-        SHA, or would let the corpus drift without being regenerated in CI
-        (verify:corpus). Preserve the one-way-corpus-rule: source inputs
-        generate the corpus; the corpus never defines source behavior.
+        SHA, or bypasses catalog-corpus-check=verify:corpus, the CI
+        hash-verification gate. Preserve the one-way-corpus-rule: expected
+        outputs come from the pinned upstream generator or explicitly
+        documented manual fixtures, never from the applier under test.
+        Regeneration is a separate manual procedure; CI verifies the retained
+        hashes.
     - path: "scripts/**"
       # source: .agents/checks/purity.md
       instructions: >-

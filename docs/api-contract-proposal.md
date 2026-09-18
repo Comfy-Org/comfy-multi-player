@@ -9,15 +9,16 @@ Two halves:
 - **Part 2 — open questions.** Not settled. This is what the meeting is for.
   Each has a recommendation and the trade-off it costs.
 
-Grounding refreshed 2026-09-18 against the source at `6793d75`,
-`docs/multiplayer-schema.md`, the op vocabulary in comfy-cli, and the newer
-[ADR-006](decisions/ADR-006-publish-to-npm-pin-exact-versions.md). ADR-006 records
-the npm contract used by the frontend, the cloud `services/agent/dochost`
-sidecar, and `examples/dochost`; consumers pin an exact published version and
-must be upgraded deliberately. The frontend's public default branch was
-independently observed at the exact `0.2.1` pin on 2026-09-18. This proposal
-does not infer the other consumers' current version from this repository's
-manifest or claim that a contract change is cheap.
+Originally grounded against the source at `6793d75`,
+`docs/multiplayer-schema.md`, and the op vocabulary in comfy-cli.
+**Consumer-status correction, 2026-09-18:** the newer
+[ADR-006](decisions/ADR-006-publish-to-npm-pin-exact-versions.md) records that
+the frontend, cloud `services/agent/dochost` sidecar, and `examples/dochost`
+consumed the published `0.1.0` package at its 2026-08-22 acceptance. Consumers
+pin exact published versions and must be upgraded deliberately. The former
+claim that no default-branch consumers existed and contract changes were cheap
+is obsolete. This correction does not assert their current deployed versions
+or revalidate every historical proposal below.
 
 ---
 
