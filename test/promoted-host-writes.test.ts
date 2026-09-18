@@ -167,11 +167,14 @@ function nested(): WorkflowJSON {
 // Op builders
 // ---------------------------------------------------------------------------
 
-let seq = 0;
-beforeEach(() => { seq = 0; });
-function opId(prefix = "p"): string {
-  return (prefix + String(seq++).padStart(4, "0")).padEnd(32, "0");
+function createOperationIdFactory() {
+  let seq = 0;
+  return (prefix = "p"): string => (prefix + String(seq++).padStart(4, "0")).padEnd(32, "0");
 }
+
+let opId: ReturnType<typeof createOperationIdFactory>;
+beforeEach(() => { opId = createOperationIdFactory(); });
+
 function env(actor = "cli", base = 0) {
   return { op_id: opId(), actor, base_version: base, stamp: [base, actor] as [number, string] };
 }
