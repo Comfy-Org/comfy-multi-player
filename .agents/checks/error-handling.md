@@ -15,8 +15,8 @@ The `src/**` `path_instructions` entry is an umbrella over every profile, so it 
 load-bearing sentence is this profile's mutate-before-throw rule, so the anchor for it lives here: if
 the generated block loses that requirement, CI fails rather than the bot quietly stopping to ask for
 it. The needle is space-free because the YAML carries it in a folded scalar. That block's content was
-moved byte-for-byte from a hand-written config and has **not** been audited — it still cites issue
-#10 as open, and #10 is closed; see
+moved byte-for-byte from a hand-written config and has **not** been audited — it still cites
+issue #10 as open, and #10 is closed; see
 [#80](https://github.com/Comfy-Org/comfy-multi-player/issues/80).
 
 <!-- claim: validate-before-mutate :: .coderabbit.yaml -->
