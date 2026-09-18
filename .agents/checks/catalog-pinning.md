@@ -33,7 +33,9 @@ Apply .agents/checks/catalog-pinning.md (KA-12, FC-10). The widget catalog
 corpus and lww-vectors are SHA-pinned and one-way. Flag any change that
 edits a pinned fixture without a corresponding manifest/SHA update, cites
 the catalog/vocabulary by a moving branch instead of a SHA, or would let the
-corpus drift without being regenerated in CI (verify:corpus).
+corpus drift without being regenerated in CI (verify:corpus). Preserve the
+one-way-corpus-rule: source inputs generate the corpus; the corpus never
+defines source behavior.
 ```
 <!-- /coderabbit-instructions -->
 
@@ -43,6 +45,7 @@ carries it in a folded scalar, where every space is a legal line break. This blo
 audited against the code for [#80](https://github.com/Comfy-Org/comfy-multi-player/issues/80) and
 verified without a wording change.
 
-<!-- claim: sha256 :: .coderabbit.yaml -->
+<!-- claim: verify:corpus :: .coderabbit.yaml -->
+<!-- claim: one-way-corpus-rule :: .coderabbit.yaml -->
 
 > Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P10 to what that guard's test asserts on, P2 to any tool you ran, and P7 to any run you quote.

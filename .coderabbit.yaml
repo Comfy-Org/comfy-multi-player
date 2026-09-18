@@ -39,7 +39,8 @@ reviews:
         change that edits a pinned fixture without a corresponding manifest/SHA
         update, cites the catalog/vocabulary by a moving branch instead of a
         SHA, or would let the corpus drift without being regenerated in CI
-        (verify:corpus).
+        (verify:corpus). Preserve the one-way-corpus-rule: source inputs
+        generate the corpus; the corpus never defines source behavior.
     - path: "scripts/**"
       # source: .agents/checks/purity.md
       instructions: >-
