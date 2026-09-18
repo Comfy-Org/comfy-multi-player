@@ -83,7 +83,7 @@ describe("parsed CI and release contracts", () => {
     const rule = config.reviews?.path_instructions?.find(({ path }) => path?.includes(".github/**"));
     expect(rule?.path).toBe("{package.json,package-lock.json,tsconfig.json,.github/**,stryker.conf.*}");
     for (const name of Object.keys(REQUIRED_STEPS)) expect(rule?.instructions).toContain(`\`${name}\``);
-    expect(rule?.instructions).toContain("make non-fatal");
+    expect(rule?.instructions).toContain("Do not remove or make non-fatal");
   });
 
   it.each(Object.keys(REQUIRED_STEPS))("rejects a missing %s even when named in comments", (name) => {
