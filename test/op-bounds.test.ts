@@ -132,6 +132,39 @@ describe("applyOps enforces the budget before any mutation", () => {
     expect(bytes(doc).equals(before)).toBe(true);
   });
 
+  it.each([
+    { name: "cost", value: "x".repeat(MAX_OP_COST), code: "malformed_op", message: /cost budget/ },
+    { name: "breadth", value: new Array(MAX_COLLECTION_ENTRIES + 1).fill(0), code: "malformed_op", message: /entry limit/ },
+    { name: "depth", value: wrap(MAX_PAYLOAD_DEPTH + 1), code: "payload_too_deep", message: /nests deeper/ },
+  ])("rejects decoded JSON over the $name limit and accepts a corrected retry", ({ value, code, message }) => {
+    const doc = mint(base, catalog);
+    const before = bytes(doc);
+    const opId = "e".repeat(32);
+    // Only inert test fixtures are encoded here. A host receives JSON text;
+    // stringify is not a sanitizer for caller-created getters or Proxies.
+    const wireText = JSON.stringify([setWidget(opId, value)]);
+    const decoded: Op[] = JSON.parse(wireText);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = applyOps(doc, decoded, catalog);
+      expect(result.outcomes).toEqual([{
+        op_id: opId,
+        outcome: "rejected",
+        reason: { code, message: expect.stringMatching(message) },
+      }]);
+      expect(result.ops_seen).toBe(0);
+      expect(bytes(doc)).toEqual(before);
+    }
+
+    const corrected: Op[] = JSON.parse(JSON.stringify([setWidget(opId, 42)]));
+    const accepted = applyOps(doc, corrected, catalog);
+    expect(accepted.outcomes).toEqual([{ op_id: opId, outcome: "applied" }]);
+    expect(accepted.ops_seen).toBe(1);
+    expect(project(doc, catalog).nodes[0]!.widgets_values).toEqual([null, null, 42]);
+    const applied = bytes(doc);
+    expect(applyOps(doc, corrected, catalog).outcomes).toEqual([{ op_id: opId, outcome: "no-op" }]);
+    expect(bytes(doc)).toEqual(applied);
+  });
+
   it(`accepts a batch of exactly ${MAX_OPS_PER_BATCH} ops`, () => {
     const doc = mint(base, catalog);
     const ops = Array.from({ length: MAX_OPS_PER_BATCH }, (_, i) =>

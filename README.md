@@ -109,9 +109,28 @@ names in the catalog.
 
 ### `applyOps(doc, ops, catalog?, context?): ApplyResult`
 
-Applies a batch, one Yjs transaction per op, in the given order. Never throws
-for a rejected op — every outcome comes back in the result. See
+Applies a batch, one Yjs transaction per op, in the given order. For inert
+decoded operations on a valid current-schema document, operation rejections
+come back in the result. See
 [outcomes](#what-applyops-returns) below.
+
+**Input trust boundary (KA-3 / KA-4 / FC-3).** Hosts must bound untrusted wire
+bytes before parsing, decode JSON text with `JSON.parse` without a reviver,
+and validate the batch shape before calling `applyOps`. The package then
+validates operation envelopes and bounds their depth, breadth and approximate
+cost before applying them. These are payload bounds, not an execution sandbox
+or a bound on the host's parsing/allocation cost.
+
+In-process callers must supply trusted objects: getters, Proxies, custom
+iterators and callbacks can execute arbitrary code, throw, change values
+between reads, or never return. The no-mutation-on-rejection contract covers
+package writes, not mutations made by caller code that already holds the
+document. `structuredClone` is not a sanitizer for arbitrary objects: it
+rejects Proxies but reads getters. `JSON.stringify` also invokes getters and
+`toJSON`; stringifying an untrusted object is not equivalent to receiving JSON
+text. See the [structured-clone specification](https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal).
+`test/op-bounds.test.ts` exercises the decoded-data boundary, refusal without
+document mutation, and retry with the same operation identity.
 
 `catalog` is optional but effectively required for a real host: without it, an
 `add_node` carrying positional widget values is rejected `catalog_required`,
