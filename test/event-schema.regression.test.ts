@@ -4,7 +4,6 @@
  * Source: PASS36-R102 / https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#discussion_r3926225065
  */
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import Ajv from "ajv6";
 import { describe, expect, it } from "vitest";
 import { AGENT_EVENT_JSON_SCHEMA } from "../src/event-schema.js";
@@ -20,7 +19,7 @@ describe("draft-07 event schema regression", () => {
 
   it("accepts every pinned golden event", () => {
     const validate = ajv.compile(AGENT_EVENT_JSON_SCHEMA);
-    const events = readFileSync(join(process.cwd(), "fixtures/go-agent-events/golden.jsonl"), "utf8")
+    const events = readFileSync(new URL("../fixtures/go-agent-events/golden.jsonl", import.meta.url), "utf8")
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as unknown);
