@@ -82,6 +82,11 @@ async function serveFixtureRequest(
   const apply_result = applyFixtureDrift(mode, state.applyNumber, body, rawResult);
   const projected = project(doc, body.catalog as WidgetCatalog);
   const projection = mode === "projection" && state.applyNumber === 1 ? { ...projected, extra: true } : projected;
+  applyFixtureMutation(mode, state, body, doc);
+  res.end(JSON.stringify({ apply_result, projection, update_b64: Buffer.from(Y.encodeStateAsUpdate(doc, before)).toString("base64") }));
+}
+
+function applyFixtureMutation(mode: string, state: FixtureState, body: Body, doc: Y.Doc): void {
   if (mode === "hidden-rejection-mutation" && state.applyNumber === 3) {
     doc.getMap("meta").set("fixture_hidden_rejection_mutation", true);
   }
@@ -97,7 +102,6 @@ async function serveFixtureRequest(
       throw new Error(`trailing-operation fixture could not apply operation: ${JSON.stringify(trailingResult)}`);
     }
   }
-  res.end(JSON.stringify({ apply_result, projection, update_b64: Buffer.from(Y.encodeStateAsUpdate(doc, before)).toString("base64") }));
 }
 
 async function run(mode = "match", packageRoot = resolve(".")) {

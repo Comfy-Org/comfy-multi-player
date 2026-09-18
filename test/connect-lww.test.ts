@@ -192,7 +192,11 @@ function interleavings<T>(a: T[], b: T[]): T[][] {
 }
 
 function tags(ops: Op[]): string {
-  return ops.map((o) => o.op_id.replace(/0+$/, "")).join(",");
+  return ops.map((o) => {
+    let end = o.op_id.length;
+    while (end > 0 && o.op_id[end - 1] === "0") end--;
+    return o.op_id.slice(0, end);
+  }).join(",");
 }
 
 /**

@@ -20,7 +20,7 @@ import {
   type SemanticOpTraceStep,
   type WorkflowJSON,
 } from "../src/index.js";
-import { loadCatalog } from "./helpers.js";
+import { compareText, loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
 const opId = (label: string) => createHash("sha256").update(label).digest("hex").slice(0, 32);
@@ -28,7 +28,8 @@ const opId = (label: string) => createHash("sha256").update(label).digest("hex")
 function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  return `{${Object.keys(value as object).sort().map((key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(",")}}`;
+  const entries = Object.keys(value as object).sort().map((key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`);
+  return `{${entries.join(",")}}`;
 }
 
 function hash(value: unknown) {
@@ -37,11 +38,11 @@ function hash(value: unknown) {
 
 function normalized(doc: Y.Doc): WorkflowJSON {
   const value = structuredClone(project(doc, catalog));
-  value.nodes.sort((a, b) => String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0);
+  value.nodes.sort((a, b) => compareText(String(a.id), String(b.id)));
   value.links.sort((left, right) => {
     const a = left as unknown[];
     const b = right as unknown[];
-    return String(a[0]) < String(b[0]) ? -1 : String(a[0]) > String(b[0]) ? 1 : 0;
+    return compareText(String(a[0]), String(b[0]));
   });
   return value;
 }
@@ -74,13 +75,16 @@ function capture(doc: Y.Doc, op: Op, arrival_index: number, parents: SemanticOpT
   const targetKey = stampTargetKey(op);
   const winner = afterStamps[targetKey];
   const incoming = stampKey(op);
-  const evidence = result.outcome === "lww-dropped" && Array.isArray(winner)
-    ? { kind: "lww-comparison" as const, winning_stamp: winner as [number, string, string], losing_stamp: incoming }
-    : result.outcome === "no-op" && alreadyApplied
-      ? { kind: "dedupe" as const, original_op_id: op.op_id }
-      : result.outcome === "rejected"
-        ? { kind: "rejection" as const, code: result.reason.code, message: result.reason.message, failing_index: 0 }
-        : { kind: "none" as const };
+  let evidence: SemanticOpTraceStep["decision_evidence"];
+  if (result.outcome === "lww-dropped" && Array.isArray(winner)) {
+    evidence = { kind: "lww-comparison", winning_stamp: winner as [number, string, string], losing_stamp: incoming };
+  } else if (result.outcome === "no-op" && alreadyApplied) {
+    evidence = { kind: "dedupe", original_op_id: op.op_id };
+  } else if (result.outcome === "rejected") {
+    evidence = { kind: "rejection", code: result.reason.code, message: result.reason.message, failing_index: 0 };
+  } else {
+    evidence = { kind: "none" };
+  }
   return {
     step_id: `s-${arrival_index}`,
     kind: "semantic-op",

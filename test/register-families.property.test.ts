@@ -171,11 +171,10 @@ function fork(snapshot: Uint8Array): Y.Doc {
 
 function applyInterleaved(doc: Y.Doc, ordered: [Op, Op], causal: Op, batch: BatchKind): void {
   const stream = [ordered[0], causal, ordered[1]];
-  const groups = batch === "one"
-    ? [stream]
-    : batch === "split-after-first"
-      ? [stream.slice(0, 1), stream.slice(1)]
-      : stream.map((op) => [op]);
+  let groups: Op[][];
+  if (batch === "one") groups = [stream];
+  else if (batch === "split-after-first") groups = [stream.slice(0, 1), stream.slice(1)];
+  else groups = stream.map((op) => [op]);
   for (const group of groups) {
     const result = applyOps(doc, group, catalog);
     expect(result.outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
