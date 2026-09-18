@@ -145,11 +145,15 @@ function existingRelease(f: Fixture) {
 }
 
 describe("release retry subprocess orchestration (offline)", () => {
-  it("publishes the one packed tarball only after definitive version 404 and tag/release preflight", () => {
-    const result = run(absent);
+  it.each([false, true])("publishes the one packed tarball after definitive version 404 (existing release: %s)", (hasRelease) => {
+    const result = run((f) => {
+      absent(f);
+      if (hasRelease) existingRelease(f);
+    });
     expect(result.status, result.stderr).toBe(0);
     expect(result.writes.map(({ cmd, args }) => [cmd, ...args.slice(0, 2)])).toEqual([
-      ["npm", "publish", expect.stringMatching(/release\.tgz$/)], ["gh", "release", "create"],
+      ["npm", "publish", expect.stringMatching(/release\.tgz$/)],
+      ...(hasRelease ? [] : [["gh", "release", "create"]]),
     ]);
     expect(result.writes[0]!.args).toEqual(["publish", expect.stringMatching(/release\.tgz$/), "--provenance", "--access", "public", "--ignore-scripts", `--registry=${registry}`]);
     expect(result.commands.filter(({ args }) => args[0] === "pack")).toHaveLength(1);
@@ -275,8 +279,12 @@ describe("release retry subprocess orchestration (offline)", () => {
     expect(result.writes).toEqual([]);
   });
 
-  it("refuses release creation if the tag moves during npm publication", () => {
-    const result = run((f) => { absent(f); f.data.tagChangesAt = 3; });
+  it.each([false, true])("refuses success if the tag moves during npm publication (existing release: %s)", (hasRelease) => {
+    const result = run((f) => {
+      absent(f);
+      if (hasRelease) existingRelease(f);
+      f.data.tagChangesAt = 3;
+    });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("remote tag does not resolve to GITHUB_SHA");
     expect(result.writes.map(({ cmd }) => cmd)).toEqual(["npm"]);

@@ -168,8 +168,8 @@ function release() {
   // across the independent npm and GitHub services.
   requireRemoteTag(ref, sha);
   if (absent) command("npm", ["publish", tarball, "--provenance", "--access", "public", "--ignore-scripts", `--registry=${registry}`]);
+  requireRemoteTag(ref, sha);
   if (!hasRelease) {
-    requireRemoteTag(ref, sha);
     command("gh", ["release", "create", tag, "--repo", repository, "--verify-tag", "--generate-notes", "--title", tag]);
   }
   console.log("Release recovery complete");
