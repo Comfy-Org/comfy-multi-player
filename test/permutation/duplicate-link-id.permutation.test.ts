@@ -70,6 +70,7 @@ const BASE: WorkflowJSON = {
   last_node_id: 201,
   last_link_id: 0,
 };
+const BASE_SEED_UPDATE = Y.encodeStateAsUpdate(mint(BASE, catalog));
 
 function opId(serial: number): string {
   return serial.toString(16).padStart(32, "0");
@@ -99,9 +100,8 @@ function connect(
 }
 
 function run(ops: readonly Op[], batched: boolean): WorkflowJSON {
-  const seed = Y.encodeStateAsUpdate(mint(BASE, catalog));
   const doc = new Y.Doc();
-  Y.applyUpdate(doc, seed);
+  Y.applyUpdate(doc, BASE_SEED_UPDATE);
   const results = batched ? [applyOps(doc, [...ops], catalog)] : ops.map((op) => applyOps(doc, [op], catalog));
   expect(results.flatMap((result) => result.outcomes).every((outcome) => ["applied", "lww-dropped"].includes(outcome.outcome))).toBe(true);
   return canonicalize(project(doc, catalog));

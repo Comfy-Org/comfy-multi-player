@@ -56,9 +56,7 @@ const PRECONDITIONS = [
 const PAIR_EXECUTIONS = 16_384;
 const SAMPLED_RUNS = 1_696;
 const SAMPLED_EXECUTIONS = SAMPLED_RUNS * 2;
-const TOTAL_EXECUTIONS = PAIR_EXECUTIONS + SAMPLED_EXECUTIONS;
 const SAMPLE_SEED = 0x4f70504;
-const IDEMPOTENCY_VERIFIED = new Set<Kind>();
 
 type Kind = (typeof KINDS)[number];
 type Precondition = (typeof PRECONDITIONS)[number];
@@ -243,7 +241,12 @@ function makeOp(
   }
 }
 
-function run(workflow: WorkflowJSON, ops: readonly WireOp[], mode: BatchMode): RunState {
+function run(
+  workflow: WorkflowJSON,
+  ops: readonly WireOp[],
+  mode: BatchMode,
+  idempotencyVerified: Set<Kind>,
+): RunState {
   const doc = mint(workflow, catalog);
   const groups = mode === "together" ? [[...ops]] : ops.map((op) => [op]);
   const outcomes: RunState["outcomes"] = [];
@@ -263,11 +266,11 @@ function run(workflow: WorkflowJSON, ops: readonly WireOp[], mode: BatchMode): R
     }
     for (const op of group) {
       const outcome = result.outcomes.find((candidate) => candidate.op_id === op.op_id);
-      if (outcome?.outcome === "rejected" || IDEMPOTENCY_VERIFIED.has(op.op)) continue;
+      if (outcome?.outcome === "rejected" || idempotencyVerified.has(op.op)) continue;
       const beforeRetry = Y.encodeStateAsUpdate(doc);
       expect(applyOps(doc, [op] as Op[], catalog).outcomes[0]?.outcome).toBe("no-op");
       expect(Y.encodeStateAsUpdate(doc)).toEqual(beforeRetry);
-      IDEMPOTENCY_VERIFIED.add(op.op);
+      idempotencyVerified.add(op.op);
     }
   }
   const appliedIds = new Set(doc.getMap("__applied").keys());
@@ -453,6 +456,7 @@ describe("full op-pool permutation equivalence", () => {
   it("covers every declared op-kind pair across representative state, stamp, actor, order, and batch dimensions", () => {
     let executions = 0;
     let serial = 1;
+    const idempotencyVerified = new Set<Kind>();
     const taxonomy: Taxonomy = {
       equivalent: 0, a6: 0, stateDependent: 0, abortBoundary: 0,
       unexpectedR69: 0, unexpectedInputcountLinkReuse: 0,
@@ -467,8 +471,8 @@ describe("full op-pool permutation equivalence", () => {
           for (const versions of VERSION_PAIRS) {
             const pair = kinds.map((kind, side) => makeOp(kind, precondition, side as 0 | 1, serial++, actors[side]!, versions[side]!));
             for (const mode of ["together", "split"] as const) {
-              const forward = run(base(precondition), pair, mode);
-              const reverse = run(base(precondition), [pair[1]!, pair[0]!], mode);
+              const forward = run(base(precondition), pair, mode, idempotencyVerified);
+              const reverse = run(base(precondition), [pair[1]!, pair[0]!], mode, idempotencyVerified);
               executions += 2;
               const category = classify(forward, reverse, pair, precondition, mode);
               taxonomy[category]++;
@@ -490,7 +494,7 @@ describe("full op-pool permutation equivalence", () => {
     expect(Object.values(taxonomy).reduce((sum, count) => sum + count, 0)).toBe(PAIR_EXECUTIONS / 2);
     // Deferred reset_doc never consumes its op_id; every frozen kind does and
     // has one byte-identical immediate duplicate check in run().
-    expect(IDEMPOTENCY_VERIFIED).toEqual(new Set(FROZEN_OPS));
+    expect(idempotencyVerified).toEqual(new Set(FROZEN_OPS));
     // A6 and section-4 categories are ruled. R-69 is deliberately measured,
     // not count-pinned: fixing it must not require weakening this test.
     expect(taxonomy.a6).toBeGreaterThan(0);
@@ -501,6 +505,7 @@ describe("full op-pool permutation equivalence", () => {
   it("samples reproducible length-3-to-6 full-vocabulary streams with shrinking enabled", () => {
     let runs = 0;
     let executions = 0;
+    const idempotencyVerified = new Set<Kind>();
     const hits = Object.fromEntries(KINDS.map((kind) => [kind, 0])) as Record<Kind, number>;
     const taxonomy: Taxonomy = {
       equivalent: 0, a6: 0, stateDependent: 0, abortBoundary: 0,
@@ -530,8 +535,8 @@ describe("full op-pool permutation equivalence", () => {
         .map((op, index) => ({ op, order: scenario.order[index]! }))
         .sort((a, b) => a.order - b.order || a.op.op_id.localeCompare(b.op.op_id))
         .map(({ op }) => op);
-      const forward = run(base(scenario.precondition), ops, scenario.mode);
-      const reverse = run(base(scenario.precondition), permuted, scenario.mode);
+      const forward = run(base(scenario.precondition), ops, scenario.mode, idempotencyVerified);
+      const reverse = run(base(scenario.precondition), permuted, scenario.mode, idempotencyVerified);
       executions += 2;
       const category = classify(forward, reverse, ops, scenario.precondition, scenario.mode);
       taxonomy[category]++;
@@ -548,7 +553,7 @@ describe("full op-pool permutation equivalence", () => {
 
     expect(runs).toBe(SAMPLED_RUNS);
     expect(executions).toBe(SAMPLED_EXECUTIONS);
-    expect(TOTAL_EXECUTIONS).toBe(19_776);
+    expect(idempotencyVerified).toEqual(new Set(FROZEN_OPS));
     for (const [kind, count] of Object.entries(hits)) expect(count, `${kind} was not sampled`).toBeGreaterThan(0);
     expect(Object.values(taxonomy).reduce((sum, count) => sum + count, 0)).toBe(SAMPLED_RUNS);
     console.info("perm-4 sampled taxonomy", {
