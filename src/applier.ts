@@ -923,7 +923,7 @@ function validateSerializableValue(value: unknown, path: string): void {
 
 function numericId(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && /^[0-9]+$/.test(value)) return parseInt(value, 10);
+  if (typeof value === "string" && /^\d+$/.test(value)) return parseInt(value, 10);
   return undefined;
 }
 
@@ -2610,9 +2610,9 @@ function normalizeGrowFamily(
   const names: string[] = [];
   for (const { request } of records) {
     const [requested, widget, isInputcount] = request;
-    const name = isInputcount
-      ? nextInputcountName(inputs, requested, occupied)
-      : nextAutogrowName(inputs, requested, widget ? null : (templates?.[family] ?? null), occupied);
+    let name: string;
+    if (isInputcount) name = nextInputcountName(inputs, requested, occupied);
+    else name = nextAutogrowName(inputs, requested, widget ? null : (templates?.[family] ?? null), occupied);
     names.push(name);
     occupied.add(name);
   }
@@ -2732,7 +2732,7 @@ function nextInputcountName(
   const sep = requested.lastIndexOf("_");
   const elem = sep >= 0 ? requested.slice(0, sep) : "";
   const nStr = sep >= 0 ? requested.slice(sep + 1) : requested;
-  let n = /^[0-9]+$/.test(nStr) ? parseInt(nStr, 10) : 1;
+  let n = /^\d+$/.test(nStr) ? parseInt(nStr, 10) : 1;
   let name = `${elem}_${n}`;
   while (taken.has(name)) {
     n++;
@@ -2839,7 +2839,7 @@ function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp): SuccessfulOutcome {
   const stamp = stampKey(op);
   const presenceWon = prior == null || compareStampKeys(stamp, prior) > 0;
   const nodeWasPresent = nodes.has(key);
-  if (presenceWon) {
+  function deletePresence(): void {
     const node = nodes.get(key);
     if (node instanceof Y.Map) {
       const definition = resolveDefinition(doc, String(node.get("type") ?? ""));
@@ -2854,12 +2854,12 @@ function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp): SuccessfulOutcome {
     mset(stamps, targetKey, stamp);
     if (nodes.has(key)) mdel(nodes, key); // absent target → no-op-with-cleanup (delete wins)
   }
+  if (presenceWon) deletePresence();
 
   const links = linksMap(doc);
   const removed = new Set<unknown>(removedLinks);
   const removedIds = new Set([...removed].map(String));
   const toDelete: Array<{ key: string; retire: boolean }> = [];
-  let retiredStranded = false;
   links.forEach((ln: unknown, k: string) => {
     const tuple = ln as unknown[];
     if (removed.has(tuple[0])) {
@@ -2875,6 +2875,15 @@ function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp): SuccessfulOutcome {
   }
   // An earlier endpoint deletion can already have removed the live tuple. The
   // explicit target list still retires that stranded intent.
+  const retiredStranded = retireStrandedLinks(doc, removedIds);
+
+  scrubDanglingLinkRefs(doc);
+  if (!presenceWon && toDelete.length === 0 && !retiredStranded) return "lww-dropped";
+  return nodeWasPresent || toDelete.length > 0 || retiredStranded ? "applied" : "no-op";
+}
+
+function retireStrandedLinks(doc: Y.Doc, removedIds: Set<string>): boolean {
+  let retiredStranded = false;
   for (const [linkKey, raw] of linkStateMap(doc).entries()) {
     if (typeof raw !== "object" || raw === null) continue;
     const tuple = (raw as OperationLinkState | ImportedLinkState).tuple;
@@ -2883,10 +2892,7 @@ function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp): SuccessfulOutcome {
       retiredStranded = true;
     }
   }
-
-  scrubDanglingLinkRefs(doc);
-  if (!presenceWon && toDelete.length === 0 && !retiredStranded) return "lww-dropped";
-  return nodeWasPresent || toDelete.length > 0 || retiredStranded ? "applied" : "no-op";
+  return retiredStranded;
 }
 
 /**
@@ -2911,23 +2917,8 @@ function restoreDurableLinks(doc: Y.Doc, nodeId: unknown): void {
 
     const outs = src.get("outputs");
     if (!(outs instanceof Y.Array) || !(outs.get(tuple[2]) instanceof Y.Map)) return;
-    let ins = dst.get("inputs");
-    if (!(ins instanceof Y.Array)) {
-      ins = new Y.Array<unknown>();
-      mset(dst, "inputs", ins);
-    }
-    const inputArray = ins as Y.Array<unknown>;
-    const destination = state.destination;
-    if (!destination || typeof destination.to_slot !== "number") return;
-    while (inputArray.length <= destination.to_slot) {
-      const slotIndex = inputArray.length;
-      if (slotIndex !== destination.to_slot) return;
-      const slot = new Y.Map<unknown>();
-      for (const [key, value] of Object.entries(destination.slot)) slot.set(key, structuredClone(value));
-      inputArray.insert(slotIndex, [slot]);
-    }
-    const slot = inputArray.get(destination.to_slot);
-    if (!(slot instanceof Y.Map)) return;
+    const slot = restoreDestinationInput(dst, state);
+    if (slot === null) return;
     const incumbent = slot.get("link");
     if (incumbent != null && String(incumbent) !== String(tuple[0])) return;
 
@@ -2944,6 +2935,26 @@ function restoreDurableLinks(doc: Y.Doc, nodeId: unknown): void {
       apush(outLinks as Y.Array<unknown>, tuple[0]);
     }
   });
+}
+
+function restoreDestinationInput(dst: Y.Map<unknown>, state: OperationLinkState): Y.Map<unknown> | null {
+  let ins = dst.get("inputs");
+  if (!(ins instanceof Y.Array)) {
+    ins = new Y.Array<unknown>();
+    mset(dst, "inputs", ins);
+  }
+  const inputArray = ins as Y.Array<unknown>;
+  const destination = state.destination;
+  if (!destination || typeof destination.to_slot !== "number") return null;
+  while (inputArray.length <= destination.to_slot) {
+    const slotIndex = inputArray.length;
+    if (slotIndex !== destination.to_slot) return null;
+    const slot = new Y.Map<unknown>();
+    for (const [key, value] of Object.entries(destination.slot)) slot.set(key, structuredClone(value));
+    inputArray.insert(slotIndex, [slot]);
+  }
+  const slot = inputArray.get(destination.to_slot);
+  return slot instanceof Y.Map ? slot : null;
 }
 
 /**
@@ -3153,5 +3164,6 @@ function applyClear(doc: Y.Doc, op: Extract<Op, { op: "clear" }>): SuccessfulOut
     mset(meta, "groups", []);
     applied = true;
   }
-  return applied ? "applied" : dropped ? "lww-dropped" : "no-op";
+  if (applied) return "applied";
+  return dropped ? "lww-dropped" : "no-op";
 }
