@@ -229,6 +229,13 @@ function runOrder(base: WorkflowJSON, ops: Op[]): { json: string; wf: WorkflowJS
   const res = applyOps(doc, ops, catalog);
   const failed = res.outcomes.find((outcome) => outcome.outcome === "rejected");
   expect(failed, `a legal interleaving must never abort the batch: ${JSON.stringify(failed)}`).toBeUndefined();
+  const beforeReplayBytes = Y.encodeStateAsUpdate(doc);
+  const beforeReplayProjection = project(doc, catalog);
+  const replay = applyOps(doc, ops, catalog);
+  expect(replay.outcomes).toHaveLength(ops.length);
+  expect(replay.outcomes.every((outcome) => outcome.outcome === "no-op"), "identical replays must all be no-ops").toBe(true);
+  expect(Y.encodeStateAsUpdate(doc), "an identical same-document replay must be byte-identical").toEqual(beforeReplayBytes);
+  expect(project(doc, catalog), "an identical same-document replay must leave the exact projection unchanged").toEqual(beforeReplayProjection);
   const violations = checkGraphInvariants(doc);
   expect(violations, `graph invariant violation: ${JSON.stringify(violations)}`).toEqual([]);
   const wf = project(doc, catalog);

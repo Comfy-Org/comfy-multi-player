@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import * as fc from "fast-check";
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
+import { appliedMap } from "../src/doc.js";
 import {
   DEFERRED_OPS,
   FROZEN_OPS,
@@ -86,7 +87,10 @@ describe("fuzz: malformed and adversarial op envelopes", () => {
         const result = applyOps(doc, [op], catalog);
         if (!result.outcomes.some((o) => o.outcome === "rejected")) {
           projectedRuns++;
-          expect(() => project(doc, catalog)).not.toThrow();
+          expect(result.outcomes[0]).toMatchObject({ outcome: "applied", op_id: op.op_id });
+          const projectedNode = project(doc, catalog).nodes.find((node) => node.id === id);
+          expect(projectedNode).toMatchObject({ id, type: "KSampler" });
+          expect(projectedNode?.fuzz_payload).toEqual(value);
         }
       }),
       FC_OPTIONS,
@@ -201,13 +205,44 @@ describe("saved untrusted-input regression corpus", () => {
       nodes: [{ id: 1, type: "KSampler", widgets_values: [] }],
       links: [],
     };
+    const trailing = {
+      op: "add_node",
+      op_id: "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+      actor: "corpus-control",
+      base_version: 1,
+      stamp: [1, "corpus-control"],
+      node_id: 2,
+      class_type: "KSampler",
+      pos: [0, 0],
+      node: { id: 2, type: "KSampler", widgets_values: [], fuzz_payload: "trailing-control" },
+    } satisfies Op;
+
+    const control = mint(base, catalog);
+    const controlResult = applyOps(control, [trailing], catalog);
+    expect(controlResult.outcomes[0]).toMatchObject({ outcome: "applied", op_id: trailing.op_id });
+    expect(project(control, catalog).nodes.find((node) => node.id === 2)).toMatchObject({
+      id: 2,
+      type: "KSampler",
+      fuzz_payload: "trailing-control",
+    });
+
     const doc = mint(base, catalog);
     const before = bytes(doc);
-    const result = applyOps(doc, [entry.op], catalog);
+    const rootNamesBefore = [...doc.share.keys()].sort();
+    const result = applyOps(doc, [entry.op, trailing], catalog);
 
-    expect(result.outcomes.some((o) => o.outcome === "rejected")).toBe(true);
+    expect(result.outcomes[0]).toMatchObject({ outcome: "rejected", op_id: entry.op.op_id });
+    expect(result.outcomes[1]).toMatchObject({
+      outcome: "rejected",
+      op_id: trailing.op_id,
+      reason: { code: "batch_aborted" },
+    });
     expect(result.outcomes.filter((o) => o.outcome === "applied").map((o) => o.op_id)).toEqual([]);
+    expect(appliedMap(doc).has(entry.op.op_id)).toBe(false);
+    expect(appliedMap(doc).has(trailing.op_id)).toBe(false);
     expect(bytes(doc).equals(before)).toBe(true);
+    expect([...doc.share.keys()].sort()).toEqual(rootNamesBefore);
+    expect(project(doc, catalog).nodes.some((node) => node.id === 2)).toBe(false);
     expect(() => project(doc, catalog)).not.toThrow();
   }
 
