@@ -1,7 +1,8 @@
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
 import { linksMap, nodesMap } from "../src/doc.js";
-import { mint, type WorkflowJSON } from "../src/index.js";
+import { mint } from "../src/index.js";
+import type { WorkflowJSON } from "../src/index.js";
 import { checkGraphInvariants } from "./graph-invariant-oracle.js";
 
 const catalog = { types: {} };

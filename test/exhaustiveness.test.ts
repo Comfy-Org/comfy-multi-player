@@ -166,6 +166,7 @@ describe("widget-storage strategy classifiers", () => {
   it("agrees with the write side for every node of a real frontend-only session", () => {
     const doc = mint(noteWorkflow.base_workflow, catalog, "sha");
     const nodes = doc.getMap<Y.Map<unknown>>("nodes");
+    let opaqueWithoutCatalogOrder = 0;
     expect(nodes.size).toBeGreaterThan(0);
     nodes.forEach((node) => {
       const type = String(node.get("type") ?? "");
@@ -173,8 +174,10 @@ describe("widget-storage strategy classifiers", () => {
       const expected = node.has(OPAQUE_WIDGETS_KEY) ? "opaque" : "named";
       expect(widgetStorageOf(node)).toBe(expected);
       if (order === undefined && node.has(OPAQUE_WIDGETS_KEY)) {
+        opaqueWithoutCatalogOrder++;
         expect(widgetStorageFor(node.get(OPAQUE_WIDGETS_KEY), order)).toBe("opaque");
       }
     });
+    expect(opaqueWithoutCatalogOrder).toBeGreaterThan(0);
   });
 });
