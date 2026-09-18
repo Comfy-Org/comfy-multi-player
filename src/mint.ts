@@ -228,18 +228,18 @@ export function importedLinkState(raw: unknown, workflow: WorkflowJSON): Importe
 }
 
 /**
- * The `links` map key for one interior link of a definition: the tuple's
- * `[0]` for the litegraph array form, `id` for the frontend's object form, and
- * the link's mint position for anything else (so an id-less entry still
- * occupies its own key rather than colliding on `"undefined"`).
+ * The explicit `links` map key for one interior link of a definition: the
+ * tuple's `[0]` for the litegraph array form or `id` for the frontend's object
+ * form. ID-less links receive a collision-free positional key in
+ * `mintDefinition` after all explicit keys have been reserved.
  */
-function definitionLinkKey(ln: unknown, index: number): string {
+function definitionLinkKey(ln: unknown): string | undefined {
   if (Array.isArray(ln) && ln[0] !== undefined) return String(ln[0]);
   if (typeof ln === "object" && ln !== null && !Array.isArray(ln)) {
     const id = (ln as { id?: unknown }).id;
     if (id !== undefined && id !== null) return String(id);
   }
-  return `#${String(index)}`;
+  return undefined;
 }
 
 export function mintDefinition(sg: SubgraphDef, catalog: WidgetCatalog): Y.Map<unknown> {
@@ -263,6 +263,13 @@ export function mintDefinition(sg: SubgraphDef, catalog: WidgetCatalog): Y.Map<u
     } else if (k === "links" && Array.isArray(v)) {
       const lm = new Y.Map<unknown>();
       const order: string[] = [];
+      const usedKeys = new Set<string>();
+      for (const link of v) {
+        const key = definitionLinkKey(link);
+        if (key === undefined) continue;
+        if (usedKeys.has(key)) throw new TypeError(`mint: duplicate definition link id '${key}'`);
+        usedKeys.add(key);
+      }
       v.forEach((ln, i) => {
         // A definition's interior links are serialized by the frontend as
         // OBJECTS (`{id, origin_id, origin_slot, target_id, target_slot,
@@ -270,7 +277,13 @@ export function mintDefinition(sg: SubgraphDef, catalog: WidgetCatalog): Y.Map<u
         // `undefined` off each object, so every interior link of a real
         // template collapsed onto one key and the round trip emitted the last
         // one N times (found by the z-image turbo fixture, Amendment A15).
-        const key = definitionLinkKey(ln, i);
+        const explicitKey = definitionLinkKey(ln);
+        let key = explicitKey ?? `#${String(i)}`;
+        if (explicitKey === undefined) {
+          const base = key;
+          for (let suffix = 1; usedKeys.has(key); suffix += 1) key = `${base}~${String(suffix)}`;
+          usedKeys.add(key);
+        }
         order.push(key);
         lm.set(key, cloneForMap(ln, `mint: definition link ${key}`));
       });
