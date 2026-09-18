@@ -14,7 +14,7 @@
     },
     "findings.json": {
       "generator": "crdt-spike/gen_fixtures.py: workflow_ops probe capture",
-      "sha256": "c9015f64f66e5fe842671cc808c363ddb007abb78f9e5919c339cd2c35297efe"
+      "sha256": "d1462ed6786745e843f651dea8889b189f875f41358d14fa3cb7fca1b18d691e"
     },
     "lww-vectors.json": {
       "generator": "crdt-spike/gen_fixtures.py: workflow_ops.apply_op both-order vectors",

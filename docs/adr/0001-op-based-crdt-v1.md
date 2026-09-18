@@ -40,9 +40,9 @@ authority" is therefore not a design axis; the axes that matter are (a) applier 
 4. **Persistence is separate from merge.** Every writer applies then writes; ensure no pending ops
    before a write; never pull the DB as a higher authority (that collapses back to de-facto
    full-document last-writer-wins).
-5. **Defer the logical clock past V1.** A scalar `base_version` gives deterministic convergence for
-   V1; a vector/Lamport/HLC clock (faithful causality across long offline branches) is deferred and
-   requires op-sharing + replay first. See `src/types.ts` (`[base_version, actor, op_id]`) and
+5. **Logical-clock decision superseded.** V1 originally deferred a logical clock. [ADR-0005](0005-lamport-ordering-v1-migration.md)
+   supersedes that choice: producers mint `base_version` as a durable, creator-owned Lamport counter,
+   while the total winner key remains `[base_version, actor, op_id]`. See `src/types.ts` and
    `src/stamps.ts`.
 6. **Applier stays a pure, portable package** with no client-idiosyncratic local state and no
    DOM/framework/server-only deps, so it runs identically in browser and host (and a future peer).
@@ -96,11 +96,10 @@ flowchart LR
   re-minted).
 - **Ordering is independent of arrival order.** The canonical winner of two concurrent ops is
   computed from the op stamp `[base_version, actor, op_id]`, which every replica evaluates
-  identically offline — never from receive order. `base_version` is a scalar version cursor the host
-  advances on apply, not a causal clock; `actor` and `op_id` are pure tie-breakers applied only
-  after it. The known limitation — a scalar cursor cannot faithfully represent causality across long
-  independent offline branches — is the deferred logical-clock item, out of V1 scope. Convergence
-  tests must deliver concurrent ops in both arrival orders and assert an identical winner.
+  identically offline — never from receive order. [ADR-0005](0005-lamport-ordering-v1-migration.md)
+  supersedes V1's scalar-cursor design: `base_version` is now a durable, creator-owned Lamport
+  counter; `actor` and `op_id` remain deterministic tie-breakers. Convergence tests must deliver
+  concurrent ops in both arrival orders and assert an identical winner.
 - **Invalid-op batch semantics: valid-prefix commit, abort remainder.** Ops in a batch apply in
   stamp order. The first invalid op aborts the remainder: the applied valid prefix is committed and
   persisted, `base_version` advances only for committed ops, and the unprocessed suffix (from the
@@ -156,8 +155,8 @@ flowchart LR
 - **Positive:** future peer-to-peer / LAN, hostless multiplayer on hosted or enterprise
   deployments, multi-agent replay, offline and double-offline all remain reachable from the V1
   shape. Ops give replay, observability, and cheap deltas.
-- **Cost:** raw-ops persistence needs new DB tables; reconnect seeding is naive in V1; a proper
-  logical clock and conflict UX are deferred.
+- **Cost:** raw-ops persistence needs new DB tables; reconnect seeding is naive in V1; conflict UX
+  is deferred. The original logical-clock deferral was superseded by ADR-0005.
 - **Non-goals for V1:** vector clock, node-level conflict UX, separate-repo extraction of the
   applier (the package boundary is kept, but extraction into a standalone repo is not required yet).
 
@@ -179,6 +178,6 @@ flowchart LR
 - **Room host** — the server node process holding the in-memory Yjs doc for a workflow; a V1
   convenience, not a conflict authority.
 - **Headless peer** — the agent replica running with no browser attached.
-- **base_version** — scalar version pointer; advances on apply. A V1 ordering aid, not the
-  permanent conflict key.
+- **base_version** — the numeric element of the winner key; originally a V1 scalar version pointer,
+  now a durable, creator-owned Lamport counter under ADR-0005.
 - **LWW** — last-writer-wins; here resolved by the op stamp, never by client-id or a DB read.
