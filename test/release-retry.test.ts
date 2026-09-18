@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { systemExecutable } from "./process-helpers.js";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const script = join(root, "scripts/release-retry.mjs");
@@ -74,7 +75,7 @@ function fixture() {
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name, version }));
   writeFileSync(join(dir, "package/package.json"), JSON.stringify({ name, version }));
   const local = join(dir, "local.tgz");
-  const tar = spawnSync("tar", ["-czf", local, "package/package.json"], { cwd: dir });
+  const tar = spawnSync(systemExecutable("tar"), ["-czf", local, "package/package.json"], { cwd: dir });
   if (tar.status !== 0) throw new Error("could not create real tar fixture");
   const digest = createHash("sha512").update(readFileSync(local)).digest();
   const integrity = `sha512-${digest.toString("base64")}`;
@@ -141,7 +142,8 @@ function absent(f: Fixture) {
 
 function existingRelease(f: Fixture) {
   f.data.releaseStatus = 0;
-  f.data.release = `HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n${JSON.stringify({ tag_name: `v${version}`, draft: false })}`;
+  const body = JSON.stringify({ tag_name: `v${version}`, draft: false });
+  f.data.release = `HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n${body}`;
 }
 
 describe("release retry subprocess orchestration (offline)", () => {
@@ -211,7 +213,7 @@ describe("release retry subprocess orchestration (offline)", () => {
       // identity checks must not accidentally stand in for byte comparison.
       writeFileSync(join(f.dir, "package/extra.txt"), "different artifact");
       f.data.download = join(f.dir, "different.tgz");
-      expect(spawnSync("tar", ["-czf", f.data.download, "package"], { cwd: f.dir }).status).toBe(0);
+      expect(spawnSync(systemExecutable("tar"), ["-czf", f.data.download, "package"], { cwd: f.dir }).status).toBe(0);
     }],
     ["download unavailable", (f) => { f.data.downloadStatus = "503"; }],
     ["different install integrity", (f) => { f.data.lockIntegrity = "sha512-wrong"; }],
@@ -268,7 +270,7 @@ describe("release retry subprocess orchestration (offline)", () => {
   it.each(["name", "version"])("rejects conflicting %s inside the actual local archive", (field) => {
     const result = run((f) => {
       writeFileSync(join(f.dir, "package/package.json"), JSON.stringify({ name, version, [field]: "other" }));
-      expect(spawnSync("tar", ["-czf", f.data.local, "package/package.json"], { cwd: f.dir }).status).toBe(0);
+      expect(spawnSync(systemExecutable("tar"), ["-czf", f.data.local, "package/package.json"], { cwd: f.dir }).status).toBe(0);
       const digest = createHash("sha512").update(readFileSync(f.data.local)).digest();
       f.data.lockIntegrity = `sha512-${digest.toString("base64")}`;
       (f.data.metadata as { dist: { integrity: string } }).dist.integrity = f.data.lockIntegrity;
