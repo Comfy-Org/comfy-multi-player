@@ -22,11 +22,14 @@
  *    units here and are then refused (or accepted) by the storability gates,
  *    which own that boundary.
  *
- * Termination is a hard invariant, not a hope: every visited value adds at
- * least 1 unit, so the walk performs at most {@link MAX_OP_COST} iterations
- * regardless of input shape — a DAG of shared references (billion-laughs) is
- * re-walked per reference and trips the budget; a lazily-infinite getter tree
- * runs out of budget the same way.
+ * This budget covers inert decoded wire data and trusted in-process values.
+ * Every visited value adds at least 1 unit, so repeated shared references
+ * (billion-laughs) consume the budget too. The bound assumes enumeration,
+ * iteration, and property access terminate: a caller-created getter, Proxy,
+ * or custom iterator can execute arbitrary code before the next budget check.
+ * This function is not an execution sandbox. Hosts must decode untrusted
+ * wire bytes before calling the package; copying an arbitrary JavaScript
+ * object here cannot guarantee trap-free traversal.
  */
 /** Ops per `applyOps` batch. Checked before ANY op is processed (#14). */
 export const MAX_OPS_PER_BATCH = 1024;
@@ -58,9 +61,11 @@ type Frame =
 /**
  * Why an op exceeds the untrusted-payload budget, or `null` to accept it.
  * Iterative (no recursion on hostile depth), cycle-tolerant (back-edges are
- * skipped and left to A8's canonicalizer), and O({@link MAX_OP_COST}) in all
- * cases. Called by A8's canonicalizer on the whole op object, so envelope
- * fields are inside the budget too. Depth and cycles remain canonicalizer-owned.
+ * skipped and left to A8's canonicalizer). The budget limits visited payload
+ * values, not time spent executing caller-defined accessors or enumerating
+ * an object's keys. Called by A8's canonicalizer on the whole op object, so
+ * envelope fields are inside the budget too. Depth and cycles remain
+ * canonicalizer-owned.
  */
 export function opBoundsRefusal(op: unknown): string | null {
   let cost = 0;

@@ -74,9 +74,8 @@ import { _getMutationCount, _resetMutationCount, stampsMap } from "../src/doc.js
 
 const catalog: WidgetCatalog = { types: { Hub: { widget_order: ["text"] }, Peer: { widget_order: [] } } };
 
-let seq = 0;
-const env = () => {
-  const op_id = ("b" + String(seq++).padStart(4, "0")).padEnd(32, "0");
+const env = (sequence: number) => {
+  const op_id = ("b" + String(sequence).padStart(4, "0")).padEnd(32, "0");
   return { op_id, actor: "a", base_version: 1, stamp: [1, "a"] as [number, string] };
 };
 
@@ -129,7 +128,7 @@ function deleteHubCost(degree: number): number {
   const doc = mint(hubWorkflow(degree), catalog);
   const op: DeleteNodeOp = {
     op: "delete_node",
-    ...env(),
+    ...env(degree),
     node_id: 1,
     removed_links: Array.from({ length: degree }, (_, i) => i + 1),
   };
@@ -177,7 +176,7 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     // through raw Y instead of `mset` would drop below three; anything that
     // writes more would rise above it. Both are the gate losing its meaning.
     const doc = mint(hubWorkflow(1), catalog);
-    const op = { op: "set_widget", ...env(), node_id: 1, widget: "text", value: "z" } as SetWidgetOp;
+    const op = { op: "set_widget", ...env(0), node_id: 1, widget: "text", value: "z" } as SetWidgetOp;
     _resetMutationCount(doc);
     expect(applyOps(doc, [op], catalog).outcomes.some((o) => o.outcome === "rejected")).toBe(false);
     expect(_getMutationCount(doc)).toBe(3);
@@ -190,7 +189,7 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     _resetMutationCount(doc);
     const running: number[] = [];
     for (let i = 0; i < 4; i++) {
-      const op = { op: "set_widget", ...env(), node_id: 1, widget: "text", value: "v" + String(i) } as SetWidgetOp;
+      const op = { op: "set_widget", ...env(i), node_id: 1, widget: "text", value: "v" + String(i) } as SetWidgetOp;
       expect(applyOps(doc, [op], catalog).outcomes.some((o) => o.outcome === "rejected")).toBe(false);
       running.push(_getMutationCount(doc));
     }
@@ -208,7 +207,7 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     const doc = mint(chainWorkflow(), catalog);
     const op = {
       op: "connect",
-      ...env(),
+      ...env(0),
       link_id: 9,
       from_node: 3,
       from_slot: 0,
@@ -230,7 +229,7 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     // deletes, two descriptor retirements, one array delete, one input-slot
     // scrub, one presence stamp, one applied set.
     const doc = mint(chainWorkflow(), catalog);
-    const op: DeleteNodeOp = { op: "delete_node", ...env(), node_id: 2, removed_links: [1, 2] };
+    const op: DeleteNodeOp = { op: "delete_node", ...env(0), node_id: 2, removed_links: [1, 2] };
     _resetMutationCount(doc);
     expect(applyOps(doc, [op], catalog).outcomes.some((o) => o.outcome === "rejected")).toBe(false);
     expect(_getMutationCount(doc)).toBe(9);
@@ -241,7 +240,7 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     // cost zero Y-writes — if a skipped op still wrote, the ceiling would be
     // absorbing work that the idempotency gate is supposed to have removed.
     const doc = mint(hubWorkflow(1), catalog);
-    const op = { op: "set_widget", ...env(), node_id: 1, widget: "text", value: "z" } as SetWidgetOp;
+    const op = { op: "set_widget", ...env(0), node_id: 1, widget: "text", value: "z" } as SetWidgetOp;
     const first = applyOps(doc, [op], catalog);
     expect(first.outcomes.some((o) => o.outcome === "rejected")).toBe(false);
     expect(first.outcomes.filter((o) => o.outcome === "applied").map((o) => o.op_id)).toEqual([op.op_id]);

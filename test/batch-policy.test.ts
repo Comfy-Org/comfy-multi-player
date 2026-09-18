@@ -23,7 +23,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { appliedCount, appliedOpIds, rejectedOutcome, rejectedOutcomeWithIndex } from "./apply-result-helpers.js";
+import { appliedOpIds, nonRejectedOutcomeCount, rejectedOutcome, rejectedOutcomeWithIndex } from "./apply-result-helpers.js";
 import {
   BATCHABLE_OPS,
   DEFERRED_OPS,
@@ -105,7 +105,7 @@ describe("batch policy — the replay surface deliberately does not gate on it (
     // the replay surface (`apply_op`) has no kind restriction, and enforcing it
     // here breaks the golden-vector parity contract. See issue #19.
     expect(rejectedOutcome(result)).toBeUndefined();
-    expect(appliedCount(result)).toBe(3);
+    expect(nonRejectedOutcomeCount(result)).toBe(3);
     expect(appliedOpIds(result)).toEqual(ops.map((o) => o.op_id));
     // The clear really ran: only the post-clear node survives.
     expect(project(doc, catalog).nodes.map((n) => String(n.id))).toEqual(["2"]);
@@ -163,6 +163,6 @@ describe("batch policy — the conformance corpus is the compatibility constrain
     const doc = mint(session!.header.base_workflow, catalogFixture);
     const result = applyOps(doc, session!.ops, catalogFixture);
     expect(rejectedOutcome(result)).toBeUndefined();
-    expect(appliedCount(result)).toBe(session!.ops.length);
+    expect(nonRejectedOutcomeCount(result)).toBe(session!.ops.length);
   });
 });

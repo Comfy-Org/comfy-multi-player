@@ -8,7 +8,7 @@
  */
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
-import { appliedCount, appliedOpIds, noOpIds, rejectedOutcome } from "./apply-result-helpers.js";
+import { appliedOpIds, noOpIds, nonRejectedOutcomeCount, rejectedOutcome } from "./apply-result-helpers.js";
 import {
   applyOps,
   MAX_COLLECTION_ENTRIES,
@@ -107,7 +107,7 @@ describe("applyOps enforces the budget before any mutation", () => {
     const doc = mint(base, catalog);
     const result = applyOps(doc, [setWidget("c".repeat(32), wrap(30))], catalog);
     expect(rejectedOutcome(result)).toBeUndefined();
-    expect(appliedCount(result)).toBe(1);
+    expect(nonRejectedOutcomeCount(result)).toBe(1);
   });
 
   it(`rejects a batch of ${MAX_OPS_PER_BATCH + 1} ops before processing any`, () => {
@@ -131,6 +131,6 @@ describe("applyOps enforces the budget before any mutation", () => {
     );
     const result = applyOps(doc, ops, catalog);
     expect(rejectedOutcome(result)).toBeUndefined();
-    expect(appliedCount(result)).toBe(MAX_OPS_PER_BATCH);
+    expect(nonRejectedOutcomeCount(result)).toBe(MAX_OPS_PER_BATCH);
   });
 });

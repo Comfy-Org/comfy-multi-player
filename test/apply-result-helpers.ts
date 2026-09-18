@@ -21,6 +21,6 @@ export function noOpIds(result: ApplyResult): string[] {
   return result.outcomes.filter((outcome) => outcome.outcome === "no-op").map((outcome) => outcome.op_id);
 }
 
-export function appliedCount(result: ApplyResult): number {
+export function nonRejectedOutcomeCount(result: ApplyResult): number {
   return result.outcomes.filter((outcome) => outcome.outcome !== "rejected").length;
 }

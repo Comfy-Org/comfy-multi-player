@@ -207,9 +207,9 @@ export function linkStateMap(doc: Y.Doc): Y.Map<unknown> {
 }
 
 /**
- * Initialize the v1 layout on a fresh doc (idempotent). Creates the root maps
- * (including bookkeeping) and seeds meta with schema_version, the pinned
- * catalog_version, and the id high-water marks.
+ * Initialize the current layout on a fresh doc (idempotent). Creates the root
+ * maps (including bookkeeping) and seeds meta with `SCHEMA_VERSION`, the
+ * pinned catalog_version, and the id high-water marks.
  *
  * NOTE: initializing a doc is not the bootstrap path for replicas — replicas
  * fork from one common mint() snapshot (schema §9), never re-seed.

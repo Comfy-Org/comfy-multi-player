@@ -13,7 +13,7 @@ describe("schema", () => {
     expect(SCHEMA_VERSION).toBe(3);
   });
 
-  it("initDoc creates the v1 layout: nodes/links/definitions/meta + bookkeeping", () => {
+  it("initDoc creates the schema v3 layout: nodes/links/definitions/meta + bookkeeping", () => {
     const doc = new Y.Doc();
     initDoc(doc, "object_info@2026-08-01");
     expect(nodesMap(doc)).toBeInstanceOf(Y.Map);
