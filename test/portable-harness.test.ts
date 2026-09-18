@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,11 +15,90 @@ function temp(prefix: string) {
   return path;
 }
 
+function writeHarnessFakes(bin: string, healthy: boolean) {
+  writeFileSync(
+    join(bin, "npm"),
+    `#!/bin/bash
+set -e
+[ -z "\${HARNESS_NPM_LOG:-}" ] || printf '%s|%s\n' "$(pwd)" "$*" >> "$HARNESS_NPM_LOG"
+if [ "$1" = pack ]; then
+  while [ "$1" != "--pack-destination" ]; do shift; done; dest="$2"
+  work="$(mktemp -d)"; mkdir -p "$work/package/dist"
+  printf "export const marker = 'packed';\\n" > "$work/package/dist/index.js"
+  printf '{"name":"@comfyorg/comfy-multi-player","version":"0.2.1","type":"module","exports":{".":{"import":"./dist/index.js"}},"dependencies":{"yjs":"*"}}' > "$work/package/package.json"
+  tar -czf "$dest/comfyorg-comfy-multi-player-0.2.1.tgz" -C "$work" package; rm -rf "$work"
+  printf '[{"filename":"comfyorg-comfy-multi-player-0.2.1.tgz"}]'
+elif [ "$1" = install ]; then
+  tarball="\${!#}"; mkdir -p node_modules/@comfyorg/comfy-multi-player
+  tar -xzf "$tarball" -C node_modules/@comfyorg/comfy-multi-player --strip-components=1
+elif [ "$1" = ci ]; then
+  mkdir -p node_modules/yjs; printf '{"name":"yjs","main":"index.js"}' > node_modules/yjs/package.json; : > node_modules/yjs/index.js
+elif [ "$1 $2" = "run build" ] && [ "$(pwd)" != "${repoRoot}" ]; then
+  mkdir -p dist; cat > dist/server.js <<'EOF'
+import http from 'node:http';
+http.createServer((req,res) => { if (req.url === '/health') { res.end('ok'); } else { res.statusCode=404; res.end(); } }).listen(Number(process.env.PORT), '127.0.0.1');
+EOF
+fi
+`,
+  );
+  writeFileSync(join(bin, "seq"), "#!/bin/sh\necho 1\n");
+  writeFileSync(join(bin, "sleep"), "#!/bin/sh\nexit 0\n");
+  writeFileSync(
+    join(bin, "curl"),
+    `#!/bin/sh
+countfile="\${HARNESS_CURL_COUNT}"; count=0; [ ! -f "$countfile" ] || count=$(cat "$countfile"); count=$((count+1)); echo "$count" > "$countfile"
+[ "$count" -gt 1 ] && exit ${healthy ? 0 : 1}; exit 1
+`,
+  );
+  writeFileSync(join(bin, "node"), `#!/bin/sh\ncase "$1" in *dochost-driver.mjs) echo driver-ran;; *) exec "${process.execPath}" "$@";; esac\n`);
+  for (const executable of ["npm", "seq", "sleep", "curl", "node"]) chmodSync(join(bin, executable), 0o755);
+}
+
 afterEach(() => {
   for (const path of temporary.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
 describe("portable harness regressions", () => {
+  it("accepts an installed CMP whose complete dist tree matches the packed artifact", () => {
+    const root = temp("cmp-identity-");
+    const packed = join(root, "packed/package");
+    const stage = join(root, "stage");
+    mkdirSync(join(packed, "dist/nested"), { recursive: true });
+    writeFileSync(join(packed, "dist/index.js"), "export const marker = 'genuine';\n");
+    writeFileSync(join(packed, "dist/nested/index.d.ts"), "export declare const marker: string;\n");
+    writeFileSync(join(packed, "package.json"), '{"name":"@comfyorg/comfy-multi-player","version":"0.2.1"}');
+    const installed = join(stage, "node_modules/@comfyorg/comfy-multi-player");
+    mkdirSync(dirname(installed), { recursive: true });
+    cpSync(packed, installed, { recursive: true });
+
+    const run = spawnSync(process.execPath, [join(repoRoot, "examples/dochost-poc/verify-package-identity.mjs"), packed, stage], {
+      encoding: "utf8",
+    });
+    expect(run.status, run.stderr).toBe(0);
+  });
+
+  it.each(["dist bytes", "manifest"])("rejects same-version installed CMP with tampered %s", (tampered) => {
+    const root = temp("cmp-identity-tampered-");
+    const packed = join(root, "packed/package");
+    const stage = join(root, "stage");
+    mkdirSync(join(packed, "dist"), { recursive: true });
+    writeFileSync(join(packed, "dist/index.js"), "export const marker = 'genuine';\n");
+    writeFileSync(join(packed, "package.json"), '{"name":"@comfyorg/comfy-multi-player","version":"0.2.1"}');
+    const installed = join(stage, "node_modules/@comfyorg/comfy-multi-player");
+    mkdirSync(join(installed, "dist"), { recursive: true });
+    writeFileSync(join(installed, "dist/index.js"), tampered === "dist bytes"
+      ? "export const marker = 'stale';\n" : readFileSync(join(packed, "dist/index.js")));
+    writeFileSync(join(installed, "package.json"), tampered === "manifest"
+      ? '{"name":"@comfyorg/comfy-multi-player","version":"0.2.1","exports":"./wrong.js"}'
+      : readFileSync(join(packed, "package.json")));
+
+    const run = spawnSync(process.execPath, [join(repoRoot, "examples/dochost-poc/verify-package-identity.mjs"), packed, stage], {
+      encoding: "utf8",
+    });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("package identity mismatch");
+  });
+
   it.each([
     {
       name: "clean complete report",
@@ -114,23 +193,32 @@ describe("portable harness regressions", () => {
       const sidecar = join(root, "sidecar");
       mkdirSync(bin);
       mkdirSync(sidecar);
-      writeFileSync(join(bin, "npm"), "#!/bin/sh\nexit 0\n");
-      writeFileSync(join(bin, "seq"), "#!/bin/sh\necho 1\n");
-      writeFileSync(join(bin, "sleep"), "#!/bin/sh\nexit 0\n");
-      writeFileSync(join(bin, "curl"), `#!/bin/sh\nexit ${healthy ? 0 : 1}\n`);
-      writeFileSync(
-        join(bin, "node"),
-        "#!/bin/sh\ncase \"$1\" in *dist/server.js) while :; do /bin/sleep 1; done;; *) echo driver-ran; exit 0;; esac\n",
-      );
-      for (const executable of ["npm", "seq", "sleep", "curl", "node"])
-        chmodSync(join(bin, executable), 0o755);
+      writeFileSync(join(sidecar, "package.json"), '{"name":"dochost","type":"module"}');
+      writeFileSync(join(sidecar, "package-lock.json"), '{"name":"dochost","lockfileVersion":3,"packages":{"":{"name":"dochost"}}}');
+      writeFileSync(join(sidecar, "source-marker"), "unchanged\n");
+      writeHarnessFakes(bin, healthy);
+      const stages = join(root, "stages");
+      mkdirSync(stages);
+      const npmLog = join(root, "npm.log");
       const run = spawnSync("bash", [join(repoRoot, "examples/dochost-poc/run.sh")], {
         encoding: "utf8",
-        env: { ...process.env, PATH: `${bin}:/usr/bin:/bin`, DOCHOST_SRC: sidecar },
+        env: {
+          ...process.env,
+          PATH: `${bin}:/usr/bin:/bin`,
+          DOCHOST_SRC: sidecar,
+          TMPDIR: stages,
+          HARNESS_CURL_COUNT: join(root, "curl-count"),
+          HARNESS_NPM_LOG: npmLog,
+        },
       });
-      expect(run.status).toBe(expectedStatus);
+      expect(run.status, run.stderr).toBe(expectedStatus);
       expect(run.stdout.includes("driver-ran")).toBe(healthy);
       if (!healthy) expect(run.stderr).toContain("sidecar did not become healthy");
+      expect(readFileSync(join(sidecar, "source-marker"), "utf8")).toBe("unchanged\n");
+      const docHostCommands = readFileSync(npmLog, "utf8").split("\n").filter((line) => /\|(ci|install|run build)/.test(line));
+      expect(docHostCommands).not.toHaveLength(0);
+      expect(docHostCommands.every((line) => !line.startsWith(`${sidecar}|`))).toBe(true);
+      expect(readdirSync(stages)).toEqual([]);
     });
   }
 
@@ -140,11 +228,13 @@ describe("portable harness regressions", () => {
     const sidecar = join(root, "sidecar");
     mkdirSync(bin);
     mkdirSync(sidecar);
-    writeFileSync(join(bin, "npm"), "#!/bin/sh\nexit 0\n");
-    writeFileSync(join(bin, "seq"), "#!/bin/sh\necho 1\n");
-    writeFileSync(join(bin, "sleep"), "#!/bin/sh\nexit 0\n");
-    writeFileSync(join(bin, "node"), "#!/bin/sh\ncase \"$1\" in *dist/server.js) while :; do /bin/sleep 1; done;; *) exit 0;; esac\n");
-    for (const executable of ["npm", "seq", "sleep", "node"]) chmodSync(join(bin, executable), 0o755);
+    writeFileSync(join(sidecar, "package.json"), '{"name":"dochost","type":"module"}');
+    writeFileSync(join(sidecar, "package-lock.json"), '{"name":"dochost","lockfileVersion":3,"packages":{"":{"name":"dochost"}}}');
+    writeHarnessFakes(bin, false);
+    // Exercise real curl's timeout; the staged child stays alive without binding
+    // this port, which is held by the deliberately stalled TCP server below.
+    rmSync(join(bin, "curl"));
+    writeFileSync(join(bin, "node"), `#!/bin/sh\ncase "$1" in dist/server.js) exec /bin/sleep 30;; *) exec "${process.execPath}" "$@";; esac\n`);
 
     const serverFile = join(root, "stall.mjs");
     writeFileSync(serverFile, "import net from 'node:net'; net.createServer(() => {}).listen(0, '127.0.0.1', function () { console.log(this.address().port); });\n");
@@ -158,7 +248,7 @@ describe("portable harness regressions", () => {
       const run = spawnSync("bash", [join(repoRoot, "examples/dochost-poc/run.sh")], {
         encoding: "utf8",
         timeout: 2_000,
-        env: { ...process.env, PATH: `${bin}:/usr/bin:/bin`, DOCHOST_SRC: sidecar, PORT: port },
+        env: { ...process.env, PATH: `${bin}:/usr/bin:/bin`, DOCHOST_SRC: sidecar, PORT: port, HARNESS_CURL_COUNT: join(root, "curl-count") },
       });
       expect(run.error).toBeUndefined();
       expect(run.status).toBe(1);
