@@ -39,6 +39,7 @@
     "gen:coderabbit": "node scripts/gen-coderabbit-config.mjs --write",
     "check:imports": "node scripts/check-import-graph.mjs",
     "check:stateless": "node scripts/check-stateless.mjs",
+    "verify:package": "node scripts/verify-package.mjs",
     "test:clock-matrix": "npm run build && vitest run test/clock-matrix/clock-matrix.test.ts --reporter=verbose",
     "verify:corpus": "node scripts/verify-corpus.mjs"
   },
@@ -55,6 +56,7 @@
     "eslint-plugin-sonarjs": "^3.0.7",
     "fast-check": "^4.9.0",
     "typescript": "^5.9.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "yaml": "^2.9.1"
   }
 }

@@ -35,6 +35,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Verify package contents
+        run: npm run verify:package
+
       - name: Type-check gate
         run: npm run typecheck
 
