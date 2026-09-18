@@ -263,10 +263,13 @@ export function mintDefinition(sg: SubgraphDef, catalog: WidgetCatalog): Y.Map<u
     } else if (k === "links" && Array.isArray(v)) {
       const lm = new Y.Map<unknown>();
       const order: string[] = [];
-      const usedKeys = new Set(v.flatMap((link) => {
+      const usedKeys = new Set<string>();
+      for (const link of v) {
         const key = definitionLinkKey(link);
-        return key === undefined ? [] : [key];
-      }));
+        if (key === undefined) continue;
+        if (usedKeys.has(key)) throw new TypeError(`mint: duplicate definition link id '${key}'`);
+        usedKeys.add(key);
+      }
       v.forEach((ln, i) => {
         // A definition's interior links are serialized by the frontend as
         // OBJECTS (`{id, origin_id, origin_slot, target_id, target_slot,

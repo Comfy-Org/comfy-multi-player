@@ -178,4 +178,20 @@ describe("mint → project keeps a definition's interior links distinct (fronten
     expect(interiorLinks(project(doc, catalog))).toEqual([idless, tuple]);
     expect(interiorLinkStorage(doc)).toEqual({ keys: ["#0~1", "#0"], order: ["#0~1", "#0"] });
   });
+
+  it.each([
+    ["tuple then object", [[1, 1001, 19, 1002, 20, "TUPLE-FIRST"], { id: "1", origin_id: 1101, origin_slot: 21, target_id: 1102, target_slot: 22, type: "OBJECT-SECOND" }]],
+    ["object then tuple", [{ id: "1", origin_id: 1201, origin_slot: 23, target_id: 1202, target_slot: 24, type: "OBJECT-FIRST" }, [1, 1301, 25, 1302, 26, "TUPLE-SECOND"]]],
+  ])("refuses duplicate explicit normalized link IDs in %s order", (_name, links) => {
+    expect(() => mint(withInteriorLinks(links), catalog)).toThrow(new TypeError("mint: duplicate definition link id '1'"));
+  });
+
+  it("accepts distinct normalized tuple and object IDs with exact asymmetric payloads", () => {
+    const tuple = [1, 1401, 27, 1402, 28, "TUPLE"];
+    const object = { id: "2", origin_id: 1501, origin_slot: 29, target_id: 1502, target_slot: 30, type: "OBJECT" };
+    const doc = mint(withInteriorLinks([tuple, object]), catalog);
+
+    expect(interiorLinks(project(doc, catalog))).toEqual([tuple, object]);
+    expect(interiorLinkStorage(doc)).toEqual({ keys: ["1", "2"], order: ["1", "2"] });
+  });
 });
