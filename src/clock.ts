@@ -44,6 +44,12 @@ export class DocDerivedLamportClockStore implements LamportClockStore {
     identity: Omit<LamportProducerClock, "counter">,
     update: (stored: number | undefined) => Promise<{ counter: number; value: T }>,
   ): Promise<T> {
+    // Capture validated primitives before queueing or invoking caller code.
+    const { workflow_id, lineage_id, producer_id } = identity;
+    if (typeof workflow_id !== "string" || typeof lineage_id !== "string" || typeof producer_id !== "string") {
+      throw new TypeError("Lamport reservation identity fields must be strings");
+    }
+    const reservationKey = JSON.stringify(["__lamport_clock", workflow_id, lineage_id, producer_id]);
     const transaction = (documentTransactionTails.get(this.doc) ?? Promise.resolve()).then(async () => {
       const floor = observedDocCounter(this.doc);
       const result = await update(floor);
@@ -51,22 +57,16 @@ export class DocDerivedLamportClockStore implements LamportClockStore {
       if (floor !== undefined && result.counter <= floor) {
         throw new RangeError(`Lamport counter ${result.counter} did not advance beyond document floor ${floor}`);
       }
-      this.commitCounter(identity, result.counter);
+      this.commitCounter(reservationKey, producer_id, result.counter);
       return result.value;
     });
     documentTransactionTails.set(this.doc, transaction.then(() => undefined, () => undefined));
     return transaction;
   }
 
-  private commitCounter(identity: Omit<LamportProducerClock, "counter">, counter: number): void {
-    const reservationKey = JSON.stringify([
-      "__lamport_clock",
-      identity.workflow_id,
-      identity.lineage_id,
-      identity.producer_id,
-    ]);
+  private commitCounter(reservationKey: string, producer: string, counter: number): void {
     const reservations = this.doc.getMap<unknown>(ROOT_CLOCK_RESERVATIONS);
-    this.doc.transact(() => reservations.set(reservationKey, [counter, identity.producer_id, reservationKey]));
+    this.doc.transact(() => reservations.set(reservationKey, [counter, producer, reservationKey]));
   }
 }
 
