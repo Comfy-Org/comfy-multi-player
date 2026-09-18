@@ -69,6 +69,63 @@ describe("compareStampKeys (freeze doc §8.1)", () => {
     expect(compareStampKeys(k, [...k] as StampKey)).toBe(0);
   });
 
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "rejects an invalid direct StampKey counter %s on either side",
+    (counter) => {
+      const valid: StampKey = [1, "alice", "a".repeat(32)];
+      const invalid: StampKey = [counter, "bob", "b".repeat(32)];
+      expect(() => compareStampKeys(invalid, valid)).toThrowError(
+        new RangeError("Stamp counter must be a non-negative safe integer"),
+      );
+      expect(() => compareStampKeys(valid, invalid)).toThrowError(
+        new RangeError("Stamp counter must be a non-negative safe integer"),
+      );
+    },
+  );
+
+  it("is antisymmetric and transitive over asymmetric valid keys", () => {
+    const lowCounter: StampKey = [1, "zulu", "f".repeat(32)];
+    const lowOpId: StampKey = [2, "alice", "a".repeat(32)];
+    const highOpId: StampKey = [2, "alice", "f".repeat(32)];
+    const highActor: StampKey = [2, "bob", "a".repeat(32)];
+
+    for (const [lower, higher] of [
+      [lowCounter, lowOpId],
+      [lowOpId, highOpId],
+      [highOpId, highActor],
+      [lowCounter, highOpId],
+      [lowCounter, highActor],
+    ] as const) {
+      expect(compareStampKeys(lower, higher)).toBe(-1);
+      expect(compareStampKeys(higher, lower)).toBe(1);
+    }
+  });
+
+  it("accepts both safe-counter boundaries and rejects finite values outside them", () => {
+    const op: SetWidgetOp = {
+      op: "set_widget",
+      op_id: "f".repeat(32),
+      actor: "envelope-actor",
+      base_version: 7,
+      stamp: [0, "stamp-actor"],
+      node_id: 1,
+      widget: "steps",
+      value: 1,
+    };
+    for (const counter of [0, Number.MAX_SAFE_INTEGER]) {
+      const key: StampKey = [counter, "stamp-actor", op.op_id];
+      expect(stampKey({ ...op, stamp: [counter, "stamp-actor"] })).toEqual(key);
+      expect(compareStampKeys(key, key)).toBe(0);
+    }
+    for (const counter of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const invalid: StampKey = [counter, "stamp-actor", op.op_id];
+      const valid: StampKey = [0, "stamp-actor", op.op_id];
+      expect(() => stampKey({ ...op, stamp: [counter, "stamp-actor"] })).toThrow(RangeError);
+      expect(() => compareStampKeys(invalid, valid)).toThrow(RangeError);
+      expect(() => compareStampKeys(valid, invalid)).toThrow(RangeError);
+    }
+  });
+
   it("stampKey falls back to [base_version, actor] when stamp is absent", () => {
     const op = {
       op: "set_widget",
@@ -81,6 +138,43 @@ describe("compareStampKeys (freeze doc §8.1)", () => {
     } as unknown as SetWidgetOp;
     expect(stampKey(op)).toEqual([4, "alice", "c".repeat(32)]);
   });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "rejects an invalid authoritative stamp counter %s",
+    (counter) => {
+      const op = {
+        op: "set_widget",
+        op_id: "d".repeat(32),
+        actor: "envelope-actor",
+        base_version: 7,
+        stamp: [counter, "stamp-actor"],
+        node_id: 1,
+        widget: "steps",
+        value: 1,
+      } as unknown as SetWidgetOp;
+      expect(() => stampKey(op)).toThrowError(
+        new RangeError("Stamp counter must be a non-negative safe integer"),
+      );
+    },
+  );
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "rejects an invalid fallback counter %s",
+    (counter) => {
+      const op = {
+        op: "set_widget",
+        op_id: "e".repeat(32),
+        actor: "fallback-actor",
+        base_version: counter,
+        node_id: 1,
+        widget: "steps",
+        value: 1,
+      } as unknown as SetWidgetOp;
+      expect(() => stampKey(op)).toThrowError(
+        new RangeError("Stamp counter must be a non-negative safe integer"),
+      );
+    },
+  );
 });
 
 describe("LWW vector application (both orders)", () => {
