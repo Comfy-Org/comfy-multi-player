@@ -5,5 +5,7 @@ export default defineConfig({
     environment: "node", // purity: this package is never tested under a DOM
     testTimeout: 15000,
     include: ["test/**/*.test.ts"],
+    tags: [{ name: "exhaustive" }],
+    tagsFilter: ["!exhaustive"],
   },
 });
