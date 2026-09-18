@@ -154,6 +154,51 @@ function makeOp(
 ): WireOp {
   const env = envelope(serial, actor, version);
   const value = side === 0 ? serial : -serial;
+  function makeConnection(): WireOp {
+    const common = {
+      ...env,
+      op: "connect" as const,
+      link_id: 100 + side,
+      from_node: 10,
+      from_slot: precondition === "from-slot-out-of-range" ? 5 : 0,
+      to_node: 20,
+      link_type: "VALUE",
+    };
+    if (precondition === "interior-or-inputcount") {
+      return { ...common, grow: { name: `value_${side + 1}`, type: "VALUE", inputcount: { widget: "count", value } } };
+    }
+    if (precondition === "promoted-or-autogrow") {
+      if (side === 0) {
+        return { ...common, to_node: 57, link_type: "INT", grow: { name: "width", type: "INT", promoted: true } };
+      }
+      return { ...common, grow: { name: `values.value${side}`, type: "VALUE" } };
+    }
+    return { ...common, to_slot: precondition === "to-slot-out-of-range" ? 5 : 0 };
+  }
+  function makeWidgetWrite(): WireOp {
+    if (precondition === "interior-or-inputcount") {
+      return {
+        ...env,
+        op: "set_widget",
+        node_id: "57/13",
+        widget: "missing",
+        value,
+        path: ["57", "13"],
+        inner_widget: "missing",
+      };
+    }
+    if (precondition === "promoted-or-autogrow") {
+      return {
+        ...env,
+        op: "set_widget",
+        node_id: 57,
+        widget: "width",
+        value,
+        promoted: { value_index: 0, instance_path: ["57"], host_widgets_values: [value] },
+      };
+    }
+    return { ...env, op: "set_widget", node_id: 20, widget: "count", value };
+  }
   switch (kind) {
     case "add_node":
       return {
@@ -165,27 +210,7 @@ function makeOp(
         pos: [value, value],
         node: node(40, "Aux", [], [], [value]),
       };
-    case "connect": {
-      const common = {
-        ...env,
-        op: "connect" as const,
-        link_id: 100 + side,
-        from_node: 10,
-        from_slot: precondition === "from-slot-out-of-range" ? 5 : 0,
-        to_node: 20,
-        link_type: "VALUE",
-      };
-      if (precondition === "interior-or-inputcount") {
-        return { ...common, grow: { name: `value_${side + 1}`, type: "VALUE", inputcount: { widget: "count", value } } };
-      }
-      if (precondition === "promoted-or-autogrow") {
-        if (side === 0) {
-          return { ...common, to_node: 57, link_type: "INT", grow: { name: "width", type: "INT", promoted: true } };
-        }
-        return { ...common, grow: { name: `values.value${side}`, type: "VALUE" } };
-      }
-      return { ...common, to_slot: precondition === "to-slot-out-of-range" ? 5 : 0 };
-    }
+    case "connect": return makeConnection();
     case "disconnect":
       return {
         ...env,
@@ -194,29 +219,7 @@ function makeOp(
         to_node: precondition === "destination-missing" ? 999 : 20,
         to_slot: precondition === "to-slot-out-of-range" ? 5 : 0,
       };
-    case "set_widget":
-      if (precondition === "interior-or-inputcount") {
-        return {
-          ...env,
-          op: "set_widget",
-          node_id: "57/13",
-          widget: "missing",
-          value,
-          path: ["57", "13"],
-          inner_widget: "missing",
-        };
-      }
-      if (precondition === "promoted-or-autogrow") {
-        return {
-          ...env,
-          op: "set_widget",
-          node_id: 57,
-          widget: "width",
-          value,
-          promoted: { value_index: 0, instance_path: ["57"], host_widgets_values: [value] },
-        };
-      }
-      return { ...env, op: "set_widget", node_id: 20, widget: "count", value };
+    case "set_widget": return makeWidgetWrite();
     case "delete_node":
       return { ...env, op: "delete_node", node_id: side === 0 ? 10 : 20, removed_links: [80, 100, 101] };
     case "clear":
@@ -250,7 +253,7 @@ function run(
   const doc = mint(workflow, catalog);
   const groups = mode === "together" ? [[...ops]] : ops.map((op) => [op]);
   const outcomes: RunState["outcomes"] = [];
-  for (const group of groups) {
+  function applyGroup(group: WireOp[]): void {
     const before = Y.encodeStateAsUpdate(doc);
     const result = applyOps(doc, group as Op[], catalog);
     outcomes.push(...result.outcomes.map((outcome) => ({
@@ -273,6 +276,7 @@ function run(
       idempotencyVerified.add(op.op);
     }
   }
+  for (const group of groups) applyGroup(group);
   const appliedIds = new Set(doc.getMap("__applied").keys());
   for (const outcome of outcomes) {
     if (outcome.outcome === "rejected") expect(appliedIds.has(outcome.opId)).toBe(false);
@@ -299,12 +303,12 @@ function stable(value: unknown): string {
 
 function normalizeR69(workflow: WorkflowJSON): WorkflowJSON {
   const copy = structuredClone(workflow);
-  for (const candidate of copy.nodes) {
+  function normalizeNode(candidate: WorkflowNode): void {
     for (const output of (candidate.outputs ?? []) as Array<{ links?: unknown[] }>) {
       if (Array.isArray(output.links)) output.links.sort((a, b) => String(a).localeCompare(String(b)));
     }
     const inputs = (candidate.inputs ?? []) as Array<{ link?: unknown; grow_id?: unknown }>;
-    if (!inputs.some((input) => input.grow_id != null)) continue;
+    if (!inputs.some((input) => input.grow_id != null)) return;
     const fixed = inputs.filter((input) => input.grow_id == null);
     const grown = inputs
       .filter((input) => input.grow_id != null)
@@ -318,6 +322,7 @@ function normalizeR69(workflow: WorkflowJSON): WorkflowJSON {
       if (link) link[4] = index;
     }
   }
+  for (const candidate of copy.nodes) normalizeNode(candidate);
   return copy;
 }
 
@@ -452,6 +457,16 @@ function kindPairs(): Array<readonly [Kind, Kind]> {
   return EXHAUSTIVE_KINDS.flatMap((left) => EXHAUSTIVE_KINDS.map((right) => [left, right] as const));
 }
 
+function* pairCases() {
+  for (const kinds of kindPairs()) {
+    for (const precondition of PRECONDITIONS) {
+      for (const actors of ACTOR_PAIRS) {
+        for (const versions of VERSION_PAIRS) yield { kinds, precondition, actors, versions };
+      }
+    }
+  }
+}
+
 describe("full op-pool permutation equivalence", () => {
   it("covers every declared op-kind pair across representative state, stamp, actor, order, and batch dimensions", () => {
     let executions = 0;
@@ -465,25 +480,19 @@ describe("full op-pool permutation equivalence", () => {
     let firstR69: string | undefined;
     let firstRemovedLinkAlias: string | undefined;
 
-    for (const kinds of kindPairs()) {
-      for (const precondition of PRECONDITIONS) {
-        for (const actors of ACTOR_PAIRS) {
-          for (const versions of VERSION_PAIRS) {
-            const pair = kinds.map((kind, side) => makeOp(kind, precondition, side as 0 | 1, serial++, actors[side]!, versions[side]!));
-            for (const mode of ["together", "split"] as const) {
-              const forward = run(base(precondition), pair, mode, idempotencyVerified);
-              const reverse = run(base(precondition), [pair[1]!, pair[0]!], mode, idempotencyVerified);
-              executions += 2;
-              const category = classify(forward, reverse, pair, precondition, mode);
-              taxonomy[category]++;
-              if (category === "unexpectedR69" && firstR69 === undefined) {
-                firstR69 = stable({ kinds, precondition, actors, versions, mode, ops: pair });
-              }
-              if (category === "unexpectedRemovedLinkAlias" && firstRemovedLinkAlias === undefined) {
-                firstRemovedLinkAlias = stable({ kinds, precondition, actors, versions, mode, ops: pair });
-              }
-            }
-          }
+    for (const { kinds, precondition, actors, versions } of pairCases()) {
+      const pair = kinds.map((kind, side) => makeOp(kind, precondition, side as 0 | 1, serial++, actors[side]!, versions[side]!));
+      for (const mode of ["together", "split"] as const) {
+        const forward = run(base(precondition), pair, mode, idempotencyVerified);
+        const reverse = run(base(precondition), [pair[1]!, pair[0]!], mode, idempotencyVerified);
+        executions += 2;
+        const category = classify(forward, reverse, pair, precondition, mode);
+        taxonomy[category]++;
+        if (category === "unexpectedR69" && firstR69 === undefined) {
+          firstR69 = stable({ kinds, precondition, actors, versions, mode, ops: pair });
+        }
+        if (category === "unexpectedRemovedLinkAlias" && firstRemovedLinkAlias === undefined) {
+          firstRemovedLinkAlias = stable({ kinds, precondition, actors, versions, mode, ops: pair });
         }
       }
     }
