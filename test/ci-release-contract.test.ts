@@ -26,28 +26,36 @@ interface Step {
   name?: string;
   run?: string;
   if?: unknown;
+  shell?: unknown;
   "continue-on-error"?: unknown;
 }
 
 interface Job extends Step {
   steps?: Step[];
+  defaults?: { run?: { shell?: unknown } };
 }
 
 interface CiFixture {
   jobs: { ci: Job & { steps: Step[] }; decoy?: Job };
   env?: Record<string, unknown>;
+  defaults?: { run?: { shell?: unknown } };
 }
 
 // These gates are unconditional today. New conditions require a deliberate
 // contract update; do not try to evaluate GitHub's expression language here.
+// Shell overrides likewise need review because they can skip the run script.
 function unconditionalGate(value: Step): boolean {
-  return value.if === undefined &&
+  return value.if === undefined && value.shell === undefined &&
     (value["continue-on-error"] === undefined || value["continue-on-error"] === false);
 }
 
 function requireWorkflow(document: unknown, jobId: string): void {
-  const job = (document as { jobs?: Record<string, Job> })?.jobs?.[jobId];
+  const workflow = document as { jobs?: Record<string, Job>; defaults?: Job["defaults"] };
+  const job = workflow?.jobs?.[jobId];
   if (!job || !unconditionalGate(job)) throw new Error(`missing required job: ${jobId}`);
+  if (workflow.defaults?.run?.shell !== undefined || job.defaults?.run?.shell !== undefined) {
+    throw new Error("required gates must use the default runner shell");
+  }
   const steps = job.steps ?? [];
   for (const [name, command] of Object.entries(REQUIRED_STEPS)) {
     const matches = steps.filter((step) => step.name === name);
@@ -89,6 +97,18 @@ describe("parsed CI and release contracts", () => {
     const document = loadYaml(".github/workflows/ci.yml") as CiFixture;
     document.jobs.ci.steps.find((step) => step.name === "Verify package contents")!.if = condition;
     expect(() => requireWorkflow(document, "ci")).toThrow("missing active, failure-propagating Verify package contents");
+  });
+
+  it.each(["step", "job", "workflow"])("rejects a %s shell that skips gate execution", (scope) => {
+    const document = loadYaml(".github/workflows/ci.yml") as CiFixture;
+    if (scope === "step") {
+      document.jobs.ci.steps.find((step) => step.name === "Verify package contents")!.shell = "echo {0}";
+    } else if (scope === "job") {
+      document.jobs.ci.defaults = { run: { shell: "echo {0}" } };
+    } else {
+      document.defaults = { run: { shell: "echo {0}" } };
+    }
+    expect(() => requireWorkflow(document, "ci")).toThrow();
   });
 
   it.each([true, "${{ true }}"])("rejects non-fatal steps and jobs: %s", (value) => {
