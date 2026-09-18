@@ -18,6 +18,7 @@
  * The 18 links below are the template's, verbatim and in authored order.
  */
 import { describe, expect, it } from "vitest";
+import * as Y from "yjs";
 import { mint, project, type WidgetCatalog, type WorkflowJSON } from "../src/index.js";
 import { loadCatalog } from "./helpers.js";
 
@@ -92,6 +93,21 @@ const catalog: WidgetCatalog = loadCatalog();
 const interiorLinks = (wf: WorkflowJSON) =>
   (wf["definitions"] as { subgraphs: { links: unknown[] }[] }).subgraphs[0]!.links;
 
+function withInteriorLinks(links: unknown[]): WorkflowJSON {
+  const wf = zImageTemplate();
+  (wf["definitions"] as { subgraphs: { links: unknown[] }[] }).subgraphs[0]!.links = links;
+  return wf;
+}
+
+function interiorLinkStorage(doc: Y.Doc): { keys: string[]; order: string[] } {
+  const definition = doc.getMap<Y.Map<unknown>>("definitions").get(DEF)!;
+  const links = definition.get("links") as Y.Map<unknown>;
+  return {
+    keys: [...links.keys()],
+    order: definition.get("link_order") as string[],
+  };
+}
+
 describe("mint → project keeps a definition's interior links distinct (frontend object form)", () => {
   it("round-trips all 18 links of the z-image turbo definition with exact ids, origins, targets and slots, in authored order", () => {
     const out = project(mint(zImageTemplate(), catalog), catalog);
@@ -121,5 +137,45 @@ describe("mint → project keeps a definition's interior links distinct (fronten
     ];
     const out = project(mint(wf, catalog), catalog);
     expect(interiorLinks(out)).toEqual(sg.links);
+  });
+
+  it("reserves a later explicit '#0' before allocating the id-less link at position zero", () => {
+    const idless = { origin_id: 101, origin_slot: 1, target_id: 102, target_slot: 2, type: "IDLESS" };
+    const explicit = { id: "#0", origin_id: 201, origin_slot: 3, target_id: 202, target_slot: 4, type: "EXPLICIT" };
+    const doc = mint(withInteriorLinks([idless, explicit]), catalog);
+
+    expect(interiorLinks(project(doc, catalog))).toEqual([idless, explicit]);
+    expect(interiorLinkStorage(doc)).toEqual({ keys: ["#0~1", "#0"], order: ["#0~1", "#0"] });
+  });
+
+  it("preserves reverse-order noncollision keys and exact asymmetric projected values", () => {
+    const explicit = { id: "#0", origin_id: 301, origin_slot: 5, target_id: 302, target_slot: 6, type: "EXPLICIT-FIRST" };
+    const idless = { origin_id: 401, origin_slot: 7, target_id: 402, target_slot: 8, type: "IDLESS-SECOND" };
+    const doc = mint(withInteriorLinks([explicit, idless]), catalog);
+
+    expect(interiorLinks(project(doc, catalog))).toEqual([explicit, idless]);
+    expect(interiorLinkStorage(doc)).toEqual({ keys: ["#0", "#1"], order: ["#0", "#1"] });
+  });
+
+  it("loops past explicit suffix adversaries while keeping every internal key and order entry unique", () => {
+    const idless = { origin_id: 501, origin_slot: 9, target_id: 502, target_slot: 10, type: "IDLESS" };
+    const explicitBase = { id: "#0", origin_id: 601, origin_slot: 11, target_id: 602, target_slot: 12, type: "BASE" };
+    const explicitSuffix = { id: "#0~1", origin_id: 701, origin_slot: 13, target_id: 702, target_slot: 14, type: "SUFFIX" };
+    const doc = mint(withInteriorLinks([idless, explicitBase, explicitSuffix]), catalog);
+    const storage = interiorLinkStorage(doc);
+
+    expect(interiorLinks(project(doc, catalog))).toEqual([idless, explicitBase, explicitSuffix]);
+    expect(storage).toEqual({ keys: ["#0~2", "#0", "#0~1"], order: ["#0~2", "#0", "#0~1"] });
+    expect(new Set(storage.keys).size).toBe(3);
+    expect(new Set(storage.order).size).toBe(3);
+  });
+
+  it("reserves normalized tuple IDs before allocating synthetic keys", () => {
+    const idless = { origin_id: 801, origin_slot: 15, target_id: 802, target_slot: 16, type: "IDLESS" };
+    const tuple = ["#0", 901, 17, 902, 18, "TUPLE"];
+    const doc = mint(withInteriorLinks([idless, tuple]), catalog);
+
+    expect(interiorLinks(project(doc, catalog))).toEqual([idless, tuple]);
+    expect(interiorLinkStorage(doc)).toEqual({ keys: ["#0~1", "#0"], order: ["#0~1", "#0"] });
   });
 });
