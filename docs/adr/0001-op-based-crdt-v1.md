@@ -33,8 +33,8 @@ authority" is therefore not a design axis; the axes that matter are (a) applier 
    Bootstrap/reconnect uses one naive full seeded snapshot (acknowledged to need later iteration).
 3. **Persist raw ops end-to-end (V1 target).** Store raw ops so the system is replayable; derive
    ordering directly from the ops. The server-driven sequence number must NOT be the
-   conflict-resolution key — it may advance `base_version` but must never be the sole ordering
-   authority. (Today only an incrementing sequence pointer is persisted, so the system is not
+   conflict-resolution key and is independent of the creator-owned `base_version`
+   Lamport counter. (Today only an incrementing sequence pointer is persisted, so the system is not
    replayable and all reconnection hinges on that counter; fixing it needs new tables. Ops are
    small — data volume is not the blocker.)
 4. **Persistence is separate from merge.** Every writer applies then writes; ensure no pending ops
