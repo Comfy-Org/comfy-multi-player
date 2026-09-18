@@ -88,11 +88,12 @@ export function checkGraphInvariants(doc: Y.Doc): GraphInvariantViolation[] {
   // endpoint-side references. I4 is not attempted when I3 already fails for
   // that endpoint, which keeps one missing node from producing duplicate noise.
   const inputClaims = new Map<string, string>();
-  links.forEach((rawTuple, linkMapKey) => {
+  const linkEntries = [...links.entries()].sort(([a], [b]) => a.localeCompare(b));
+  for (const [linkMapKey, rawTuple] of linkEntries) {
     const path = `links[${JSON.stringify(linkMapKey)}]`;
     if (!Array.isArray(rawTuple) || rawTuple.length < 5) {
       violation(violations, "I3", path, "link entry is not a tuple with node endpoints");
-      return;
+      continue;
     }
 
     const tuple = rawTuple as unknown[];
@@ -173,7 +174,7 @@ export function checkGraphInvariants(doc: Y.Doc): GraphInvariantViolation[] {
         );
       }
     }
-  });
+  }
 
   return violations.sort((a, b) => {
     const invariant = INVARIANT_ORDER[a.invariant] - INVARIANT_ORDER[b.invariant];

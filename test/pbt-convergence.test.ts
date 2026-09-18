@@ -20,6 +20,14 @@ interface Scenario {
   retryMask: boolean[];
 }
 
+interface Coverage {
+  runs: number;
+  deletes: number;
+  clears: number;
+  retries: number;
+  permutations: number;
+}
+
 const scenarioArb: fc.Arbitrary<Scenario> = fc.record({
   actors: fc.integer({ min: 1, max: 4 }),
   nodes: fc.integer({ min: 2, max: 8 }),
@@ -127,6 +135,14 @@ function withRetries(ops: Op[], mask: boolean[]): Op[] {
   return [...adjacent, ...delayed];
 }
 
+function assertNonVacuous(coverage: Coverage): void {
+  expect(coverage.runs).toBe(FC_OPTIONS.numRuns);
+  expect(coverage.deletes, "no generated operation stream included delete_node").toBeGreaterThan(0);
+  expect(coverage.clears, "no generated operation stream included clear").toBeGreaterThan(0);
+  expect(coverage.retries, "no stream passed to applyOps contained a duplicate retry").toBeGreaterThan(0);
+  expect(coverage.permutations, "no applied permutation differed from forward order").toBeGreaterThan(0);
+}
+
 function applyInBatches(doc: Y.Doc, ops: Op[], sizes: number[]): void {
   let cursor = 0;
   let batch = 0;
@@ -146,22 +162,31 @@ function fork(snapshot: Uint8Array): Y.Doc {
 
 describe("property-based convergence and idempotency", () => {
   it("converges across actor counts, causal permutations, batches, and duplicate retries", () => {
+    const coverage: Coverage = { runs: 0, deletes: 0, clears: 0, retries: 0, permutations: 0 };
     fc.assert(
       fc.property(scenarioArb, (scenario) => {
         const causalPhases = phases(scenario);
         const forward = causalPhases.flat();
         const permuted = ordered(causalPhases, scenario.orderKeys);
+        const retried = withRetries(permuted, scenario.retryMask);
         const snapshot = Y.encodeStateAsUpdate(mint({ nodes: [], links: [] }, catalog));
         const a = fork(snapshot);
         const b = fork(snapshot);
 
         applyInBatches(a, forward, [forward.length || 1]);
-        applyInBatches(b, withRetries(permuted, scenario.retryMask), scenario.batchSizes);
+        applyInBatches(b, retried, scenario.batchSizes);
+
+        coverage.runs += 1;
+        if (forward.some((op) => op.op === "delete_node")) coverage.deletes += 1;
+        if (forward.some((op) => op.op === "clear")) coverage.clears += 1;
+        if (new Set(retried.map((op) => op.op_id)).size < retried.length) coverage.retries += 1;
+        if (permuted.some((op, index) => op.op_id !== forward[index]?.op_id)) coverage.permutations += 1;
 
         expect(JSON.stringify(project(b, catalog))).toBe(JSON.stringify(project(a, catalog)));
       }),
       FC_OPTIONS,
     );
+    assertNonVacuous(coverage);
   });
 
   // reset_doc is a DEFERRED op (rejected until un-deferred by amendment), so it
