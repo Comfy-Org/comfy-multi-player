@@ -60,7 +60,9 @@ reviews:
         conformance corpus`, `Build`, `Type-check gate`, `Purity gate`,
         `Statelessness gate`, `Profile-claim staleness gate`, `CodeRabbit
         config drift gate`, `Import-graph gate`, `Citation-pin gate (FC-10)`,
-        `Tests`, and `Clock ordering matrix`.
+        `Tests`, and `Clock ordering matrix`. Both CI and release must also run
+        the shared `Verify package contents` step after `Build` and propagate
+        its failure.
     - path: "test/**"
       # source: .agents/checks/test-quality.md
       instructions: >-

@@ -23,7 +23,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
           registry-url: https://registry.npmjs.org
 
@@ -42,6 +42,9 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Verify package contents
+        run: npm run verify:package
 
       - name: Type-check gate
         run: npm run typecheck
@@ -70,21 +73,6 @@ jobs:
 
       - name: Clock ordering matrix
         run: npm run test:clock-matrix
-
-      - name: Verify package contents
-        run: |
-          npm pack --dry-run --json > /tmp/npm-pack.json
-          node --input-type=module <<'NODE'
-          import { readFile } from 'node:fs/promises'
-
-          const [{ files }] = JSON.parse(await readFile('/tmp/npm-pack.json', 'utf8'))
-          const paths = new Set(files.map(({ path }) => path))
-          for (const required of ['dist/index.js', 'dist/index.d.ts']) {
-            if (!paths.has(required)) throw new Error(`npm package is missing ${required}`)
-          }
-          const source = [...paths].find((path) => path.startsWith('src/'))
-          if (source) throw new Error(`npm package unexpectedly includes ${source}`)
-          NODE
 
       - name: Publish to npm with provenance
         run: npm publish --provenance --access public
