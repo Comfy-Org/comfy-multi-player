@@ -1,7 +1,9 @@
 /** Current-behavior characterization of the `applyOps` batch-size gate. */
-import { encodeStateAsUpdate, type Doc } from "yjs";
+import { encodeStateAsUpdate } from "yjs";
+import type { Doc } from "yjs";
 import { describe, expect, it } from "vitest";
-import { applyOps, mint, type Op, type WidgetCatalog, type WorkflowJSON } from "../src/index.js";
+import { applyOps, mint } from "../src/index.js";
+import type { Op, WidgetCatalog, WorkflowJSON } from "../src/index.js";
 import { MAX_OPS_PER_BATCH } from "../src/limits.js";
 
 const catalog: WidgetCatalog = {

@@ -23,6 +23,7 @@ import {
   project,
   writeTarget,
   type ConnectOp,
+  type DeleteNodeOp,
   type Op,
   type SetWidgetOp,
   type WorkflowJSON,
@@ -152,7 +153,7 @@ describe("stamp targets normalize node ids to strings", () => {
     expect(writeTarget(connectTo("b1", AGENT, 5, 1, 8, 7))).toEqual(
       writeTarget(connectTo("b2", HUMAN, 9, 2, 8, "7")),
     );
-    const del = {
+    const del: DeleteNodeOp = {
       op: "delete_node",
       op_id: opId("c1"),
       actor: AGENT,
@@ -160,8 +161,8 @@ describe("stamp targets normalize node ids to strings", () => {
       stamp: [5, AGENT],
       node_id: 7,
       removed_links: [],
-    } as unknown as Op;
-    const delStr = { ...del, node_id: "7" } as Op;
+    };
+    const delStr: DeleteNodeOp = { ...del, node_id: "7" };
     expect(writeTarget(del)).toEqual(writeTarget(delStr));
   });
 

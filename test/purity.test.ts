@@ -15,24 +15,22 @@ describe("purity", () => {
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
     });
+    expect(run.error, `npm ls failed: ${run.stderr}`).toBeUndefined();
+    expect(run.status, `npm ls exited ${String(run.status)}: ${run.stderr}`).toBe(0);
     const tree = JSON.parse(run.stdout) as {
+      name?: string;
       dependencies?: Record<
         string,
-        { version?: string; resolved?: string; missing?: boolean; invalid?: boolean; extraneous?: boolean }
+        { version?: string; resolved?: string; extraneous?: boolean }
       >;
     };
-    // A production root must be installed and valid, not just non-extraneous:
-    // a missing/invalid yjs node must fail this assertion, not pass it.
-    const resolvedRoots = Object.entries(tree.dependencies ?? {})
-      .filter(
-        ([, dep]) =>
-          (dep.version !== undefined || dep.resolved !== undefined) &&
-          !dep.missing &&
-          !dep.invalid &&
-          !dep.extraneous,
-      )
-      .map(([name]) => name)
-      .sort();
+    expect(tree.name).toBe("@comfyorg/comfy-multi-player");
+    const roots = Object.entries(tree.dependencies ?? {});
+    for (const [name, dependency] of roots) {
+      expect(dependency.version, `${name} must have npm installation metadata`).toBeTruthy();
+      expect(dependency.extraneous, `${name} must not be extraneous`).not.toBe(true);
+    }
+    const resolvedRoots = roots.map(([name]) => name).sort();
     expect(resolvedRoots).toEqual(["yjs"]);
 
     const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {

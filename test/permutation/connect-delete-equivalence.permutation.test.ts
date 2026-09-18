@@ -27,7 +27,9 @@ import {
 import { canonicalize, loadCatalog } from "../helpers.js";
 
 const catalog = loadCatalog();
-const ACTORS = ["agent:pbt:0", "agent:pbt:1", "human:pbt:0", "human:pbt:1"] as const;
+// Three representatives retain same-kind and cross-kind actor ordering while
+// leaving room for both incumbent states under the 20,000-execution ceiling.
+const ACTORS = ["agent:pbt:0", "agent:pbt:1", "human:pbt:0"] as const;
 const VERSION_PAIRS = [[0, 0], [0, 1], [1, 0], [1, 1], [0, 9], [9, 0], [4, 4], [4, 5]] as const;
 const ENDPOINT_PRESENCE = [
   { source: true, destination: true },
@@ -41,6 +43,8 @@ const SLOT_PAIRS = [
   { from: 5, to: 0 },
   { from: 5, to: 5 },
 ] as const;
+// 2 axes × 4 presence classes × 4 slot classes × 2 incumbent states ×
+// 3×2 ordered distinct actors × 8 version classes × 2 batch modes × 2 arrivals.
 const EXPECTED_EXECUTIONS = 12_288;
 
 type DeleteAxis = "source" | "destination";
@@ -164,14 +168,14 @@ describe("bounded exhaustive connect x delete equivalence", () => {
     for (const axis of ["source", "destination"] as const) {
       for (const presence of ENDPOINT_PRESENCE) {
         for (const slots of SLOT_PAIRS) {
-          const incumbent = true;
-          for (const actorA of ACTORS) {
-            for (const actorB of ACTORS) {
-              if (actorA === actorB) continue;
-              for (const versions of VERSION_PAIRS) {
-                const pair = operations(serial, [actorA, actorB], versions, slots, axis);
-                serial += 2;
-                for (const mode of ["together", "split"] as const) {
+          for (const incumbent of [false, true] as const) {
+            for (const actorA of ACTORS) {
+              for (const actorB of ACTORS) {
+                if (actorA === actorB) continue;
+                for (const versions of VERSION_PAIRS) {
+                  const pair = operations(serial, [actorA, actorB], versions, slots, axis);
+                  serial += 2;
+                  for (const mode of ["together", "split"] as const) {
                   const forward = run(base(presence, incumbent), pair, mode);
                   const reverse = run(base(presence, incumbent), [pair[1], pair[0]], mode);
                   executions += 2;
@@ -197,6 +201,7 @@ describe("bounded exhaustive connect x delete equivalence", () => {
                   else if (abortBoundary) abortBoundaryPairs++;
                   else if (divergent) unexpected.push(`${repro} outcomes=${JSON.stringify([forward.outcomes, reverse.outcomes])}`);
                   else equivalentPairs++;
+                  }
                 }
               }
             }
@@ -209,9 +214,9 @@ describe("bounded exhaustive connect x delete equivalence", () => {
     expect(unexpected, "unexpected divergence tuples").toEqual([]);
     expect(a6DivergentPairs + abortBoundaryPairs + equivalentPairs).toBe(EXPECTED_EXECUTIONS / 2);
     expect({ a6DivergentPairs, abortBoundaryPairs, equivalentPairs }).toEqual({
-      a6DivergentPairs: 672,
+      a6DivergentPairs: 624,
       abortBoundaryPairs: 192,
-      equivalentPairs: 5_280,
+      equivalentPairs: 5_328,
     });
   }, 120_000);
 });

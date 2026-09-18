@@ -122,6 +122,7 @@ function cloneWorkflow(workflow: WorkflowJSON): WorkflowJSON {
 
 describe("property-based mint → apply → project round trips", () => {
   it("round-trips generated metadata, slots, widgets, and subgraphs without mutating input", () => {
+    const witnessed = { definitions: 0, metadata: 0, slots: 0, widgets: 0 };
     fc.assert(
       fc.property(workflowArb, (workflow) => {
         const before = cloneWorkflow(workflow);
@@ -130,9 +131,19 @@ describe("property-based mint → apply → project round trips", () => {
         expect(canonicalize(projected)).toEqual(canonicalize(before));
         expect(workflow).toEqual(before);
         expect(project(mint(projected, catalog), catalog)).toEqual(projected);
+        if (workflow.definitions !== undefined) witnessed.definitions++;
+        if (Object.keys(workflow).some((key) => !["nodes", "links", "definitions"].includes(key))) witnessed.metadata++;
+        if (workflow.nodes.some((node) =>
+          (Array.isArray(node.inputs) && node.inputs.length > 0) ||
+          (Array.isArray(node.outputs) && node.outputs.length > 0))) witnessed.slots++;
+        if (workflow.nodes.some((node) => Array.isArray(node.widgets_values) && node.widgets_values.length > 0)) witnessed.widgets++;
       }),
       FC_OPTIONS,
     );
+    expect(witnessed.definitions).toBeGreaterThan(0);
+    expect(witnessed.metadata).toBeGreaterThan(0);
+    expect(witnessed.slots).toBeGreaterThan(0);
+    expect(witnessed.widgets).toBe(FC_OPTIONS.numRuns);
   });
 
     it("preserves minted op identities and is deterministic under apply and retry", { timeout: 15_000 }, () => {

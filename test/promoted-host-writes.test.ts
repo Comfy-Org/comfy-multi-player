@@ -18,7 +18,7 @@
  * trimmed to the nodes the cases touch.
  */
 import * as Y from "yjs";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { OPAQUE_WIDGETS_KEY, _getMutationCount, _resetMutationCount, appliedMap, nodesMap, stampsMap } from "../src/doc.js";
 import {
   applyOps,
@@ -168,6 +168,7 @@ function nested(): WorkflowJSON {
 // ---------------------------------------------------------------------------
 
 let seq = 0;
+beforeEach(() => { seq = 0; });
 function opId(prefix = "p"): string {
   return (prefix + String(seq++).padStart(4, "0")).padEnd(32, "0");
 }

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -82,6 +82,7 @@ describe("KA-13: cmp is stateless modulo caller-owned documents", () => {
 
   it("keeps fresh Node processes behaviorally equivalent", () => {
     const entry = fileURLToPath(new URL("../dist/index.js", import.meta.url));
+    expect(existsSync(entry), "dist/index.js missing — run `npm run build` before the stateless process probe").toBe(true);
     const script = `import { mint, project } from ${JSON.stringify(entry)}; import catalog from ${JSON.stringify(fileURLToPath(new URL("../fixtures/catalog.json", import.meta.url)))} with { type: "json" }; console.log(JSON.stringify(project(mint({nodes: [], links: []}, catalog), catalog)));`;
     const run = () => spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8" });
     const first = run();

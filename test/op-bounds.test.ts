@@ -18,9 +18,8 @@ import {
   mint,
   opBoundsRefusal,
   project,
-  type Op,
-  type WorkflowJSON,
 } from "../src/index.js";
+import type { Op, WorkflowJSON } from "../src/index.js";
 import { loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
