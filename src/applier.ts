@@ -1968,15 +1968,7 @@ function requireOpOnlyValid(op: ConnectOp): void {
     throw new OpRejectedError("malformed_op", "connect: link_type must be a string");
   }
 
-  if (op.grow?.inputcount != null) {
-    if (typeof op.grow.inputcount.widget !== "string") {
-      throw new OpRejectedError("malformed_op", "connect: grow.inputcount needs a widget name");
-    }
-    assertWritableValue(op.grow.inputcount.value, "connect: grow.inputcount");
-  }
-  if (op.grow != null && (typeof op.grow.name !== "string" || typeof op.grow.type !== "string")) {
-    throw new OpRejectedError("malformed_op", "connect: grow payload needs name and type");
-  }
+  validateGrowPayload(op);
   // `stampKey` is op-only — `Number(stamp[0])`, `String(stamp[1])`, no document
   // read — but the concrete branch used to evaluate it BELOW `if (!dst) return`,
   // so a `base_version` that throws on conversion (a `Symbol`, or an object with
@@ -2001,6 +1993,18 @@ function requireOpOnlyValid(op: ConnectOp): void {
         `connect: input slot ${String(op.to_slot)} not found on node ${String(op.to_node)}`,
       );
     }
+  }
+}
+
+function validateGrowPayload(op: ConnectOp): void {
+  if (op.grow?.inputcount != null) {
+    if (typeof op.grow.inputcount.widget !== "string") {
+      throw new OpRejectedError("malformed_op", "connect: grow.inputcount needs a widget name");
+    }
+    assertWritableValue(op.grow.inputcount.value, "connect: grow.inputcount");
+  }
+  if (op.grow != null && (typeof op.grow.name !== "string" || typeof op.grow.type !== "string")) {
+    throw new OpRejectedError("malformed_op", "connect: grow payload needs name and type");
   }
 }
 
@@ -2047,7 +2051,7 @@ function resolveInteriorConnectScope(
     path.shift();
   }
 
-  for (const segment of path) {
+  function descend(host: Y.Map<unknown>, segment: string): Y.Map<unknown> {
     const ownerType = String(host.get("type") ?? "");
     const owner = resolveDefinition(doc, ownerType);
     if (!owner) {
@@ -2066,9 +2070,10 @@ function resolveInteriorConnectScope(
         `interior node ${segment} not found in subgraph ${ownerId}`,
       );
     }
-    host = inner;
+    return inner;
   }
 
+  for (const segment of path) host = descend(host, segment);
   const hostType = String(host.get("type") ?? "");
   const definition = resolveDefinition(doc, hostType);
   if (!definition) {
@@ -2146,9 +2151,24 @@ function applyInteriorConnect(doc: Y.Doc, op: ConnectOp, scope: InteriorConnectS
       type: op.link_type,
     });
   }
-  const linkOrder = scope.definition.get("link_order");
+  recordInteriorLinkOrder(scope.definition, stamps, linkKey, key);
+  mset(input, "link", op.link_id);
+  const output = sourceOutputs.get(op.from_slot) as Y.Map<unknown>;
+  let outputLinks = output.get("links");
+  if (!(outputLinks instanceof Y.Array)) {
+    outputLinks = new Y.Array<unknown>();
+    mset(output, "links", outputLinks);
+  }
+  if (!(outputLinks as Y.Array<unknown>).toArray().includes(op.link_id)) {
+    apush(outputLinks as Y.Array<unknown>, op.link_id);
+  }
+  return "applied";
+}
+
+function recordInteriorLinkOrder(definition: Y.Map<unknown>, stamps: Y.Map<unknown>, linkKey: string, key: StampKey): void {
+  const linkOrder = definition.get("link_order");
   const orderedIds: unknown[] = Array.isArray(linkOrder) ? [...linkOrder] : [];
-  const definitionId = String(scope.definition.get("id") ?? "");
+  const definitionId = String(definition.get("id") ?? "");
   const orderStampKey = (candidate: string) =>
     JSON.stringify(["interior_link_order", definitionId, candidate]);
   const additions: Record<string, StampKey> = Object.create(null) as Record<string, StampKey>;
@@ -2163,19 +2183,8 @@ function applyInteriorConnect(doc: Y.Doc, op: ConnectOp, scope: InteriorConnectS
     mset(stamps, orderStampKey(linkKey), key);
   }
   if (nextOrder.some((candidate, index) => candidate !== orderedIds[index]) || nextOrder.length !== orderedIds.length) {
-    mset(scope.definition, "link_order", nextOrder);
+    mset(definition, "link_order", nextOrder);
   }
-  mset(input, "link", op.link_id);
-  const output = sourceOutputs.get(op.from_slot) as Y.Map<unknown>;
-  let outputLinks = output.get("links");
-  if (!(outputLinks instanceof Y.Array)) {
-    outputLinks = new Y.Array<unknown>();
-    mset(output, "links", outputLinks);
-  }
-  if (!(outputLinks as Y.Array<unknown>).toArray().includes(op.link_id)) {
-    apush(outputLinks as Y.Array<unknown>, op.link_id);
-  }
-  return "applied";
 }
 
 function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): SuccessfulOutcome {
@@ -2229,29 +2238,35 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
   const src = nodes.get(String(op.from_node));
   const sourceOutputs = src ? requireOutputSlot(src, op) : null;
 
-  let toIdx: number;
-  // Issue #17: this is the discriminant of the `ConnectOp` union. The type now
-  // says a `grow` op has no numeric `to_slot` and a concrete op has no `grow`;
-  // this branch is where a wire op that says otherwise is disposed of — and it
-  // is disposed of exactly as before, `grow` winning and `to_slot` unread.
-  if (op.grow != null && op.grow.promoted === true) {
-    if (!claimLinkIdentity(doc, op)) return "lww-dropped";
-    // A promoted subgraph input (Amendment A15) is ONE register named by the
-    // definition, so it is gated and claimed like a concrete input — before the
-    // source is consulted, for the same reason the concrete branch does it.
-    const claimed = claimPromotedInput(doc, dst, op);
-    if (claimed === null) return "lww-dropped";
-    toIdx = claimed;
-  } else if (op.grow != null) {
-    // Autogrow is NOT a shared register: every grow mints its own slot keyed by
-    // `grow_id`, so two concurrent grows onto one base both survive and there
-    // is nothing to gate (vocabulary §1.2 / amendment v1.2's carve-out).
-    if (!claimLinkIdentity(doc, op)) return "lww-dropped";
-    if (!src) return "no-op"; // source concurrently deleted → no-op (delete wins)
-    toIdx = growInputSlot(doc, dst, op, catalog);
-  } else {
+  function claimDestination(dst: Y.Map<unknown>): number | "lww-dropped" | "no-op" {
+    // Issue #17: this is the discriminant of the `ConnectOp` union. The type now
+    // says a `grow` op has no numeric `to_slot` and a concrete op has no `grow`;
+    // this branch is where a wire op that says otherwise is disposed of — and it
+    // is disposed of exactly as before, `grow` winning and `to_slot` unread.
+    if (op.grow != null && op.grow.promoted === true) {
+      if (!claimLinkIdentity(doc, op)) return "lww-dropped";
+      // A promoted subgraph input (Amendment A15) is ONE register named by the
+      // definition, so it is gated and claimed like a concrete input — before the
+      // source is consulted, for the same reason the concrete branch does it.
+      const claimed = claimPromotedInput(doc, dst, op);
+      if (claimed === null) return "lww-dropped";
+      return claimed;
+    }
+    if (op.grow != null) {
+      // Autogrow is NOT a shared register: every grow mints its own slot keyed by
+      // `grow_id`, so two concurrent grows onto one base both survive and there
+      // is nothing to gate (vocabulary §1.2 / amendment v1.2's carve-out).
+      if (!claimLinkIdentity(doc, op)) return "lww-dropped";
+      if (!src) return "no-op"; // source concurrently deleted → no-op (delete wins)
+      return growInputSlot(doc, dst, op, catalog);
+    }
     // `to_slot`'s type was settled by `requireOpOnlyValid`.
-    toIdx = op.to_slot as number;
+    const toIdx = op.to_slot as number;
+    if (!claimConcreteInput(dst, toIdx)) return "lww-dropped";
+    return toIdx;
+  }
+
+  function claimConcreteInput(dst: Y.Map<unknown>, toIdx: number): boolean {
     const ins = dst.get("inputs");
     // STATE-DEPENDENT half only: the op-only domain (integer, non-negative) was
     // settled by `requireOpOnlyValid` above, before any document read.
@@ -2266,7 +2281,7 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
       throw new OpRejectedError("input_slot_missing", `connect: input slot ${toIdx} is not a slot record`);
     }
 
-    if (!claimLinkIdentity(doc, op)) return "lww-dropped";
+    if (!claimLinkIdentity(doc, op)) return false;
 
     // ---- The concrete-input LWW register (op-vocabulary-v1.md amendment v1.2)
     //
@@ -2281,7 +2296,7 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
     const targetKey = stampTargetKey(op);
     const prior = stamps.get(targetKey) as StampKey | undefined;
     const key = stampKey(op);
-    if (prior != null && compareStampKeys(key, prior) <= 0) return "lww-dropped";
+    if (prior != null && compareStampKeys(key, prior) <= 0) return false;
 
     // Claiming the register is UNCONDITIONAL once the gate passes — the prior
     // occupant is retired even if this op then turns out to be a delete-wins
@@ -2300,13 +2315,18 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
     mset(stamps, targetKey, key);
     const prev = slot.get("link");
     if (prev != null && prev !== op.link_id) removeLink(doc, prev);
+    return true;
   }
 
+  const toIdx = claimDestination(dst);
+  if (typeof toIdx !== "number") return toIdx;
   // Source concurrently deleted → the winning connect leaves the input EMPTY
   // (delete wins over the link, not over the register claim).
   if (!src || !sourceOutputs) return "no-op";
-  const outs = sourceOutputs;
+  return installConnect(doc, op, dst, sourceOutputs, toIdx);
+}
 
+function installConnect(doc: Y.Doc, op: ConnectOp, dst: Y.Map<unknown>, outs: Y.Array<unknown>, toIdx: number): SuccessfulOutcome {
   const links = linksMap(doc);
   const linkKey = String(op.link_id);
   if (!links.has(linkKey)) {
