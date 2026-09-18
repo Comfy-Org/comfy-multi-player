@@ -82,6 +82,17 @@ async function serveFixtureRequest(
   const apply_result = applyFixtureDrift(mode, state.applyNumber, body, rawResult);
   const projected = project(doc, body.catalog as WidgetCatalog);
   const projection = mode === "projection" && state.applyNumber === 1 ? { ...projected, extra: true } : projected;
+  if (mode === "hidden-rejection-mutation" && state.applyNumber === 3) {
+    doc.getMap("meta").set("fixture_hidden_rejection_mutation", true);
+  }
+  if (mode === "trailing-operation-applied" && state.applyNumber === 3) {
+    const trailing = (body.ops as Op[])[1];
+    if (!trailing) throw new Error("trailing-operation fixture requires a second rejected-batch operation");
+    const trailingResult = applyOps(doc, [trailing], body.catalog as WidgetCatalog);
+    if (trailingResult.outcomes[0]?.outcome !== "applied") {
+      throw new Error(`trailing-operation fixture could not apply operation: ${JSON.stringify(trailingResult)}`);
+    }
+  }
   res.end(JSON.stringify({ apply_result, projection, update_b64: Buffer.from(Y.encodeStateAsUpdate(doc, before)).toString("base64") }));
 }
 
@@ -128,6 +139,15 @@ describe("dochost driver executable-package oracle (tiny loopback fixture, not c
   it("ignores volatile rejection message prose", async () => {
     const result = await run("message");
     expect(result.code, result.output).toBe(0);
+  });
+
+  it.each([
+    ["hidden-rejection-mutation", "FAIL  rejected batch leaves encoded document state unchanged"],
+    ["trailing-operation-applied", "FAIL  batch-aborted trailing operation is absent from __applied"],
+  ])("fails closed for %s", async (mode, expectedFailure) => {
+    const result = await run(mode);
+    expect(result.code, result.output).toBe(1);
+    expect(result.output).toContain(expectedFailure);
   });
 
   it("imports the executable package from a path containing spaces and URL delimiters", async () => {
