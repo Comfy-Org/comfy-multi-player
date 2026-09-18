@@ -101,6 +101,53 @@ function requireRelease(steps: Step[]): void {
 
 const loadYaml = (relative: string) => parse(readFileSync(join(root, relative), "utf8")) as unknown;
 
+describe("standalone package ownership", () => {
+  // Recovery: https://github.com/Comfy-Org/comfy-multi-player/pull/217
+  it("routes README development to the standalone repository with npm", () => {
+    const readme = readFileSync(join(root, "README.md"), "utf8");
+    const develop = readme.split("## Develop\n")[1]?.split("\n## ")[0];
+    expect(develop).toBeDefined();
+    expect(develop).toContain("https://github.com/Comfy-Org/comfy-multi-player");
+    expect(develop).toContain("npm ci");
+    expect(develop).not.toMatch(/pnpm|packages\/comfy-multi-player/);
+  });
+
+  it("installs a specific published version and saves an exact dependency", () => {
+    const readme = readFileSync(join(root, "README.md"), "utf8");
+    const install = readme.split("## Install\n")[1]?.split("\n## ")[0];
+    expect(install).toBeDefined();
+    expect(install).toContain("npm install --save-exact @comfyorg/comfy-multi-player@0.2.1");
+  });
+
+  it("keeps the roadmap migration deferred and standalone development writable", () => {
+    const roadmap = readFileSync(join(root, "docs/ROADMAP.md"), "utf8");
+    const plan = roadmap.split("## Repository plan\n")[1];
+    expect(plan).toBeDefined();
+    expect(plan).toContain("canonical writable source");
+    expect(plan).toContain("deferred");
+    expect(plan).toContain("https://github.com/Comfy-Org/comfy-multi-player");
+    expect(plan).not.toMatch(/Completed by|read-only record|ownership moved/);
+  });
+
+  it("does not turn historical schema compatibility into a completed migration", () => {
+    const schema = readFileSync(join(root, "docs/multiplayer-schema.md"), "utf8");
+    expect(schema).not.toContain("canonical workspace source");
+    expect(schema).toContain("frontend source migration is deferred");
+  });
+
+  it("accepts standalone issues and provides a private security contact", () => {
+    const config = loadYaml(".github/ISSUE_TEMPLATE/config.yml") as {
+      blank_issues_enabled: boolean;
+      contact_links: Array<{ name: string; url: string }>;
+    };
+    expect(config.blank_issues_enabled).toBe(true);
+    expect(config.contact_links).toContainEqual(expect.objectContaining({
+      name: "Security report", url: "mailto:support@comfy.org",
+    }));
+    expect(config.contact_links.some(({ url }) => url.includes("ComfyUI_frontend"))).toBe(false);
+  });
+});
+
 describe("parsed CI and release contracts", () => {
   it.each([["ci", "ci"], ["release", "publish"]])(
     "%s runs every required gate and propagates failure",

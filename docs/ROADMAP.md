@@ -2,7 +2,7 @@
 
 ## Current state
 
-V1 is an op-based Yjs document applier implemented once in the shared `@comfyorg/comfy-multi-player` TypeScript package. The browser and Node doc-host sidecar consume the same git-SHA-pinned package. Semantic ops are the replication unit; the widget catalog is sha256-pinned and fail-closed in the deployed architecture.
+V1 is an op-based Yjs document applier implemented once in the shared `@comfyorg/comfy-multi-player` TypeScript package. The browser and Node doc-host sidecar must consume the same exact published npm version (ADR-006); merging recovery code does not publish it or update consumers. Semantic ops are the replication unit; the widget catalog is sha256-pinned and fail-closed in the deployed architecture.
 
 ADR-031 adds the standalone-only `insert_workflow` kind for atomic template insertion. The applier
 derives tree-wide IDs from `op_id`; producers submit raw IDs and do not inspect document state.
@@ -10,7 +10,7 @@ derives tree-wide IDs from `op_id`; producers submit raw IDs and do not inspect 
 ## Guard gaps
 
 - ~~**Positive purity assertion (#22):**~~ **CLOSED.** `scripts/check-purity.mjs` asserts directly that the declared and resolved production dependency roots are exactly `{yjs}`, and `scripts/check-import-graph.mjs` asserts the same per source module via `src-runtime-dep-is-yjs-only`. A cross-language parity guard is still only warranted if a second-language implementation is proposed; the preferred policy remains no second implementation (tracked in the separate bullet below).
-- **Property tests (#24):** cover arbitrary op sequences, legal causal permutations, retries, batch boundaries, actor counts, byte-identical idempotency, and schema-version failure on the normal read path. Narrowed by #38: the normal read path now HAS a schema gate (`project()` → `assertReadableSchema`), enumerated case-by-case in `test/schema-version-on-read.test.ts`, and **KA-11** no longer points here for it. What remains open under #24 is the PROPERTY-based form — the enumerated cases are hand-written, not generated.
+- **Property tests (#24):** **PARTIALLY CLOSED.** `test/pbt-convergence.test.ts` generates actor counts, legal causal permutations, retries, batch boundaries, convergence, and byte-identical double-apply idempotency. `test/pbt-mint-project-roundtrip.test.ts` generates workflows and op streams for mint/apply/project round trips and retry determinism, with witness guards for optional metadata, definitions, slots, and widget features. These are fixed-seed samples, not exhaustive coverage. The normal read-path schema gate is covered case-by-case, not property-based, in `test/schema-version-on-read.test.ts`; generated malformed/non-current schema layouts remain a gap.
 - **Catalog-SHA lint (#22):** ~~fail on moving branch/tag citations in vocabulary and catalog references.~~ **Landed** as `scripts/check-pins.mjs` + `docs/upstream-pins.json` + `test/upstream-pins.test.ts`. Offline in CI; `npm run check:pins -- --verify-remote` additionally proves each pinned SHA still resolves upstream and each cited section still exists at it, and reports INCONCLUSIVE rather than passing when it cannot reach GitHub. Remaining, and the reason KA-12 keeps a scoped UNGUARDED marker: `meta.catalog_version`'s own sha256 shape is asserted by `test/catalog-sha-binding-integration.test.ts` but is not rejected at either write site — neither `mint()` (`src/mint.ts`) nor the module-private `initDoc()` helper (`src/doc.ts`) validates it, so `mint(workflow, catalog, "main")` still succeeds. That is Q4, not this lint.
 - **Conformance-corpus provenance (#23):** record generator repository and commit SHA, command, environment, and manifest; regenerate and diff in CI.
 - **Cross-language parity guard (#22):** if the single-package decision is deliberately revisited, both implementations must pass shared golden vectors before merge.
@@ -22,4 +22,14 @@ These are follow-up behavior/CI tickets. The remaining ones do not change op sem
 
 ## Repository plan
 
-Completed by [ComfyUI_frontend #16644](https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644): active development and release ownership moved to `ComfyUI_frontend/packages/comfy-multi-player` after the V1 contract stabilized. This repository remains a read-only record of its standalone history, tags, and releases through 0.2.1. The package keeps the identical `@comfyorg/comfy-multi-player` import path; no second writable implementation remains here.
+[Comfy-Org/comfy-multi-player](https://github.com/Comfy-Org/comfy-multi-player) is
+the canonical writable source for package code, tests, documentation, and release
+tooling. Target this repository's `main`; frontend adapters and consumers target
+frontend `main` and pin the published package rather than relocating its source.
+
+The migration proposed in
+[ComfyUI_frontend #16644](https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644)
+is closed and deferred, not completed. Preserve that PR and its descendant review
+and QA records as recovery evidence, not as working branches or merge targets.
+Future consolidation requires new explicit maintainer authorization; recovery
+does not authorize package publication or deployment.

@@ -112,7 +112,7 @@
       "cited_by": [
         "src/schema-version.ts"
       ],
-      "access_note": "Comfy-Org/cloud is PRIVATE. `npm run check:pins -- --verify-remote` resolves this pin only with a token that has access; without one the GitHub API answers 404, which this gate treats as definitive evidence ABOUT THE PIN (exit 1) rather than about the request (exit 2). That classification was deliberately introduced by #66 and is right for a public repo; it mis-fires here. Read a 404 on this pin as 'no access', not 'pin broken', until the gate learns to tell them apart.",
+      "access_note": "Comfy-Org/cloud is PRIVATE. `npm run check:pins -- --verify-remote` resolves this pin only with a token that has Contents read access. GitHub fine-grained permissions separate Metadata read from Contents read, and inaccessible private resources may return 404. Therefore an ambiguous commit/path 404 triggers a repository metadata lookup, but even matching metadata with `private: true` remains INCONCLUSIVE (exit 2): metadata visibility does not prove Contents access. Only matching metadata with explicit `private: false` makes an object 404 a definite violation (exit 1), because public contents need no permission. Missing, nonboolean, malformed, inaccessible, or indeterminate visibility is also INCONCLUSIVE. This safe limitation means a genuinely missing private object reported as 404 remains inconclusive; successful private commit/content probes still pass. It preserves #66's historical rationale for treating genuine object-scoped 422/451 responses as failures without falsely declaring a private pin broken when endpoint permission was never established.",
       "upstream_head_observed": {
         "date": "2026-08-21",
         "ref": "main",

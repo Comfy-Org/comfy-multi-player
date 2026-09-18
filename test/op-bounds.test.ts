@@ -14,12 +14,12 @@ import {
   MAX_COLLECTION_ENTRIES,
   MAX_OP_COST,
   MAX_OPS_PER_BATCH,
+  MAX_PAYLOAD_DEPTH,
   mint,
   opBoundsRefusal,
   project,
-  type Op,
-  type WorkflowJSON,
 } from "../src/index.js";
+import type { Op, WorkflowJSON } from "../src/index.js";
 import { loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
@@ -28,7 +28,7 @@ function bytes(doc: Y.Doc): Buffer {
   return Buffer.from(Y.encodeStateAsUpdate(doc));
 }
 
-/** `n` nested objects; the outermost is depth 1, the string leaf is depth n+1. */
+/** `n` nested objects; traversal starts at outermost depth 0, so the string leaf is depth `n`. */
 function wrap(n: number): unknown {
   let value: unknown = "leaf";
   for (let i = 0; i < n; i++) value = { child: value };
@@ -58,6 +58,14 @@ describe("opBoundsRefusal boundaries", () => {
   it("counts binary payloads by byteLength", () => {
     expect(opBoundsRefusal(new Uint8Array(1024))).toBeNull();
     expect(opBoundsRefusal(new Uint8Array(MAX_OP_COST + 1))).toMatch(/cost budget/);
+  });
+
+  it(`accepts a payload whose leaf is exactly at depth ${MAX_PAYLOAD_DEPTH}`, () => {
+    expect(opBoundsRefusal(wrap(MAX_PAYLOAD_DEPTH))).toBeNull();
+  });
+
+  it(`rejects a payload whose leaf is at depth ${MAX_PAYLOAD_DEPTH + 1}`, () => {
+    expect(opBoundsRefusal(wrap(MAX_PAYLOAD_DEPTH + 1))).toMatch(/nests deeper/);
   });
 
   it("skips reference cycles (the value gates own that refusal), terminating", () => {

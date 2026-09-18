@@ -176,7 +176,7 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     // through raw Y instead of `mset` would drop below three; anything that
     // writes more would rise above it. Both are the gate losing its meaning.
     const doc = mint(hubWorkflow(1), catalog);
-    const op = { op: "set_widget", ...env(0), node_id: 1, widget: "text", value: "z" } as SetWidgetOp;
+    const op: SetWidgetOp = { op: "set_widget", ...env(0), node_id: 1, widget: "text", value: "z" };
     _resetMutationCount(doc);
     expect(applyOps(doc, [op], catalog).outcomes.some((o) => o.outcome === "rejected")).toBe(false);
     expect(_getMutationCount(doc)).toBe(3);
@@ -189,7 +189,7 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     _resetMutationCount(doc);
     const running: number[] = [];
     for (let i = 0; i < 4; i++) {
-      const op = { op: "set_widget", ...env(i), node_id: 1, widget: "text", value: "v" + String(i) } as SetWidgetOp;
+      const op: SetWidgetOp = { op: "set_widget", ...env(i), node_id: 1, widget: "text", value: "v" + String(i) };
       expect(applyOps(doc, [op], catalog).outcomes.some((o) => o.outcome === "rejected")).toBe(false);
       running.push(_getMutationCount(doc));
     }
@@ -205,7 +205,7 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     // ledger rows used to canonicalize concurrent grows; neither is an LWW
     // gate that can discard a grow.
     const doc = mint(chainWorkflow(), catalog);
-    const op = {
+    const op: ConnectOp = {
       op: "connect",
       ...env(0),
       link_id: 9,
@@ -215,7 +215,7 @@ describe("schema §11: the counter measures the applier's real writes", () => {
       to_slot: null,
       link_type: "X",
       grow: { name: "gin", type: "X" },
-    } as unknown as ConnectOp;
+    };
     _resetMutationCount(doc);
     expect(applyOps(doc, [op], catalog).outcomes.some((o) => o.outcome === "rejected")).toBe(false);
     expect(_getMutationCount(doc)).toBe(9);
@@ -240,7 +240,7 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     // cost zero Y-writes — if a skipped op still wrote, the ceiling would be
     // absorbing work that the idempotency gate is supposed to have removed.
     const doc = mint(hubWorkflow(1), catalog);
-    const op = { op: "set_widget", ...env(0), node_id: 1, widget: "text", value: "z" } as SetWidgetOp;
+    const op: SetWidgetOp = { op: "set_widget", ...env(0), node_id: 1, widget: "text", value: "z" };
     const first = applyOps(doc, [op], catalog);
     expect(first.outcomes.some((o) => o.outcome === "rejected")).toBe(false);
     expect(first.outcomes.filter((o) => o.outcome === "applied").map((o) => o.op_id)).toEqual([op.op_id]);

@@ -685,7 +685,7 @@ describe("KA-4: the rejection codes that need their own fixture", () => {
     const before = bytes(doc);
     const beforeProjection = project(doc, cat ?? catalog);
 
-    const res = applyOps(doc, [op], cat as WidgetCatalog);
+    const res = applyOps(doc, [op], cat);
 
     expect(res.outcomes.find((outcome) => outcome.outcome === "rejected")?.reason.code).toBe(code);
     expect(bytes(doc).equals(before), "encodeStateAsUpdate must be byte-identical").toBe(true);
@@ -743,6 +743,7 @@ describe("KA-4 sweep completeness", () => {
   it("names every code the applier actually throws, so a new one cannot be added silently", () => {
     const src = readFileSync(new URL("../src/applier.ts", import.meta.url), "utf8");
     const thrown = new Set(Array.from(src.matchAll(/new OpRejectedError\(\s*"([a-z_]+)"/g), (m) => m[1] as string));
+    expect(thrown.size, "the applier rejection-code census must not be empty").toBeGreaterThan(0);
     const known = new Set<string>([
       ...ALL_REJECTION_CODES,
       ...OP_ID_REJECTION_CODES,

@@ -5,7 +5,7 @@
  },
  {
   "topic": "clear-scope",
-  "detail": "`clear` empties nodes, links, and groups but NOT `extra` and NOT definitions.subgraphs; last_node_id/last_link_id are preserved by design (id-reuse guard). _widget_stamps also survive a clear."
+  "detail": "`clear.removed_nodes` is the authoritative target set: an empty list removes no nodes, while listed node IDs and their incident links are removed. `clear` empties groups but NOT `extra` and NOT definitions.subgraphs; last_node_id/last_link_id are preserved by design (id-reuse guard). _widget_stamps also survive a clear."
  },
  {
   "topic": "Q6-subgraph-op-scope",
