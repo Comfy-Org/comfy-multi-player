@@ -122,6 +122,12 @@ describe("standalone package ownership", () => {
     expect(plan).not.toMatch(/Completed by|read-only record|ownership moved/);
   });
 
+  it("does not turn historical schema compatibility into a completed migration", () => {
+    const schema = readFileSync(join(root, "docs/multiplayer-schema.md"), "utf8");
+    expect(schema).not.toContain("canonical workspace source");
+    expect(schema).toContain("frontend source migration is deferred");
+  });
+
   it("accepts standalone issues and provides a private security contact", () => {
     const config = loadYaml(".github/ISSUE_TEMPLATE/config.yml") as {
       blank_issues_enabled: boolean;
