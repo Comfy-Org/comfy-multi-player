@@ -21,13 +21,15 @@ describe("purity", () => {
       name?: string;
       dependencies?: Record<
         string,
-        { version?: string; resolved?: string; extraneous?: boolean }
+        { version?: string; resolved?: string; missing?: boolean; invalid?: boolean; extraneous?: boolean }
       >;
     };
     expect(tree.name).toBe("@comfyorg/comfy-multi-player");
     const roots = Object.entries(tree.dependencies ?? {});
     for (const [name, dependency] of roots) {
       expect(dependency.version, `${name} must have npm installation metadata`).toBeTruthy();
+      expect(dependency.missing, `${name} must be installed`).not.toBe(true);
+      expect(dependency.invalid, `${name} must satisfy its declared range`).toBeFalsy();
       expect(dependency.extraneous, `${name} must not be extraneous`).not.toBe(true);
     }
     const resolvedRoots = roots.map(([name]) => name).sort();

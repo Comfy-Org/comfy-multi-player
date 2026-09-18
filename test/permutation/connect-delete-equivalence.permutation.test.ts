@@ -213,6 +213,13 @@ describe("bounded exhaustive connect x delete equivalence", () => {
     expect(executions).toBe(EXPECTED_EXECUTIONS);
     expect(unexpected, "unexpected divergence tuples").toEqual([]);
     expect(a6DivergentPairs + abortBoundaryPairs + equivalentPairs).toBe(EXPECTED_EXECUTIONS / 2);
+    // Per ordered-actor/version pair: five destination/together slot-race
+    // classes plus one source/together class diverge for either incumbent
+    // state. Source/split additionally diverges only with an incumbent link:
+    // with no incumbent, deleting the source leaves the same empty input.
+    // Thus (6 empty + 7 occupied) × 6 actor pairs × 8 version pairs = 624.
+    // The two source/together bad-destination-slot classes abort in both
+    // incumbent states: 2 × 2 × 6 × 8 = 192. All other pairs are equivalent.
     expect({ a6DivergentPairs, abortBoundaryPairs, equivalentPairs }).toEqual({
       a6DivergentPairs: 624,
       abortBoundaryPairs: 192,
