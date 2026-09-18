@@ -32,7 +32,7 @@ Every PR description must include these three sections — the PR template
 
 ## Local gate sequence
 
-Run all nine commands before requesting review — this is the set CI runs:
+Run these ten commands before requesting review, including both CI test tiers:
 
 ```sh
 npm ci
@@ -44,6 +44,7 @@ npm run check:profile-claims
 npm run check:coderabbit
 npm run verify:corpus
 npm test
+npm run test:exhaustive
 ```
 
 `check:purity` asserts the production dependency roots are exactly `{yjs}` and
