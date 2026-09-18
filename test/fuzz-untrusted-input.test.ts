@@ -1,11 +1,8 @@
 /**
  * Fuzz taxonomy: untrusted op envelopes and node payloads (#13, #14).
  *
- * The saved corpus below carries two kinds of case. `#13` cases are live
- * assertions: the untrusted-node-input guard has landed, so those payloads are
- * rejected before any mutation. `#14` cases stay pinned with `it.fails` — the
- * payload size/depth/cost bounds do not exist yet, and the pin is what tells us
- * the day they do.
+ * The saved corpus below carries live assertions for issues #13 and #14. Those
+ * guards reject adversarial node payloads before any mutation.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -70,6 +67,7 @@ describe("fuzz: malformed and adversarial op envelopes", () => {
 
   it("project never throws after accepted add_node ops with JSON payloads, nulls, and non-ASCII actors", () => {
     const valueArb = fc.jsonValue({ maxDepth: 5 });
+    let projectedRuns = 0;
     fc.assert(
       fc.property(fc.string({ minLength: 1 }), valueArb, fc.integer({ min: 1, max: 1_000_000 }), (actor, value, id) => {
         const doc = mint(emptyWorkflow, catalog);
@@ -86,10 +84,14 @@ describe("fuzz: malformed and adversarial op envelopes", () => {
         } as unknown as Op;
 
         const result = applyOps(doc, [op], catalog);
-        if (!result.outcomes.some((o) => o.outcome === "rejected")) expect(() => project(doc, catalog)).not.toThrow();
+        if (!result.outcomes.some((o) => o.outcome === "rejected")) {
+          projectedRuns++;
+          expect(() => project(doc, catalog)).not.toThrow();
+        }
       }),
       FC_OPTIONS,
     );
+    expect(projectedRuns).toBeGreaterThan(0);
   });
 
   it("project never throws after accepted NaN/Infinity widget values", () => {
@@ -210,13 +212,6 @@ describe("saved untrusted-input regression corpus", () => {
   }
 
   for (const entry of corpus) {
-    if (entry.issue === 13) {
-      // #13 guard landed: the applier rejects these payloads before any write.
-      it(`#13: ${entry.name} is rejected before mutation`, () => {
-        rejectedBeforeMutation(entry);
-      });
-      continue;
-    }
     it(`#${entry.issue}: ${entry.name} is rejected before mutation`, () => {
       rejectedBeforeMutation(entry);
     });
