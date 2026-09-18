@@ -25,6 +25,12 @@ function sameLink(a: unknown, b: unknown): boolean {
   return a === b || (a != null && b != null && linkKey(a) === linkKey(b));
 }
 
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 function violation(
   out: GraphInvariantViolation[],
   invariant: GraphInvariant,
@@ -88,7 +94,7 @@ export function checkGraphInvariants(doc: Y.Doc): GraphInvariantViolation[] {
   // endpoint-side references. I4 is not attempted when I3 already fails for
   // that endpoint, which keeps one missing node from producing duplicate noise.
   const inputClaims = new Map<string, string>();
-  const linkEntries = [...links.entries()].sort(([a], [b]) => a.localeCompare(b));
+  const linkEntries = [...links.entries()].sort(([a], [b]) => compareCodeUnits(a, b));
   for (const [linkMapKey, rawTuple] of linkEntries) {
     const path = `links[${JSON.stringify(linkMapKey)}]`;
     if (!Array.isArray(rawTuple) || rawTuple.length < 5) {
@@ -179,7 +185,7 @@ export function checkGraphInvariants(doc: Y.Doc): GraphInvariantViolation[] {
   return violations.sort((a, b) => {
     const invariant = INVARIANT_ORDER[a.invariant] - INVARIANT_ORDER[b.invariant];
     if (invariant !== 0) return invariant;
-    const path = a.path.localeCompare(b.path);
-    return path !== 0 ? path : a.message.localeCompare(b.message);
+    const path = compareCodeUnits(a.path, b.path);
+    return path !== 0 ? path : compareCodeUnits(a.message, b.message);
   });
 }

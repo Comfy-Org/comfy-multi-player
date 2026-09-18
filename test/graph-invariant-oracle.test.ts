@@ -102,7 +102,7 @@ describe("checkGraphInvariants test oracle", () => {
     expect(checkGraphInvariants(doc).map((item) => item.invariant)).toContain("I5");
   });
 
-  it("reports exact I5 diagnostics independently of link insertion order", () => {
+  it("reports code-unit-ordered non-ASCII I5 diagnostics independently of link insertion order", () => {
     const diagnosticsFor = (keys: string[]) => {
       const doc = freshDoc();
       const links = linksMap(doc);
@@ -114,17 +114,22 @@ describe("checkGraphInvariants test oracle", () => {
     const expected = [
       {
         invariant: "I5",
-        path: 'links["11"]',
-        message: "input register (2, 0) is also claimed by link 100",
+        path: 'links["z"]',
+        message: "input register (2, 0) is also claimed by link y",
       },
       {
         invariant: "I5",
-        path: 'links["2"]',
-        message: "input register (2, 0) is also claimed by link 100",
+        path: 'links["ä"]',
+        message: "input register (2, 0) is also claimed by link y",
+      },
+      {
+        invariant: "I5",
+        path: 'links["é"]',
+        message: "input register (2, 0) is also claimed by link y",
       },
     ];
 
-    expect(diagnosticsFor(["100", "11", "2"])).toEqual(expected);
-    expect(diagnosticsFor(["2", "11", "100"])).toEqual(expected);
+    expect(diagnosticsFor(["y", "z", "ä", "é"])).toEqual(expected);
+    expect(diagnosticsFor(["é", "ä", "z", "y"])).toEqual(expected);
   });
 });
