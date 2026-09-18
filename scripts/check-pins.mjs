@@ -45,9 +45,9 @@
  * Exit codes: 0 pinned, 1 violation, 2 inconclusive (registry missing or
  * unparseable, nothing scanned, or — in remote mode — no definitive answer from
  * upstream). "No definitive answer" includes an unusable token, a rate limit,
- * and a 404 from a repository whose visibility has not been established. A
- * repository metadata lookup must succeed before an object 404 is evidence
- * about that pin; 422/451 remain object-scoped answers by themselves.
+ * and a 404 unless repository metadata explicitly establishes that the
+ * repository is public. Metadata access to a private repository does not prove
+ * Contents permission. 422/451 remain object-scoped answers by themselves.
  */
 
 import { spawnSync } from "node:child_process";
@@ -330,8 +330,10 @@ if (ghProbe.error || ghProbe.status !== 0) {
  * Statuses that are evidence about the OBJECT that was asked for. Only these
  * may be read as "this pin is broken".
  *
- *   404 — no such commit/path, but only after a successful repository metadata
- *         lookup proves the caller can see this repository
+ *   404 — no such commit/path, but only after repository metadata identifies
+ *         the matching repository and explicitly says it is public. Public
+ *         contents need no endpoint permission; private metadata visibility
+ *         does not establish private Contents permission.
  *   422 — the SHA is well-formed but names no object here
  *   451 — the object exists but is legally unavailable; not a pin problem to
  *         fix by re-pinning, but it is a definite answer about this object
@@ -361,12 +363,12 @@ function gh(endpoint) {
   };
 }
 
-function establishRepositoryAccess(slug) {
+function establishPublicRepository(slug) {
   const repository = gh(`repos/${slug}`);
   if (!repository.ok) {
     const status = repository.http === null ? "no HTTP status (DNS/TLS/proxy)" : `HTTP ${repository.http}`;
     inconclusive(
-      `could not establish repository access for ${slug} — ${status}`,
+      `could not establish public repository visibility for ${slug} — ${status}`,
       repository.stderr.split("\n")[0] || "no error output",
       "GitHub hides inaccessible private repositories behind 404, so this response cannot prove",
       "whether the repository is hidden or the requested commit/path is genuinely absent.",
@@ -378,22 +380,30 @@ function establishRepositoryAccess(slug) {
   try {
     metadata = JSON.parse(repository.stdout);
   } catch {
-    inconclusive(`repository metadata for ${slug} was malformed, so repository access was not established`);
+    inconclusive(`repository metadata for ${slug} was malformed, so repository visibility was not established`);
   }
   if (
     !metadata ||
     typeof metadata !== "object" ||
     typeof metadata.full_name !== "string" ||
-    metadata.full_name.toLowerCase() !== slug.toLowerCase()
+    metadata.full_name.toLowerCase() !== slug.toLowerCase() ||
+    typeof metadata.private !== "boolean"
   ) {
-    inconclusive(`repository metadata for ${slug} was malformed, so repository access was not established`);
+    inconclusive(`repository metadata for ${slug} was malformed, so repository visibility was not established`);
+  }
+  if (metadata.private) {
+    inconclusive(
+      `repository metadata for ${slug} identifies a private repository, but metadata visibility does not prove Contents access`,
+      "GitHub fine-grained permissions separate Metadata read from Contents read. A private-object",
+      "404 may therefore mean either a missing object or missing endpoint permission.",
+    );
   }
 }
 
 function requireDefinitive(result, what, slug) {
   if (result.ok) return;
   if (result.http === 404) {
-    establishRepositoryAccess(slug);
+    establishPublicRepository(slug);
     return;
   }
   if (result.definitive) return;
@@ -402,7 +412,7 @@ function requireDefinitive(result, what, slug) {
     `could not get a definitive answer from GitHub while checking ${what} — ${status}`,
     result.stderr.split("\n")[0] || "no error output",
     "This is NOT a passing pin and NOT a failing pin — the check did not happen.",
-    "Only 422/451, or 404 after repository visibility is established, are answers about the",
+    "Only 422/451, or 404 after public repository visibility is established, are answers about the",
     "object; 401/403/429/5xx are about the request and prove nothing about the pin.",
     `Offline result: ${errors.length === 0 ? "clean" : `${errors.length} violation(s)`}`,
   );

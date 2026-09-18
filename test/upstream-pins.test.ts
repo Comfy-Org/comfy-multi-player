@@ -136,24 +136,45 @@ describe("FC-10 — upstream citations are pinned by SHA, not by branch", () => 
       commitStatus: 404,
       metadataStatus: 404,
       expectedStatus: 2,
-      expectedMessage: "could not establish repository access for example/upstream — HTTP 404",
+      expectedMessage: "could not establish public repository visibility for example/upstream — HTTP 404",
       endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
     },
     {
-      name: "readable repository commit 404",
+      name: "public repository commit 404",
       commitStatus: 404,
       metadataStatus: 200,
+      metadataPrivate: false,
       expectedStatus: 1,
       expectedMessage: "commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa no longer resolves in example/upstream",
       endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
     },
     {
-      name: "readable repository path 404",
+      name: "public repository path 404",
       commitStatus: 200,
       contentsStatus: 404,
       metadataStatus: 200,
+      metadataPrivate: false,
       expectedStatus: 1,
       expectedMessage: "README.md is absent at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa in example/upstream",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream/contents/README.md?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
+    },
+    {
+      name: "private repository commit 404 despite readable metadata",
+      commitStatus: 404,
+      metadataStatus: 200,
+      metadataPrivate: true,
+      expectedStatus: 2,
+      expectedMessage: "repository metadata for example/upstream identifies a private repository, but metadata visibility does not prove Contents access",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
+    },
+    {
+      name: "private repository path 404 despite readable metadata",
+      commitStatus: 200,
+      contentsStatus: 404,
+      metadataStatus: 200,
+      metadataPrivate: true,
+      expectedStatus: 2,
+      expectedMessage: "repository metadata for example/upstream identifies a private repository, but metadata visibility does not prove Contents access",
       endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream/contents/README.md?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
     },
     {
@@ -177,7 +198,7 @@ describe("FC-10 — upstream citations are pinned by SHA, not by branch", () => 
       commitStatus: 404,
       metadataStatus: 403,
       expectedStatus: 2,
-      expectedMessage: "could not establish repository access for example/upstream — HTTP 403",
+      expectedMessage: "could not establish public repository visibility for example/upstream — HTTP 403",
       endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
     },
     {
@@ -185,7 +206,7 @@ describe("FC-10 — upstream citations are pinned by SHA, not by branch", () => 
       commitStatus: 404,
       metadataStatus: 500,
       expectedStatus: 2,
-      expectedMessage: "could not establish repository access for example/upstream — HTTP 500",
+      expectedMessage: "could not establish public repository visibility for example/upstream — HTTP 500",
       endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
     },
     {
@@ -194,7 +215,25 @@ describe("FC-10 — upstream citations are pinned by SHA, not by branch", () => 
       metadataStatus: 200,
       malformedMetadata: true,
       expectedStatus: 2,
-      expectedMessage: "repository metadata for example/upstream was malformed, so repository access was not established",
+      expectedMessage: "repository metadata for example/upstream was malformed, so repository visibility was not established",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
+    },
+    {
+      name: "repository metadata omits visibility",
+      commitStatus: 404,
+      metadataStatus: 200,
+      omitMetadataPrivate: true,
+      expectedStatus: 2,
+      expectedMessage: "repository metadata for example/upstream was malformed, so repository visibility was not established",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
+    },
+    {
+      name: "repository metadata has nonboolean visibility",
+      commitStatus: 404,
+      metadataStatus: 200,
+      metadataPrivate: "false",
+      expectedStatus: 2,
+      expectedMessage: "repository metadata for example/upstream was malformed, so repository visibility was not established",
       endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
     },
   ])("classifies $name without mistaking repository access for object absence", (scenario) => {
@@ -240,7 +279,7 @@ describe("FC-10 — upstream citations are pinned by SHA, not by branch", () => 
           `if [ "$status" != 200 ]; then echo "gh: fixture failure (HTTP $status)" >&2; exit 1; fi\n` +
           `case "$2" in\n` +
           `  repos/example/upstream/contents/*) printf '%s\\n' '{"content":"IyAxIFRpdGxlCg==","encoding":"base64"}';;\n` +
-          `  repos/example/upstream) if [ "$MALFORMED_METADATA" = true ]; then echo '{}'; else echo '{"full_name":"example/upstream"}'; fi;;\n` +
+          `  repos/example/upstream) if [ "$MALFORMED_METADATA" = true ]; then echo '{}'; elif [ "$OMIT_METADATA_PRIVATE" = true ]; then echo '{"full_name":"example/upstream"}'; else printf '{"full_name":"example/upstream","private":%s}\\n' "$METADATA_PRIVATE"; fi;;\n` +
           `  *) echo '{}';;\n` +
           `esac\n`,
       );
@@ -259,6 +298,8 @@ describe("FC-10 — upstream citations are pinned by SHA, not by branch", () => 
           CONTENTS_STATUS: String(scenario.contentsStatus ?? 200),
           METADATA_STATUS: String(scenario.metadataStatus),
           MALFORMED_METADATA: String(scenario.malformedMetadata ?? false),
+          OMIT_METADATA_PRIVATE: String(scenario.omitMetadataPrivate ?? false),
+          METADATA_PRIVATE: JSON.stringify(scenario.metadataPrivate ?? false),
         },
       });
       expect(run.status, run.stderr).toBe(scenario.expectedStatus);
