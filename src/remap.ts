@@ -34,6 +34,29 @@ export function linkHasMissingEndpoint(link: unknown, hasNode: (id: unknown) => 
   return endpoints !== undefined && (!hasNode(endpoints[0]) || !hasNode(endpoints[1]));
 }
 
+function remapInputs(inputs: unknown, linkIds: Map<string, string>, droppedLinkIds: Set<string>): void {
+  if (!Array.isArray(inputs)) return;
+  for (const input of inputs) {
+    if (typeof input !== "object" || input === null || !("link" in input)) continue;
+    const record = input as { link?: unknown };
+    if (record.link === null || record.link === undefined) continue;
+    const id = normalizedId(record.link);
+    if (droppedLinkIds.has(id)) record.link = null;
+    else if (linkIds.has(id)) record.link = linkIds.get(id);
+  }
+}
+
+function remapOutputs(outputs: unknown, linkIds: Map<string, string>, droppedLinkIds: Set<string>): void {
+  if (!Array.isArray(outputs)) return;
+  for (const output of outputs) {
+    if (typeof output !== "object" || output === null || !Array.isArray((output as { links?: unknown }).links)) continue;
+    const record = output as { links: unknown[] };
+    record.links = record.links
+      .filter((id) => !droppedLinkIds.has(normalizedId(id)))
+      .map((id) => linkIds.get(normalizedId(id)) ?? id);
+  }
+}
+
 function remapGraph(
   graph: Record<string, unknown>,
   opId: string,
@@ -60,27 +83,8 @@ function remapGraph(
   for (const node of nodes) {
     node.id = nodeIds.get(normalizedId(node.id))!;
     if (definitionIds.has(node.type)) node.type = definitionIds.get(node.type)!;
-    if (Array.isArray(node.inputs)) {
-      for (const input of node.inputs) {
-        if (typeof input === "object" && input !== null && "link" in input) {
-          const record = input as { link?: unknown };
-          if (record.link === null || record.link === undefined) continue;
-          const id = normalizedId(record.link);
-          if (droppedLinkIds.has(id)) record.link = null;
-          else if (linkIds.has(id)) record.link = linkIds.get(id);
-        }
-      }
-    }
-    if (Array.isArray(node.outputs)) {
-      for (const output of node.outputs) {
-        if (typeof output === "object" && output !== null && Array.isArray((output as { links?: unknown }).links)) {
-          const record = output as { links: unknown[] };
-          record.links = record.links
-            .filter((id) => !droppedLinkIds.has(normalizedId(id)))
-            .map((id) => linkIds.get(normalizedId(id)) ?? id);
-        }
-      }
-    }
+    remapInputs(node.inputs, linkIds, droppedLinkIds);
+    remapOutputs(node.outputs, linkIds, droppedLinkIds);
   }
   graph["links"] = links.map((link) => {
     if (Array.isArray(link)) {
