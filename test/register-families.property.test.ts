@@ -207,7 +207,9 @@ function exercise(
   if (scenario.retry !== "none") {
     const before = Buffer.from(Y.encodeStateAsUpdate(first));
     const retried = scenario.retry === "winner" ? winner : loser;
-    expect(applyOps(first, [retried], catalog).outcomes[0]?.outcome).not.toBe("rejected");
+    expect(applyOps(first, [retried], catalog).outcomes).toEqual([
+      { op_id: retried.op_id, outcome: "no-op" },
+    ]);
     expect(Buffer.from(Y.encodeStateAsUpdate(first))).toEqual(before);
   }
 }

@@ -72,7 +72,9 @@ describe("catalog SHA binding across mint → apply → project (KA-12 / FC-10)"
 
   it("flags a moving branch-style catalog citation", () => {
     const doc = mint(workflow, catalog, "main");
-    expect(() => assertImmutableCatalogCitation(metaMap(doc).get("catalog_version"))).toThrow(
+    const catalogVersion = metaMap(doc).get("catalog_version");
+    expect(catalogVersion).toBe("main");
+    expect(() => assertImmutableCatalogCitation(catalogVersion)).toThrow(
       "KA-12 / FC-10: catalog_version must be an immutable sha256, got 'main'",
     );
   });

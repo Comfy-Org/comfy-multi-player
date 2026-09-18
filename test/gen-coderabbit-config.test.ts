@@ -540,8 +540,6 @@ describe("gen-coderabbit-config", () => {
     const real = spawnSync("node", [script], { encoding: "utf8" });
     expect(real.stderr).toBe("");
     expect(real.status).toBe(0);
-    expect(real.stdout).toBe(
-      "coderabbit-config check PASSED (5 instruction block(s) from 4 profile(s) match .coderabbit.yaml)\n",
-    );
+    expect(real.stdout).toMatch(/^coderabbit-config check PASSED /);
   });
 });

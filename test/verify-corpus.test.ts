@@ -10,7 +10,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const script = join(root, "scripts", "verify-corpus.mjs");
 
 function runAgainst(dir: string) {
-  return spawnSync("node", [script], {
+  return spawnSync(process.execPath, [script], {
     encoding: "utf8",
     env: { ...process.env, CORPUS_FIXTURES_DIR: dir },
   });

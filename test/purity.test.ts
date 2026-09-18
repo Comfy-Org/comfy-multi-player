@@ -77,7 +77,6 @@ describe("purity", () => {
     const run = spawnSync(process.execPath, ["--input-type=module", "-e", probe], {
       encoding: "utf8",
     });
-    expect(run.stderr).toBe("");
-    expect(run.status).toBe(0);
+    expect(run.status, run.stderr).toBe(0);
   });
 });

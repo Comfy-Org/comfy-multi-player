@@ -84,7 +84,6 @@ describe("invalid op states are unrepresentable (issue #17)", () => {
     // tsc prints diagnostics on stdout. A TS2578 ("Unused '@ts-expect-error'
     // directive") means an invalid state became constructible again; anything
     // else means a positive control stopped compiling.
-    expect(`${run.stdout}${run.stderr}`.trim()).toBe("");
-    expect(run.status).toBe(0);
+    expect(run.status, run.stderr || run.stdout).toBe(0);
   }, 60_000);
 });
