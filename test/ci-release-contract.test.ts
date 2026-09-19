@@ -117,7 +117,7 @@ describe("standalone package ownership", () => {
     const readme = readFileSync(join(root, "README.md"), "utf8");
     const install = readme.split("## Install\n")[1]?.split("\n## ")[0];
     expect(install).toBeDefined();
-    expect(install).toContain("npm install --save-exact @comfyorg/comfy-multi-player@0.2.1");
+    expect(install).toContain("npm install --save-exact @comfyorg/comfy-multi-player@0.3.0");
   });
 
   it("keeps the roadmap migration deferred and standalone development writable", () => {
