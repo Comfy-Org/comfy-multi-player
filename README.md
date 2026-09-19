@@ -671,11 +671,14 @@ way.
 Published to npm as [`@comfyorg/comfy-multi-player`](https://www.npmjs.com/package/@comfyorg/comfy-multi-player):
 
 ```bash
-npm install --save-exact @comfyorg/comfy-multi-player@0.2.1
+npm install --save-exact @comfyorg/comfy-multi-player@0.3.0
 ```
 
-This is an exact published-version example, not a claim that unreleased main
-changes are included. Coordinate version upgrades across consumers.
+Use this exact version after the 0.3.0 release is published; unreleased main
+changes are not included in earlier npm versions. Version 0.3.0 requires schema
+4, while 0.2.1 used schema 2. Old layouts are refused, not migrated in place.
+Coordinate version upgrades and new-lineage cutover across consumers as
+described in [`docs/release-handoff.md`](docs/release-handoff.md).
 
 The server and frontend must pin the same **exact** published version. Package
 development stays in the standalone repository; consumers do not vendor its source. Conflict
