@@ -38,6 +38,8 @@ interface BenchmarkMeasurement {
 interface BenchTest {
   name: string;
   parent?: { name?: string };
+  /** Public and stable: `true` marks a task AS a benchmark. Not the measurements. */
+  meta?: () => { benchmark?: boolean };
   task?: { result?: { benchmark?: BenchmarkMeasurement } };
 }
 
@@ -52,29 +54,53 @@ interface Row {
   rme: number;
 }
 
+/** One finished benchmark's measurements, or `null` when they are not where we expect. */
+function measurementOf(test: BenchTest): Row | null {
+  const measured = test.task?.result?.benchmark;
+  if (!measured || typeof measured.mean !== "number") return null;
+  const suite = test.parent?.name;
+  return {
+    label: suite ? `${suite} \u203a ${test.name}` : test.name,
+    mean: measured.mean,
+    p99: typeof measured.p99 === "number" ? measured.p99 : Number.NaN,
+    rme: typeof measured.rme === "number" ? measured.rme : Number.NaN,
+  };
+}
+
 /** Defensive by design: see the header on why these accessors were probed, not read from docs. */
-function collectRows(modules: TestModule[]): Row[] {
+function collectRows(modules: TestModule[]): { rows: Row[]; benchmarksSeen: number } {
   const rows: Row[] = [];
+  let benchmarksSeen = 0;
   for (const module of modules) {
     for (const test of module.children?.allTests?.() ?? []) {
-      const measured = test.task?.result?.benchmark;
-      if (!measured || typeof measured.mean !== "number") continue;
-      const suite = test.parent?.name;
-      rows.push({
-        label: suite ? `${suite} › ${test.name}` : test.name,
-        mean: measured.mean,
-        p99: typeof measured.p99 === "number" ? measured.p99 : Number.NaN,
-        rme: typeof measured.rme === "number" ? measured.rme : Number.NaN,
-      });
+      if (test.meta?.()?.benchmark) benchmarksSeen++;
+      const row = measurementOf(test);
+      if (row) rows.push(row);
     }
   }
-  return rows;
+  return { rows, benchmarksSeen };
 }
 
 export default class FrameShareReporter {
   onTestRunEnd(modules: TestModule[] = []): void {
-    const rows = collectRows(modules);
-    if (rows.length === 0) return;
+    const { rows, benchmarksSeen } = collectRows(modules);
+
+    // Benchmarks ran but produced no frame shares: the measurements moved.
+    // Say so loudly instead of printing nothing. A silent skip here looks
+    // exactly like a healthy run while the only figure this baseline exists to
+    // produce has quietly stopped appearing. Not thrown: this file asserts
+    // nothing, and failing a run that has no assertions would turn a reporting
+    // regression into a red build on a benchmark nobody gates on.
+    if (rows.length === 0) {
+      if (benchmarksSeen > 0) {
+        console.error(
+          `\n  [frame-share] ${benchmarksSeen} benchmark(s) ran but none exposed measurements at ` +
+            "`test.task.result.benchmark` — vitest likely moved them. No frame shares were printed; " +
+            "update bench/frame-share-reporter.ts.\n",
+        );
+      }
+      return;
+    }
 
     const share = (ms: number) => (Number.isFinite(ms) ? `${((ms / FRAME_MS) * 100).toFixed(2)}%` : "n/a");
     const width = Math.max(...rows.map((row) => row.label.length));

@@ -16,11 +16,21 @@
  * 200-node workflow costs more than projecting one and would otherwise
  * dominate the sample.
  *
- * DETERMINISM. Both documents come from one fixed seed (`SEED`) through a
- * small LCG, so the 20-node and 200-node cases are byte-identical between runs
- * and between machines. `Math.random()` is never called: a benchmark whose
- * input changes per run cannot be compared to its own history, which is the
- * only comparison a baseline is for.
+ * DETERMINISM, AND ITS LIMIT. The INPUTS are fixed: both workflows and both op
+ * batches come from one seed (`SEED`) through a small LCG, so the same
+ * `WorkflowJSON` and the same `Op[]` are fed to `applyOps` and `project` on
+ * every run and every machine — verified by hashing the generated workflow
+ * twice (`93ce8265ac25f184` at 20 nodes, `864b38cca5d19a32` at 200).
+ * `Math.random()` is never called: a benchmark whose input changes per run
+ * cannot be compared to its own history, which is the only comparison a
+ * baseline is for.
+ *
+ * The encoded DOCUMENT is not byte-identical across runs, and must not be made
+ * so. `mint()` builds a `Y.Doc`, which takes a random client id, and that id is
+ * how a CRDT keeps concurrent writers apart — pinning it to stabilise a
+ * benchmark would be a correctness hazard dressed as reproducibility. What this
+ * file needs is identical work per run, which fixed inputs already give; equal
+ * bytes were never required and are not claimed.
  *
  * THE FRAME FIGURE. Results print as a percentage of a 16.6 ms frame — the
  * budget for one 60 Hz frame. `applyOps` and `project` run on the follower's
