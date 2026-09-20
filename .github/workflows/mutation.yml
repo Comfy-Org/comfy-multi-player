@@ -12,6 +12,14 @@ jobs:
   mutation:
     name: Stryker mutation testing
     runs-on: ubuntu-latest
+    # A job that runs past GitHub's omitted-`timeout-minutes` 360 minute default
+    # is CANCELLED, and a cancelled job skips its `if: always()` steps too — so
+    # the 2026-09-18 run ended at 21617s (360.3 min, i.e. killed exactly by that
+    # default) with no failed log and no uploaded report, leaving nothing to
+    # diagnose (cifix-16989). Bound the job just under the default so the cap is
+    # ours and visible here. Deliberately NOT lowered further: the caps exist to
+    # make a runaway legible, not to shorten the budget a full cold run needs.
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,7 +47,23 @@ jobs:
           restore-keys: |
             stryker-incremental-${{ runner.os }}-${{ hashFiles('package-lock.json', 'stryker.config.mjs') }}-
 
+      # Step-level, and deliberately tighter than the job cap above: a step that
+      # times out is marked FAILED and the job keeps going, so the two
+      # `if: always()` steps below still run and still upload whatever
+      # reports/mutation/ holds. A job-level cancellation would skip them. This
+      # is what turns a runaway from "cancelled, no log" into a diagnosable red.
+      #
+      # This does NOT make a cold run fit. Measured 2026-09-20 on the cifix-16989
+      # fix: 4766 mutants over 5 files, `coverageAnalysis: "all"`, concurrency 4,
+      # and a 58s full suite — so a cold run is hours and 2026-09-18 exceeded 360
+      # minutes. `incremental: true` is supposed to absorb that, but the report is
+      # only written by a run that COMPLETES, and no run has completed since the
+      # cache key was adopted, so every run restores nothing and pays full cost.
+      # Breaking that bootstrap loop needs a measurement decision about the pinned
+      # knobs (or a sharded/seeded first run) and is deliberately left to its own
+      # change rather than smuggled in behind a timeout.
       - name: Mutation tests
+        timeout-minutes: 345
         run: npm run test:mutation
 
       # Stryker scores a `Timeout` as killed, so a loaded runner inflates the
