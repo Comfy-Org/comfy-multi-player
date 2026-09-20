@@ -62,8 +62,12 @@ jobs:
       # Breaking that bootstrap loop needs a measurement decision about the pinned
       # knobs (or a sharded/seeded first run) and is deliberately left to its own
       # change rather than smuggled in behind a timeout.
+      # 330, not 345: the step cap has to leave the job cap enough room for
+      # checkout/install/build ahead of it and the report-check and upload steps
+      # after it, or a step timeout would be overtaken by a job cancellation and
+      # lose the very artifacts this arrangement exists to keep.
       - name: Mutation tests
-        timeout-minutes: 345
+        timeout-minutes: 330
         run: npm run test:mutation
 
       # Stryker scores a `Timeout` as killed, so a loaded runner inflates the
