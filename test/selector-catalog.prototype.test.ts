@@ -4,7 +4,7 @@
  * Expected names/values are written independently, not derived from the codec.
  */
 import { describe, expect, it } from "vitest";
-import { decodeWidgets, type WidgetField } from "./prototypes/selector-catalog.js";
+import { decodeWidgets, planSelectorReset, type WidgetField } from "./prototypes/selector-catalog.js";
 
 const layout: readonly WidgetField[] = [
   { name: "sharpen" },
@@ -65,5 +65,50 @@ describe("selector-aware catalog prototype", () => {
   it("refuses an incomplete static catalog rather than allowing a wrong-slot edit", () => {
     const incomplete = [{ name: "seed" }, { name: "steps" }, { name: "cfg" }];
     expect(() => decodeWidgets(incomplete, [42, "fixed", 20, 8])).toThrow();
+  });
+
+  it("carries exact active values and clears inactive descendants, not unrelated fields", () => {
+    expect([...planSelectorReset(layout, "mode", "faithful", new Map([
+      ["mode.skin_detail", null],
+    ]))]).toEqual([
+      ["mode", { kind: "set", value: "faithful" }],
+      ["mode.skin_detail", { kind: "set", value: null }],
+      ["mode.optimized_for", { kind: "clear" }],
+    ]);
+  });
+
+  it("targets every descendant even when switching to the empty branch", () => {
+    expect([...planSelectorReset(layout, "mode", "creative", new Map())]).toEqual([
+      ["mode", { kind: "set", value: "creative" }],
+      ["mode.skin_detail", { kind: "clear" }],
+      ["mode.optimized_for", { kind: "clear" }],
+    ]);
+  });
+
+  it("includes inactive grandchildren in the fixed reset target set", () => {
+    const nested: readonly WidgetField[] = [{ name: "mode", branches: {
+      off: [],
+      on: [{ name: "mode.quality", branches: {
+        fast: [], precise: [{ name: "mode.quality.amount" }],
+      } }],
+    } }];
+    expect([...planSelectorReset(nested, "mode", "on", new Map([
+      ["mode.quality", "fast"],
+    ]))]).toEqual([
+      ["mode", { kind: "set", value: "on" }],
+      ["mode.quality", { kind: "set", value: "fast" }],
+      ["mode.quality.amount", { kind: "clear" }],
+    ]);
+  });
+
+  it.each([
+    ["missing child", "mode", "faithful", []],
+    ["inactive child", "mode", "creative", [["mode.skin_detail", 80]]],
+    ["unrelated field", "mode", "creative", [["after", 42]]],
+    ["selector override", "mode", "creative", [["mode", "flexible"]]],
+    ["unknown choice", "mode", "toString", []],
+    ["non-selector", "after", "creative", []],
+  ] as const)("refuses reset with %s", (_name, selector, selection, carried) => {
+    expect(() => planSelectorReset(layout, selector, selection, new Map<string, unknown>(carried))).toThrow();
   });
 });
