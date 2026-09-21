@@ -2,6 +2,15 @@
 
 Deliberate deviations from `docs/INVARIANTS.md` require explicit maintainer review before implementation. Add one row per approved deviation; do not use this log to retroactively excuse a violation. Rows marked **PROPOSED** were written by a reviewer and are NOT yet agreed: their owner and sunset date are the maintainer's to assign, and until they are, the row records the deviation without claiming it was signed off.
 
+**2026-09-21 correction to the September 20 KA-12 proposal below:** its dotted-name
+acceptance is withdrawn. Accepting `mode.skin_detail` from a catalog containing
+only `mode` made the entire document unprojectable, including after a successful
+acknowledgement. `validateWidgetName` again requires the exact catalogued name;
+the Magnific regression now checks projection and byte-identical rejection/retry.
+Only the positional overflow import/projection workaround remains. It does not
+provide value-aware indexing or complete dynamic-combo editing. The earlier row
+is retained as history, not authorization to accept unprojectable writes.
+
 | Date | Invariant ID | Why | Scope | Expiry |
 | --- | --- | --- | --- | --- |
 | YYYY-MM-DD | KA-0 / FC-0 | Decision and approver | Exact files, release, or deployment | Date or removal condition |

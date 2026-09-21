@@ -1,12 +1,9 @@
 /**
- * Repro (now fixed at this package's consuming boundary) for the in-app Cloud
- * agent's "Get Template" tool failing on the Magnific Skin Enhancer partner
- * template (Slack #comfy-agent-user-feedback, reported by Jo Zhang). Traced to
- * a real, open contract gap between the PINNED widget catalog this package
- * receives and what a node's actual `widgets_values` carries for a
- * `COMFY_DYNAMICCOMBO_V3` selection other than the schema's first option key
- * (BE-9176), which surfaced here exactly the way BE-11611 describes
- * ("widgets_values has N entries but widget_order names only M").
+ * Partial containment for a catalog gap investigated after Jo Zhang's
+ * Magnific Get Template report in Slack #comfy-agent-user-feedback.
+ * Non-default dynamic-combo selections can carry more widget values than the
+ * pinned first-key catalog names (BE-9176 / BE-11611). This is a reproducible
+ * defect, not proof that it caused the original Creative-mode fetch failure.
  *
  * `MagnificImageSkinEnhancerNode` (comfy_api_nodes/nodes_magnific.py) has a
  * `mode` dynamic combo with three options:
@@ -29,11 +26,10 @@
  *   Graph.widget_order_for_node(..., ["0", "2", "faithful", 80])
  *     == ["sharpen", "smart_grain", "mode", "mode.skin_detail"] # 4, CLI-side
  *
- * Root cause lives in the catalog/consumer contract (BE-9176) — the pinned
- * catalog acquisition (a different repo, comfy-cli, on a different release
- * cycle) cannot itself become value-aware from here — so the fix lives at
- * this package's consuming boundary instead, in the two places that used to
- * trust the pinned `widget_order` as the sole truth:
+ * The catalog/consumer contract remains incomplete (BE-9176). These tests
+ * cover preserving overflow values on import and refusing writes the reader
+ * cannot project; they do not establish the cause of the original fetch
+ * failure or complete dynamic-combo support.
  *
  *   - `createNodeMap` → `widgetsToYMap` (`src/doc.ts`) no longer throws when
  *     `widgets_values` overruns the pinned order. The overrun entries are
@@ -41,16 +37,10 @@
  *     the whole node being lost, and `project()`'s `widgetsToPositional`
  *     reads the same shape back to its original index, so the mint/project
  *     round trip still holds.
- *   - `applySetWidget` → `validateWidgetName` (`src/applier.ts`) now accepts a
- *     dotted widget name (`"mode.skin_detail"`) as a plausible dynamic-combo
- *     sub-field write when its prefix (`"mode"`) IS a catalogued widget of the
- *     node's class, rather than rejecting every such write as `unknown_widget`.
- *
- * Both are deliberately narrow, documented deviations from the package's
- * usual "reject rather than guess" catalog posture (`docs/decisions/EXCEPTIONS.md`,
- * KA-12) — the pinned catalog still cannot say whether `skin_detail` is
- * REALLY faithful mode's sub-widget, only that `mode` is a real widget of this
- * class and that a dotted name naming it is more useful accepted than refused.
+ *   - `applySetWidget` → `validateWidgetName` requires the exact name in the
+ *     catalog. PR #226 accepted any dotted name with a known prefix, but that
+ *     poisoned the document: project() could not resolve its position. A
+ *     rejection is safer than acknowledging a write that breaks every read.
  */
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
@@ -154,7 +144,7 @@ describe("Get Template materialization of Magnific Skin Enhancer (BE-9176 / BE-1
       const res = applyOps(doc, [setSkinDetail], catalog);
       // An acknowledged Y.Map write is insufficient: the host must still be
       // able to project the whole document after this attempted edit.
-      expect(project(doc, catalog).nodes[0].widgets_values).toEqual([0, 2, "faithful"]);
+      expect(project(doc, catalog).nodes[0]?.widgets_values).toEqual([0, 2, "faithful"]);
       expect(rejectedOutcome(res)?.reason.code).toBe("unknown_widget");
       expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
       expect(doc.getMap("__applied").has(setSkinDetail.op_id)).toBe(false);
@@ -174,6 +164,6 @@ describe("Get Template materialization of Magnific Skin Enhancer (BE-9176 / BE-1
       op: "set_widget", ...envelope(), node_id: 3, widget: "mode.skin_detail", value: 80,
     };
     expect(rejectedOutcome(applyOps(doc, [op], faithfulCatalog))).toBeUndefined();
-    expect(project(doc, faithfulCatalog).nodes[0].widgets_values).toEqual([3, 7, "faithful", 80]);
+    expect(project(doc, faithfulCatalog).nodes[0]?.widgets_values).toEqual([3, 7, "faithful", 80]);
   });
 });
