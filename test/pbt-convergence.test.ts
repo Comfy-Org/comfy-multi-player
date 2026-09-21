@@ -20,6 +20,14 @@ interface Scenario {
   retryMask: boolean[];
 }
 
+interface Coverage {
+  runs: number;
+  deletes: number;
+  clears: number;
+  retries: number;
+  permutations: number;
+}
+
 const scenarioArb: fc.Arbitrary<Scenario> = fc.record({
   actors: fc.integer({ min: 1, max: 4 }),
   nodes: fc.integer({ min: 2, max: 8 }),
@@ -127,14 +135,38 @@ function withRetries(ops: Op[], mask: boolean[]): Op[] {
   return [...adjacent, ...delayed];
 }
 
-function applyInBatches(doc: Y.Doc, ops: Op[], sizes: number[]): void {
+function assertNonVacuous(coverage: Coverage): void {
+  expect(coverage.runs).toBe(FC_OPTIONS.numRuns);
+  expect(coverage.deletes, "no generated operation stream included delete_node").toBeGreaterThan(0);
+  expect(coverage.clears, "no generated operation stream included clear").toBeGreaterThan(0);
+  expect(coverage.retries, "no stream passed to applyOps contained a duplicate retry").toBeGreaterThan(0);
+  expect(coverage.permutations, "no applied permutation differed from forward order").toBeGreaterThan(0);
+}
+
+function applyInBatches(doc: Y.Doc, ops: Op[], sizes: number[]): ReturnType<typeof applyOps>["outcomes"] {
   let cursor = 0;
   let batch = 0;
+  const outcomes: ReturnType<typeof applyOps>["outcomes"] = [];
   while (cursor < ops.length) {
     const size = sizes[batch++ % sizes.length]!;
     const result = applyOps(doc, ops.slice(cursor, cursor + size), catalog);
-    expect(result.failed).toBeNull();
+    expect(result.outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
+    outcomes.push(...result.outcomes);
     cursor += size;
+  }
+  return outcomes;
+}
+
+function assertRetriesAreNoOps(ops: Op[], outcomes: ReturnType<typeof applyOps>["outcomes"]): void {
+  expect(outcomes).toHaveLength(ops.length);
+  const seen = new Set<string>();
+  for (const [index, op] of ops.entries()) {
+    const outcome = outcomes[index]!;
+    expect(outcome.op_id).toBe(op.op_id);
+    if (seen.has(op.op_id)) {
+      expect(outcome.outcome, `retry occurrence ${index} for ${op.op} ${op.op_id} was not a no-op`).toBe("no-op");
+    }
+    seen.add(op.op_id);
   }
 }
 
@@ -146,22 +178,32 @@ function fork(snapshot: Uint8Array): Y.Doc {
 
 describe("property-based convergence and idempotency", () => {
   it("converges across actor counts, causal permutations, batches, and duplicate retries", () => {
+    const coverage: Coverage = { runs: 0, deletes: 0, clears: 0, retries: 0, permutations: 0 };
     fc.assert(
       fc.property(scenarioArb, (scenario) => {
         const causalPhases = phases(scenario);
         const forward = causalPhases.flat();
         const permuted = ordered(causalPhases, scenario.orderKeys);
+        const retried = withRetries(permuted, scenario.retryMask);
         const snapshot = Y.encodeStateAsUpdate(mint({ nodes: [], links: [] }, catalog));
         const a = fork(snapshot);
         const b = fork(snapshot);
 
         applyInBatches(a, forward, [forward.length || 1]);
-        applyInBatches(b, withRetries(permuted, scenario.retryMask), scenario.batchSizes);
+        const retryOutcomes = applyInBatches(b, retried, scenario.batchSizes);
+        assertRetriesAreNoOps(retried, retryOutcomes);
+
+        coverage.runs += 1;
+        if (forward.some((op) => op.op === "delete_node")) coverage.deletes += 1;
+        if (forward.some((op) => op.op === "clear")) coverage.clears += 1;
+        if (new Set(retried.map((op) => op.op_id)).size < retried.length) coverage.retries += 1;
+        if (permuted.some((op, index) => op.op_id !== forward[index]?.op_id)) coverage.permutations += 1;
 
         expect(JSON.stringify(project(b, catalog))).toBe(JSON.stringify(project(a, catalog)));
       }),
       FC_OPTIONS,
     );
+    assertNonVacuous(coverage);
   });
 
   // reset_doc is a DEFERRED op (rejected until un-deferred by amendment), so it
@@ -171,14 +213,16 @@ describe("property-based convergence and idempotency", () => {
     fc.assert(
       fc.property(scenarioArb, (scenario) => {
         const doc = mint({ nodes: [], links: [] }, catalog);
-        expect(applyOps(doc, phases(scenario).flat(), catalog).failed).toBeNull();
+        expect(
+          applyOps(doc, phases(scenario).flat(), catalog).outcomes.find((outcome) => outcome.outcome === "rejected"),
+        ).toBeUndefined();
         const before = Y.encodeStateAsUpdate(doc);
 
         const reset = { ...envelope(9999, scenario), op: "reset_doc" } as unknown as Op;
         const result = applyOps(doc, [reset], catalog);
 
-        expect(result.failed).not.toBeNull();
-        expect(result.applied).toEqual([]);
+        expect(result.outcomes.find((outcome) => outcome.outcome === "rejected")).toBeDefined();
+        expect(result.outcomes.filter((outcome) => outcome.outcome === "applied")).toEqual([]);
         expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
       }),
       FC_OPTIONS,
@@ -190,14 +234,14 @@ describe("property-based convergence and idempotency", () => {
       fc.property(scenarioArb, (scenario) => {
         const ops = phases(scenario).flat();
         const doc = mint({ nodes: [], links: [] }, catalog);
-        expect(applyOps(doc, ops, catalog).failed).toBeNull();
+        expect(applyOps(doc, ops, catalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
         const projection = JSON.stringify(project(doc, catalog));
         const update = Y.encodeStateAsUpdate(doc);
 
         const retry = applyOps(doc, ops, catalog);
-        expect(retry.failed).toBeNull();
-        expect(retry.applied).toEqual([]);
-        expect(retry.skipped).toHaveLength(ops.length);
+        expect(retry.outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
+        expect(retry.outcomes.filter((outcome) => outcome.outcome === "applied")).toEqual([]);
+        expect(retry.outcomes.filter((outcome) => outcome.outcome === "no-op").map((outcome) => outcome.op_id)).toHaveLength(ops.length);
         expect(JSON.stringify(project(doc, catalog))).toBe(projection);
         expect(Y.encodeStateAsUpdate(doc)).toEqual(update);
       }),

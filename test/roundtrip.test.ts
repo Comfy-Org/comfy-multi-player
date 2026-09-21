@@ -5,7 +5,7 @@
  * dropped passthrough keys) and loses nothing but array order.
  *
  * Also pins migrate() (schema §10): validate the doc's own schema_version on
- * every read, then an EXACT no-op at v1 that materializes no root type;
+ * every read, then an EXACT no-op at the current version that materializes no root type;
  * fail-closed on anything newer, unknown, contradictory, or unreadable.
  */
 import { describe, expect, it } from "vitest";

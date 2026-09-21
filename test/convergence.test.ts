@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 import { applyOps, mint, project, writeTarget, type Op, type WireOp } from "../src/index.js";
 import { assertNever } from "../src/exhaustive.js";
 import { canonicalize, loadCatalog, loadSession, sessionFiles } from "./helpers.js";
+import { checkGraphInvariants } from "./graph-invariant-oracle.js";
 
 const catalog = loadCatalog();
 
@@ -50,6 +51,10 @@ function touchedNodes(op: WireOp): string[] {
       return [String(op.path && op.path.length > 0 ? op.path[0] : op.node_id)];
     case "connect":
       return [String(op.from_node), String(op.to_node)];
+    case "disconnect":
+      return [String(op.to_node)];
+    case "insert_workflow":
+      return op.workflow.nodes.map((node) => String(node.id));
     case "clear":
     case "delete_node":
     case "reset_doc":
@@ -57,6 +62,8 @@ function touchedNodes(op: WireOp): string[] {
       // breakers and never calls this helper for them; listed explicitly so
       // the guard below is a guard and not a catch-all (#21).
       return [];
+    case "define_subgraph":
+      return [String(op.subgraph_id)];
     default:
       return assertNever(op, "convergence.touchedNodes");
   }
@@ -93,14 +100,31 @@ function reorderableWindows(ops: Op[]): Op[][] {
 }
 
 describe("two-doc convergence through the single-applier discipline", () => {
+  it("keeps define_subgraph and an interior edit to that definition in separate windows", () => {
+    const definitionId = "12345678-1234-4123-8123-123456789abc";
+    const define = {
+      op: "define_subgraph", op_id: "10000000000000000000000000000000", actor: "agent:test",
+      base_version: 1, stamp: [1, "agent:test"], subgraph_id: definitionId,
+      subgraph_definition: { id: definitionId, name: "One", inputs: [], outputs: [], nodes: [], links: [] },
+    } as Op;
+    const edit = {
+      op: "set_widget", op_id: "20000000000000000000000000000000", actor: "agent:test",
+      base_version: 2, stamp: [2, "agent:test"], node_id: 10, path: [definitionId, "10"],
+      widget: "value", inner_widget: "value", value: 2,
+    } as Op;
+
+    expect(reorderableWindows([define, edit])).toEqual([[define], [edit]]);
+  });
+
   for (const file of sessionFiles()) {
     const { header, ops } = loadSession(file);
     const windows = reorderableWindows(ops);
     const reorderable = windows.filter((w) => w.length > 1);
     const permuted = (variant: "reverse" | "rotate"): Op[] =>
-      windows.flatMap((w) =>
-        w.length === 1 ? w : variant === "reverse" ? [...w].reverse() : [...w.slice(1), w[0]!],
-      );
+      windows.flatMap((w) => {
+        if (w.length === 1) return w;
+        return variant === "reverse" ? [...w].reverse() : [...w.slice(1), w[0]!];
+      });
 
     it(`${file}: interleaved orders converge to byte-equal projections (${reorderable.length} windows, ${reorderable.reduce((n, w) => n + w.length, 0)} reordered ops)`, () => {
       expect(reorderable.length, "corpus must actually exercise reordering").toBeGreaterThan(0);
@@ -115,14 +139,18 @@ describe("two-doc convergence through the single-applier discipline", () => {
       };
 
       const recorded = fork();
-      expect(applyOps(recorded, ops, catalog).failed).toBeNull();
+      expect(applyOps(recorded, ops, catalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
+      const recordedViolations = checkGraphInvariants(recorded);
+      expect(recordedViolations, `graph invariant violation: ${JSON.stringify(recordedViolations)}`).toEqual([]);
       const want = JSON.stringify(canonicalize(project(recorded, catalog)));
 
       for (const variant of ["reverse", "rotate"] as const) {
         const other = fork();
         const reordered = permuted(variant);
         expect(reordered.length).toBe(ops.length);
-        expect(applyOps(other, reordered, catalog).failed).toBeNull();
+        expect(applyOps(other, reordered, catalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
+        const violations = checkGraphInvariants(other);
+        expect(violations, `graph invariant violation: ${JSON.stringify(violations)}`).toEqual([]);
         expect(
           JSON.stringify(canonicalize(project(other, catalog))),
           `${variant} order diverged`,

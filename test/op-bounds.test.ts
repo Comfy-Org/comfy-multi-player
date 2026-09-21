@@ -8,17 +8,18 @@
  */
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
+import { appliedOpIds, noOpIds, nonRejectedOutcomeCount, rejectedOutcome } from "./apply-result-helpers.js";
 import {
   applyOps,
   MAX_COLLECTION_ENTRIES,
   MAX_OP_COST,
   MAX_OPS_PER_BATCH,
+  MAX_PAYLOAD_DEPTH,
   mint,
   opBoundsRefusal,
   project,
-  type Op,
-  type WorkflowJSON,
 } from "../src/index.js";
+import type { Op, WorkflowJSON } from "../src/index.js";
 import { loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
@@ -27,7 +28,7 @@ function bytes(doc: Y.Doc): Buffer {
   return Buffer.from(Y.encodeStateAsUpdate(doc));
 }
 
-/** `n` nested objects; the outermost is depth 1, the string leaf is depth n+1. */
+/** `n` nested objects; traversal starts at outermost depth 0, so the string leaf is depth `n`. */
 function wrap(n: number): unknown {
   let value: unknown = "leaf";
   for (let i = 0; i < n; i++) value = { child: value };
@@ -57,6 +58,14 @@ describe("opBoundsRefusal boundaries", () => {
   it("counts binary payloads by byteLength", () => {
     expect(opBoundsRefusal(new Uint8Array(1024))).toBeNull();
     expect(opBoundsRefusal(new Uint8Array(MAX_OP_COST + 1))).toMatch(/cost budget/);
+  });
+
+  it(`accepts a payload whose leaf is exactly at depth ${MAX_PAYLOAD_DEPTH}`, () => {
+    expect(opBoundsRefusal(wrap(MAX_PAYLOAD_DEPTH))).toBeNull();
+  });
+
+  it(`rejects a payload whose leaf is at depth ${MAX_PAYLOAD_DEPTH + 1}`, () => {
+    expect(opBoundsRefusal(wrap(MAX_PAYLOAD_DEPTH + 1))).toMatch(/nests deeper/);
   });
 
   it("skips reference cycles (the value gates own that refusal), terminating", () => {
@@ -95,9 +104,9 @@ describe("applyOps enforces the budget before any mutation", () => {
     const doc = mint(base, catalog);
     const before = bytes(doc);
     const result = applyOps(doc, [setWidget("b".repeat(32), "x".repeat(MAX_OP_COST))], catalog);
-    expect(result.failed?.code).toBe("malformed_op");
-    expect(result.failed?.message).toMatch(/cost budget/);
-    expect(result.applied).toEqual([]);
+    expect(rejectedOutcome(result)?.reason.code).toBe("malformed_op");
+    expect(rejectedOutcome(result)?.reason.message).toMatch(/cost budget/);
+    expect(appliedOpIds(result)).toEqual([]);
     expect(bytes(doc).equals(before)).toBe(true);
     expect(() => project(doc, catalog)).not.toThrow();
   });
@@ -105,8 +114,8 @@ describe("applyOps enforces the budget before any mutation", () => {
   it("accepts a deep-but-legal value (the bound is above real payloads)", () => {
     const doc = mint(base, catalog);
     const result = applyOps(doc, [setWidget("c".repeat(32), wrap(30))], catalog);
-    expect(result.failed).toBeNull();
-    expect(result.applied_count).toBe(1);
+    expect(rejectedOutcome(result)).toBeUndefined();
+    expect(nonRejectedOutcomeCount(result)).toBe(1);
   });
 
   it(`rejects a batch of ${MAX_OPS_PER_BATCH + 1} ops before processing any`, () => {
@@ -116,11 +125,50 @@ describe("applyOps enforces the budget before any mutation", () => {
       setWidget(String(i).padStart(32, "0"), i),
     );
     const result = applyOps(doc, ops, catalog);
-    expect(result.failed?.code).toBe("malformed_op");
-    expect(result.failed?.message).toMatch(/op limit/);
-    expect(result.applied).toEqual([]);
-    expect(result.skipped).toEqual([]);
+    expect(rejectedOutcome(result)?.reason.code).toBe("malformed_op");
+    expect(rejectedOutcome(result)?.reason.message).toMatch(/op limit/);
+    expect(appliedOpIds(result)).toEqual([]);
+    expect(noOpIds(result)).toEqual([]);
     expect(bytes(doc).equals(before)).toBe(true);
+  });
+
+  it.each([
+    { name: "cost", value: "x".repeat(MAX_OP_COST), code: "malformed_op", message: /cost budget/ },
+    { name: "breadth", value: new Array(MAX_COLLECTION_ENTRIES + 1).fill(0), code: "malformed_op", message: /entry limit/ },
+    { name: "depth", value: wrap(MAX_PAYLOAD_DEPTH + 1), code: "payload_too_deep", message: /nests deeper/ },
+  ])("rejects decoded JSON over the $name limit and accepts a corrected retry", ({ value, code, message }) => {
+    const doc = mint(base, catalog);
+    const before = bytes(doc);
+    const opId = "e".repeat(32);
+    const trailingId = "f".repeat(32);
+    // Only inert test fixtures are encoded here. A host receives JSON text;
+    // stringify is not a sanitizer for caller-created getters or Proxies.
+    const wireText = JSON.stringify([setWidget(opId, value), setWidget(trailingId, 99)]);
+    const decoded: Op[] = JSON.parse(wireText);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = applyOps(doc, decoded, catalog);
+      expect(result.outcomes).toEqual([{
+        op_id: opId,
+        outcome: "rejected",
+        reason: { code, message: expect.stringMatching(message) },
+      }, {
+        op_id: trailingId,
+        outcome: "rejected",
+        reason: { code: "batch_aborted", message: expect.any(String) },
+      }]);
+      expect(result.ops_seen).toBe(0);
+      expect(doc.getMap("__applied").has(trailingId)).toBe(false);
+      expect(bytes(doc)).toEqual(before);
+    }
+
+    const corrected: Op[] = JSON.parse(JSON.stringify([setWidget(opId, 42)]));
+    const accepted = applyOps(doc, corrected, catalog);
+    expect(accepted.outcomes).toEqual([{ op_id: opId, outcome: "applied" }]);
+    expect(accepted.ops_seen).toBe(1);
+    expect(project(doc, catalog).nodes[0]!.widgets_values).toEqual([null, null, 42]);
+    const applied = bytes(doc);
+    expect(applyOps(doc, corrected, catalog).outcomes).toEqual([{ op_id: opId, outcome: "no-op" }]);
+    expect(bytes(doc)).toEqual(applied);
   });
 
   it(`accepts a batch of exactly ${MAX_OPS_PER_BATCH} ops`, () => {
@@ -129,7 +177,7 @@ describe("applyOps enforces the budget before any mutation", () => {
       setWidget(String(i).padStart(32, "0"), i),
     );
     const result = applyOps(doc, ops, catalog);
-    expect(result.failed).toBeNull();
-    expect(result.applied_count).toBe(MAX_OPS_PER_BATCH);
+    expect(rejectedOutcome(result)).toBeUndefined();
+    expect(nonRejectedOutcomeCount(result)).toBe(MAX_OPS_PER_BATCH);
   });
 });

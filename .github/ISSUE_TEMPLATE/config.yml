@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security report
+    url: mailto:support@comfy.org
+    about: Report package vulnerabilities privately to Comfy support. Include the package name and affected version; do not open a public issue.

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import {
   applyOps,
@@ -28,6 +28,7 @@ const catalog: WidgetCatalog = {
 };
 
 let sequence = 0;
+beforeEach(() => { sequence = 0; });
 const envelope = (actor = "actor") => ({
   op_id: String(++sequence).padStart(32, "0"),
   actor,
@@ -83,7 +84,7 @@ describe("W8 applier edge goldens (KA-4)", () => {
     const grows = [10, 11, 12].map((id) =>
       growConnect(id, 1, { name: "images.hero", type: "X" }),
     );
-    expect(applyOps(doc, grows, catalog).failed).toBeNull();
+    expect(applyOps(doc, grows, catalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
 
     const sink = project(doc, catalog).nodes.find((node) => node.id === 3)!;
     expect(sink.inputs).toEqual([
@@ -103,7 +104,7 @@ describe("W8 applier edge goldens (KA-4)", () => {
       node_id: 1,
       removed_links: [20],
     };
-    expect(applyOps(doc, [link, del], catalog).failed).toBeNull();
+    expect(applyOps(doc, [link, del], catalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
     expect(project(doc, catalog)).toMatchObject({
       links: [],
       nodes: [
@@ -127,10 +128,14 @@ describe("W8 applier edge goldens (KA-4)", () => {
       [oldLink, del, replacement],
     ].map((ops) => {
       const doc = mint(base(), catalog);
-      expect(applyOps(doc, ops, catalog).failed).toBeNull();
+      expect(applyOps(doc, ops, catalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
 
       const beforeRetry = Buffer.from(Y.encodeStateAsUpdate(doc));
-      expect(applyOps(doc, [replacement], catalog).skipped).toEqual([replacement.op_id]);
+      expect(
+        applyOps(doc, [replacement], catalog).outcomes
+          .filter((outcome) => outcome.outcome === "no-op")
+          .map((outcome) => outcome.op_id),
+      ).toEqual([replacement.op_id]);
       expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(beforeRetry)).toBe(true);
       return project(doc, catalog);
     });
@@ -157,8 +162,9 @@ describe("W8 applier edge goldens (KA-4)", () => {
     const trailing = connect(51, 2);
 
     const result = applyOps(doc, [malformed, trailing], catalog);
-    expect(result.failed).toMatchObject({ index: 0, code: "input_slot_missing" });
-    expect(result.applied).toEqual([]);
+    expect(result.outcomes.findIndex((outcome) => outcome.outcome === "rejected")).toBe(0);
+    expect(result.outcomes.find((outcome) => outcome.outcome === "rejected")?.reason.code).toBe("input_slot_missing");
+    expect(result.outcomes.filter((outcome) => outcome.outcome === "applied")).toEqual([]);
     expect(
       Buffer.from(Y.encodeStateAsUpdate(doc)).equals(beforeBytes),
       "encodeStateAsUpdate must be byte-identical",
@@ -192,18 +198,18 @@ describe("W8 stamp edge goldens (KA-2, KA-4, FC-7)", () => {
       value: 1,
     } as unknown as WireOp;
     expect(stampKey(unstamped)).toEqual([7, "fallback", "a".repeat(32)]);
-    expect(writeTarget(unstamped)).toEqual(["widget", "4", "value"]);
+    expect(writeTarget(unstamped)).toEqual(["widget", "4", "0", "value"]);
     // Both shapes below are ones the `SetWidgetOp` union no longer permits
     // (#17): an EMPTY path with an `inner_widget`, and a path whose segments
     // are not all strings. `writeTarget` is public and hosts feed it wire
     // data, so its tolerant handling of them is pinned unchanged — the cast is
     // what marks them as arriving from outside this repo's types.
     expect(writeTarget({ ...unstamped, path: [], inner_widget: "inner" } as unknown as WireOp)).toEqual([
-      "widget", "4", "value",
+      "widget", "4", "0", "value",
     ]);
     expect(
       writeTarget({ ...unstamped, path: [4, "5"], inner_widget: "inner" } as unknown as WireOp),
-    ).toEqual(["widget", ["4", "5"], "inner"]);
+    ).toEqual(["widget", ["4", "5"], "0", "inner"]);
     expect(writeTarget(connect(40, 1))).toEqual(["input", "3", 0]);
     expect(
       writeTarget(growConnect(41, 1, { name: "images.hero", type: "X" })),

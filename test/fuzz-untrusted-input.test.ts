@@ -1,11 +1,8 @@
 /**
  * Fuzz taxonomy: untrusted op envelopes and node payloads (#13, #14).
  *
- * The saved corpus below carries two kinds of case. `#13` cases are live
- * assertions: the untrusted-node-input guard has landed, so those payloads are
- * rejected before any mutation. `#14` cases stay pinned with `it.fails` — the
- * payload size/depth/cost bounds do not exist yet, and the pin is what tells us
- * the day they do.
+ * The saved corpus below carries live assertions for issues #13 and #14. Those
+ * guards reject adversarial node payloads before any mutation.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -13,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import * as fc from "fast-check";
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
+import { appliedMap } from "../src/doc.js";
 import {
   DEFERRED_OPS,
   FROZEN_OPS,
@@ -60,8 +58,8 @@ describe("fuzz: malformed and adversarial op envelopes", () => {
         expect(() => {
           result = applyOps(doc, [input as Op], catalog);
         }).not.toThrow();
-        expect(result?.failed).not.toBeNull();
-        expect(result?.applied).toEqual([]);
+        expect(result?.outcomes.some((o) => o.outcome === "rejected")).toBe(true);
+        expect(result?.outcomes.filter((o) => o.outcome === "applied").map((o) => o.op_id)).toEqual([]);
         expect(bytes(doc).equals(before)).toBe(true);
       }),
       FC_OPTIONS,
@@ -70,6 +68,7 @@ describe("fuzz: malformed and adversarial op envelopes", () => {
 
   it("project never throws after accepted add_node ops with JSON payloads, nulls, and non-ASCII actors", () => {
     const valueArb = fc.jsonValue({ maxDepth: 5 });
+    let projectedRuns = 0;
     fc.assert(
       fc.property(fc.string({ minLength: 1 }), valueArb, fc.integer({ min: 1, max: 1_000_000 }), (actor, value, id) => {
         const doc = mint(emptyWorkflow, catalog);
@@ -86,10 +85,17 @@ describe("fuzz: malformed and adversarial op envelopes", () => {
         } as unknown as Op;
 
         const result = applyOps(doc, [op], catalog);
-        if (result.failed === null) expect(() => project(doc, catalog)).not.toThrow();
+        if (!result.outcomes.some((o) => o.outcome === "rejected")) {
+          projectedRuns++;
+          expect(result.outcomes[0]).toMatchObject({ outcome: "applied", op_id: op.op_id });
+          const projectedNode = project(doc, catalog).nodes.find((node) => node.id === id);
+          expect(projectedNode).toMatchObject({ id, type: "KSampler" });
+          expect(projectedNode?.fuzz_payload).toEqual(value);
+        }
       }),
       FC_OPTIONS,
     );
+    expect(projectedRuns).toBeGreaterThan(0);
   });
 
   it("project never throws after accepted NaN/Infinity widget values", () => {
@@ -110,7 +116,7 @@ describe("fuzz: malformed and adversarial op envelopes", () => {
           widget: "steps",
           value,
         } as Op;
-        expect(applyOps(doc, [op], catalog).failed).toBeNull();
+        expect(applyOps(doc, [op], catalog).outcomes.some((o) => o.outcome === "rejected")).toBe(false);
         expect(() => project(doc, catalog)).not.toThrow();
       }),
       FC_OPTIONS,
@@ -133,7 +139,7 @@ describe("fuzz: malformed and adversarial op envelopes", () => {
       widget: "steps",
       value: 20,
     } as Op;
-    expect(applyOps(doc, [first], catalog).failed).toBeNull();
+    expect(applyOps(doc, [first], catalog).outcomes.some((o) => o.outcome === "rejected")).toBe(false);
     const before = bytes(doc);
     const retry = { ...first, actor: "攻撃者\u0000", value: new Array(10_000).fill(null) } as Op;
 
@@ -144,8 +150,8 @@ describe("fuzz: malformed and adversarial op envelopes", () => {
     // A11's whole-envelope size gate now precedes A8's reuse comparison, so
     // this deliberately oversized retry is rejected as malformed first.
     const result = applyOps(doc, [retry], catalog);
-    expect(result.failed).toMatchObject({ index: 0, code: "malformed_op" });
-    expect(result.skipped).toEqual([]);
+    expect(result.outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "malformed_op" } });
+    expect(result.outcomes.filter((o) => o.outcome === "no-op").map((o) => o.op_id)).toEqual([]);
     expect(bytes(doc).equals(before)).toBe(true);
     expect(() => project(doc, catalog)).not.toThrow();
   });
@@ -166,7 +172,7 @@ describe("fuzz: malformed and adversarial op envelopes", () => {
       widget: "steps",
       value: 20,
     } as Op;
-    expect(applyOps(doc, [op], catalog).failed).toBeNull();
+    expect(applyOps(doc, [op], catalog).outcomes.some((o) => o.outcome === "rejected")).toBe(false);
     const before = bytes(doc);
 
     // Key order is not part of op identity: the canonical form sorts keys at
@@ -175,8 +181,8 @@ describe("fuzz: malformed and adversarial op envelopes", () => {
       Object.entries(op as unknown as Record<string, unknown>).reverse(),
     ) as unknown as Op;
     const result = applyOps(doc, [reordered], catalog);
-    expect(result.failed).toBeNull();
-    expect(result.skipped).toEqual([op.op_id]);
+    expect(result.outcomes.some((o) => o.outcome === "rejected")).toBe(false);
+    expect(result.outcomes.filter((o) => o.outcome === "no-op").map((o) => o.op_id)).toEqual([op.op_id]);
     expect(bytes(doc).equals(before)).toBe(true);
   });
 });
@@ -199,24 +205,48 @@ describe("saved untrusted-input regression corpus", () => {
       nodes: [{ id: 1, type: "KSampler", widgets_values: [] }],
       links: [],
     };
+    const trailing = {
+      op: "add_node",
+      op_id: "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
+      actor: "corpus-control",
+      base_version: 1,
+      stamp: [1, "corpus-control"],
+      node_id: 2,
+      class_type: "KSampler",
+      pos: [0, 0],
+      node: { id: 2, type: "KSampler", widgets_values: [], fuzz_payload: "trailing-control" },
+    } satisfies Op;
+
+    const control = mint(base, catalog);
+    const controlResult = applyOps(control, [trailing], catalog);
+    expect(controlResult.outcomes[0]).toMatchObject({ outcome: "applied", op_id: trailing.op_id });
+    expect(project(control, catalog).nodes.find((node) => node.id === 2)).toMatchObject({
+      id: 2,
+      type: "KSampler",
+      fuzz_payload: "trailing-control",
+    });
+
     const doc = mint(base, catalog);
     const before = bytes(doc);
-    const result = applyOps(doc, [entry.op], catalog);
+    const rootNamesBefore = [...doc.share.keys()].sort();
+    const result = applyOps(doc, [entry.op, trailing], catalog);
 
-    expect(result.failed).not.toBeNull();
-    expect(result.applied).toEqual([]);
+    expect(result.outcomes[0]).toMatchObject({ outcome: "rejected", op_id: entry.op.op_id });
+    expect(result.outcomes[1]).toMatchObject({
+      outcome: "rejected",
+      op_id: trailing.op_id,
+      reason: { code: "batch_aborted" },
+    });
+    expect(result.outcomes.filter((o) => o.outcome === "applied").map((o) => o.op_id)).toEqual([]);
+    expect(appliedMap(doc).has(entry.op.op_id)).toBe(false);
+    expect(appliedMap(doc).has(trailing.op_id)).toBe(false);
     expect(bytes(doc).equals(before)).toBe(true);
+    expect([...doc.share.keys()].sort()).toEqual(rootNamesBefore);
+    expect(project(doc, catalog).nodes.some((node) => node.id === 2)).toBe(false);
     expect(() => project(doc, catalog)).not.toThrow();
   }
 
   for (const entry of corpus) {
-    if (entry.issue === 13) {
-      // #13 guard landed: the applier rejects these payloads before any write.
-      it(`#13: ${entry.name} is rejected before mutation`, () => {
-        rejectedBeforeMutation(entry);
-      });
-      continue;
-    }
     it(`#${entry.issue}: ${entry.name} is rejected before mutation`, () => {
       rejectedBeforeMutation(entry);
     });
@@ -244,8 +274,8 @@ describe("saved untrusted-input regression corpus", () => {
     } as unknown as Op;
 
     const result = applyOps(doc, [op], catalog);
-    expect(result.failed).not.toBeNull();
-    expect(result.applied).toEqual([]);
+    expect(result.outcomes.some((o) => o.outcome === "rejected")).toBe(true);
+    expect(result.outcomes.filter((o) => o.outcome === "applied").map((o) => o.op_id)).toEqual([]);
     expect(bytes(doc).equals(before)).toBe(true);
   });
 
@@ -274,8 +304,8 @@ describe("saved untrusted-input regression corpus", () => {
     } as unknown as Op;
 
     const result = applyOps(doc, [op], catalog);
-    expect(result.failed).not.toBeNull();
-    expect(result.applied).toEqual([]);
+    expect(result.outcomes.some((o) => o.outcome === "rejected")).toBe(true);
+    expect(result.outcomes.filter((o) => o.outcome === "applied").map((o) => o.op_id)).toEqual([]);
     expect(bytes(doc).equals(before)).toBe(true);
   });
 });

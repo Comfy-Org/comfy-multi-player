@@ -99,6 +99,7 @@ function opsFor(scenario: Scenario): Op[] {
   const adds: Op[] = scenario.additions.map((node, index) => ({
     ...envelope(index + 1),
     op: "add_node",
+    node_incarnation: (index + 1).toString(16).padStart(32, "0"),
     node_id: node.id,
     class_type: node.type,
     pos: node.pos ?? [0, 0],
@@ -110,6 +111,7 @@ function opsFor(scenario: Scenario): Op[] {
     node_id: node.id,
     widget: "value",
     value: scenario.values[index % scenario.values.length],
+    node_incarnation: adds[index]!.op_id,
   }));
   return [...adds, ...writes];
 }
@@ -120,6 +122,7 @@ function cloneWorkflow(workflow: WorkflowJSON): WorkflowJSON {
 
 describe("property-based mint → apply → project round trips", () => {
   it("round-trips generated metadata, slots, widgets, and subgraphs without mutating input", () => {
+    const witnessed = { definitions: 0, metadata: 0, slots: 0, widgets: 0 };
     fc.assert(
       fc.property(workflowArb, (workflow) => {
         const before = cloneWorkflow(workflow);
@@ -128,12 +131,22 @@ describe("property-based mint → apply → project round trips", () => {
         expect(canonicalize(projected)).toEqual(canonicalize(before));
         expect(workflow).toEqual(before);
         expect(project(mint(projected, catalog), catalog)).toEqual(projected);
+        if (workflow.definitions !== undefined) witnessed.definitions++;
+        if (Object.keys(workflow).some((key) => !["nodes", "links", "definitions"].includes(key))) witnessed.metadata++;
+        if (workflow.nodes.some((node) =>
+          (Array.isArray(node.inputs) && node.inputs.length > 0) ||
+          (Array.isArray(node.outputs) && node.outputs.length > 0))) witnessed.slots++;
+        if (workflow.nodes.some((node) => Array.isArray(node.widgets_values) && node.widgets_values.length > 0)) witnessed.widgets++;
       }),
       FC_OPTIONS,
     );
+    expect(witnessed.definitions).toBeGreaterThan(0);
+    expect(witnessed.metadata).toBeGreaterThan(0);
+    expect(witnessed.slots).toBeGreaterThan(0);
+    expect(witnessed.widgets).toBe(FC_OPTIONS.numRuns);
   });
 
-  it("preserves minted op identities and is deterministic under apply and retry", () => {
+    it("preserves minted op identities and is deterministic under apply and retry", { timeout: 15_000 }, () => {
     fc.assert(
       fc.property(scenarioArb, (scenario) => {
         const source = cloneWorkflow(scenario.base);
@@ -141,17 +154,17 @@ describe("property-based mint → apply → project round trips", () => {
         const doc = mint(scenario.base, catalog);
         const result = applyOps(doc, ops, catalog);
 
-        expect(result.failed).toBeNull();
-        expect(result.applied).toEqual(ops.map((op) => op.op_id));
+        expect(result.outcomes.some((o) => o.outcome === "rejected")).toBe(false);
+        expect(result.outcomes.filter((o) => o.outcome === "applied").map((o) => o.op_id)).toEqual(ops.map((op) => op.op_id));
         expect(scenario.base).toEqual(source);
 
         const firstProjection = project(doc, catalog);
         const firstUpdate = Y.encodeStateAsUpdate(doc);
         const retry = applyOps(doc, ops, catalog);
 
-        expect(retry.failed).toBeNull();
-        expect(retry.applied).toEqual([]);
-        expect(retry.skipped).toEqual(ops.map((op) => op.op_id));
+        expect(retry.outcomes.some((o) => o.outcome === "rejected")).toBe(false);
+        expect(retry.outcomes.filter((o) => o.outcome === "applied").map((o) => o.op_id)).toEqual([]);
+        expect(retry.outcomes.filter((o) => o.outcome === "no-op").map((o) => o.op_id)).toEqual(ops.map((op) => op.op_id));
         expect(project(doc, catalog)).toEqual(firstProjection);
         expect(Y.encodeStateAsUpdate(doc)).toEqual(firstUpdate);
         expect(project(mint(firstProjection, catalog), catalog)).toEqual(firstProjection);

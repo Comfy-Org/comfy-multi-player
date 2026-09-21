@@ -22,11 +22,11 @@ npm run check:profile-claims
 npm run check:coderabbit
 npm run verify:corpus
 npm test
+npm run test:exhaustive
 ```
 
-Run all nine commands before review — that is the set CI runs, and the list was
-short by three (`check:pins`, `check:profile-claims`, `verify:corpus`) from the
-day each of those gates landed. `check:coderabbit` regenerates `.coderabbit.yaml`'s sentinel-delimited region from the
+Run these ten commands before review, including both CI test tiers.
+`check:coderabbit` regenerates `.coderabbit.yaml`'s sentinel-delimited region from the
 `<!-- coderabbit-instructions -->` blocks in `.agents/checks/*.md` and fails on any byte
 difference — including inside the generated header comments, which are emitted too. If it
 fails, edit the block in the owning profile and run `npm run gen:coderabbit`, never the YAML
@@ -36,7 +36,17 @@ fewer source blocks than its floor — and `2` is never a pass. The purity gate 
 
 Mutation testing (`npm run test:mutation`, nightly in `mutation.yml`) is only comparable across runs because `stryker.config.mjs` pins `timeoutMS`, `timeoutFactor`, `concurrency` and `coverageAnalysis`. Stryker scores a `Timeout` as killed, so with those unpinned the score rises with host load. Do not unpin them, and do not quote a score without running `npm run check:mutation-report` — it re-derives the number, reports `Timeout` separately, and exits 2 INCONCLUSIVE when timeouts are material.
 
+CI deliberately omits a raw line or branch coverage floor. The mutation threshold plus the survivor and no-coverage inventory is the primary coverage-quality gate; adding a line/branch floor would measure execution breadth without proving assertions catch behavioral changes. This is a gate choice, not an invariant exception, so it belongs here and in `docs/mutation-testing.md`, not in `docs/decisions/EXCEPTIONS.md`.
+
 Reviewer-agent concern profiles live in `.agents/checks/`. Apply every relevant profile to semantic, export, dependency, catalog, and replication-boundary changes.
+
+## Permutation and property testing
+
+Use permutation-exhaustive tests when a concurrency surface has a small, explicitly bounded domain: enumerate every legal arrival order and every selected equivalence-class value, assert the exact case count, and include the full case dimensions in assertion messages so a failure is directly reproducible. Prefer this for two-writer register contention, normalized-ID collisions, batch-boundary choices, and short causal interleavings.
+
+Use deterministic `fast-check` properties when the Cartesian product is unbounded or exceeds the review budget. Every property suite must pin both `seed` and `numRuns`; preserve fast-check's shrunk counterexample output, and add vacuity guards proving that the generated run exercised the contested behavior. A fixed seed makes CI replayable, not exhaustive, so describe the bounded domain or sampled coverage honestly.
+
+Keep a new suite below 20,000 evaluated cases and eight minutes in the normal full test run. Do the product math before implementation and record the dimensions in the test or PR. If exhaustive coverage exceeds either cap, reduce the domain by named equivalence classes or switch to fixed-seed property sampling. Never imply that a bounded domain proves every possible workflow or op stream.
 
 ## Review comments
 

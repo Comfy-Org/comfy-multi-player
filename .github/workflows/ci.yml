@@ -13,15 +13,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  permutation-exhaustive:
+    name: exhaustive op-pool permutations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Exhaustive permutations
+        run: npm run test:exhaustive
+
   ci:
     name: build / purity / test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -35,8 +51,20 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Verify package contents
+        run: npm run verify:package
+
+      - name: Type-check gate
+        run: npm run typecheck
+
+      - name: Lint gate
+        run: npm run lint
+
       - name: Purity gate
         run: npm run check:purity
+
+      - name: Statelessness gate
+        run: npm run check:stateless
 
       - name: Profile-claim staleness gate
         run: npm run check:profile-claims
@@ -63,4 +91,8 @@ jobs:
         run: npm run check:pins
 
       - name: Tests
-        run: npm test
+        # check:stateless already runs this behavioral probe explicitly.
+        run: npm test -- --exclude test/stateless.test.ts
+
+      - name: Clock ordering matrix
+        run: npm run test:clock-matrix

@@ -2,7 +2,8 @@
  * @comfyorg/comfy-multi-player — shared workflow-document package.
  *
  * One implementation of op→doc semantics, used identically by the browser
- * and the server doc host. The op vocabulary is frozen at six kinds; the
+ * and the server doc host. The public vocabulary declares nine operation
+ * kinds: eight implemented kinds plus the deferred `reset_doc` kind. The
  * normative contract is comfy-cli's `docs/op-vocabulary-v1.md` and the stamp
  * shapes minted by `comfy_cli/workflow_ops.py` (`_new_op`), both pinned at
  * comfy-cli commit `7e732242d971daf0d2d30f22f997abfacd78986e` — by SHA and
@@ -18,6 +19,8 @@
  *    snapshot every replica forks from — schema §9);
  *  - `applyOps(doc, ops, catalog?)` — idempotent, LWW-gated, abort-remainder
  *    op application (schema §2–§4);
+ *  - `inspectOps(ops)` — pure validation and canonical bytes/digest/stamp
+ *    extraction for storage preflight (ADR-022);
  *  - `project(doc, catalog)` — canonical workflow JSON projection (schema §7),
  *    fail-closed on a schema this package cannot read (KA-11);
  *  - `migrate(doc, fromVersion)` — layout versioning, fail-closed (schema §10);
@@ -28,6 +31,8 @@
  *    accepts but does not preserve across encode → decode;
  *  - stamp machinery (`compareStampKeys`, `stampKey`, `writeTarget`) for
  *    hosts that need conflict identity or watermark bookkeeping;
+ *  - evidence-only collaboration trace declarations and
+ *    `assertCollabReplayTraceV1` for fail-closed trace reads;
  *  - the ADR-004 follower read surface (`nodesMap`, `linksMap`,
  *    `OPAQUE_WIDGETS_KEY`) for consuming the wire layout without applying ops;
  *  - the safer snapshot surface (`readGraph`, `readMeta`, `docCatalogPin`,
@@ -44,8 +49,18 @@
  */
 
 export * from "./types.js";
+export * from "./event-schema.js";
 export * from "./stamps.js";
 export * from "./limits.js";
+export * from "./clock.js";
+export {
+  CMP_EVENT_SCHEMA_VERSION,
+  type CmpCallContext,
+  type CmpEvent,
+  type CmpEventSink,
+  type CmpEventType,
+} from "./events.js";
+export * from "./collab-trace.js";
 /**
  * ADR-004 follower read-surface. These helpers expose the established wire
  * layout only so the frontend follower can consume host updates. They are
@@ -59,7 +74,7 @@ export {
   nodesMap,
   type EncodingLoss,
 } from "./doc.js";
-export { applyOps } from "./applier.js";
+export { applyOps, inspectOps } from "./applier.js";
 export { project } from "./project.js";
 export { mint } from "./mint.js";
 export { migrate } from "./migrate.js";
@@ -70,6 +85,7 @@ export {
   hasAppliedOp,
   hasNode,
   readGraph,
+  readLinkState,
   readMeta,
   readStamps,
   type GraphSnapshot,

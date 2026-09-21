@@ -10,7 +10,12 @@
  *      missing interior names project as null (Python pads with None), and
  *      the array length is 1 + the highest widget index present. A node stored
  *      opaquely (`__widgets_opaque` — a class the catalog does not know, e.g.
- *      the frontend-only `Note`/`MarkdownNote`) emits its array verbatim;
+ *      the frontend-only `Note`/`MarkdownNote`) emits its array verbatim. An
+ *      entry `mint()` named past `widget_order`'s length (BE-9176: a
+ *      dynamic-combo selection the value-blind pinned catalog cannot
+ *      describe, `doc.ts`'s `overflowWidgetName`) projects back to its
+ *      original positional index rather than throwing, so `mint()`'s round
+ *      trip promise holds for this case too;
  *   3. numbers serialize as JS numbers;
  *   4. `outputs[].links: null` preserved verbatim; an empty Y.Array → `[]`;
  *   5. meta passthrough keys project unmodified (schema §6). Doc-internal
@@ -19,8 +24,8 @@
  *
  * Subgraph definitions project as `{...extra, subgraphs: [...]}` with
  * definitions sorted by id and each definition's interior nodes/links in
- * mint order (`node_order`/`link_order` — interior order is static in v1
- * because only `set_widget` is subgraph-scoped).
+ * mint order (`node_order`/`link_order`); links added by semantic ops follow
+ * imported links in deterministic stamp order.
  */
 
 import * as Y from "yjs";
@@ -30,18 +35,30 @@ import {
   linksMap,
   metaMap,
   nodesMap,
+  overflowWidgetName,
+  parseOverflowWidgetName,
   widgetStorageOf,
 } from "./doc.js";
 import { assertNever } from "./exhaustive.js";
+import { projectInteriorLinkOrder } from "./interior-link-order.js";
 import { assertReadableSchema } from "./schema-version.js";
-import type { WidgetCatalog, WorkflowJSON, WorkflowNode } from "./types.js";
+import { NODE_INCARNATION_KEY, type WidgetCatalog, type WorkflowJSON, type WorkflowNode } from "./types.js";
 
 /** Sorted-by-id comparator: numeric when both ids are numbers, else string order. */
 function idCompare(a: unknown, b: unknown): number {
   if (typeof a === "number" && typeof b === "number") return a - b;
   const sa = String(a);
   const sb = String(b);
-  return sa < sb ? -1 : sa > sb ? 1 : 0;
+  if (sa < sb) return -1;
+  return sa > sb ? 1 : 0;
+}
+
+/** Source-output references are link identities, whose canonical order is numeric. */
+function linkIdCompare(a: unknown, b: unknown): number {
+  const na = Number(a);
+  const nb = Number(b);
+  if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
+  return idCompare(a, b);
 }
 
 function yMapToObject(m: Y.Map<unknown>): Record<string, unknown> {
@@ -56,6 +73,35 @@ function yMapToObject(m: Y.Map<unknown>): Record<string, unknown> {
 function projectSlot(slot: unknown): unknown {
   if (!(slot instanceof Y.Map)) return structuredClone(slot);
   return yMapToObject(slot);
+}
+
+/** Output slot projection additionally canonicalizes its set-valued source refs. */
+function projectOutputSlot(slot: unknown): unknown {
+  const out = projectSlot(slot);
+  if (typeof out !== "object" || out === null) return out;
+  const record = out as Record<string, unknown>;
+  if (Array.isArray(record["links"])) {
+    record["links"] = [...record["links"]].sort(linkIdCompare);
+  }
+  return record;
+}
+
+/**
+ * Resolve a stored widget name back to its positional index: either its
+ * literal spot in the pinned `widget_order`, or — for an entry `mint()`
+ * stored past that order's length (BE-9176: a dynamic-combo selection the
+ * value-blind pinned catalog cannot name) — the index recovered from its
+ * {@link overflowWidgetName} shape. A placeholder name is only trusted for
+ * the actual overflow region (`>= order.length`): an index inside the pinned
+ * order is always resolved by the real catalog name at that position, never
+ * by a coincidentally-shaped one, so a genuine `widget_order` mismatch there
+ * still throws exactly as before. Returns `-1` when neither resolves.
+ */
+function positionalIndexOf(order: readonly string[], name: string): number {
+  const known = order.indexOf(name);
+  if (known >= 0) return known;
+  const overflow = parseOverflowWidgetName(name);
+  return overflow !== null && overflow >= order.length ? overflow : -1;
 }
 
 /** Name-keyed widgets map → positional widgets_values (§7 rule 2). */
@@ -74,7 +120,7 @@ function widgetsToPositional(
   const order = entry.widget_order;
   let max = -1;
   widgets.forEach((_v, name) => {
-    const i = order.indexOf(name);
+    const i = positionalIndexOf(order, name);
     if (i < 0) {
       throw new TypeError(`project: widget '${name}' is not in widget_order for ${nodeType}`);
     }
@@ -82,7 +128,7 @@ function widgetsToPositional(
   });
   const out: unknown[] = [];
   for (let i = 0; i <= max; i++) {
-    const name = order[i]!;
+    const name = order[i] ?? overflowWidgetName(i);
     out.push(widgets.has(name) ? structuredClone(widgets.get(name)) : null);
   }
   return out;
@@ -118,12 +164,15 @@ function projectNode(ym: Y.Map<unknown>, catalog: WidgetCatalog): WorkflowNode {
   const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   const nodeType = String(ym.get("type") ?? "");
   ym.forEach((v, k) => {
-    if (k === OPAQUE_WIDGETS_KEY || k === "widgets") {
+    if (k === NODE_INCARNATION_KEY) {
+      return;
+    } else if (k === OPAQUE_WIDGETS_KEY || k === "widgets") {
       // Both storage keys project to the same workflow key; which one is
       // authoritative is `widgetStorageOf`'s decision, not iteration order's.
       out["widgets_values"] = projectWidgets(nodeType, ym, catalog);
     } else if (v instanceof Y.Array) {
-      out[k] = v.toArray().map((slot) => projectSlot(slot));
+      const projector = k === "outputs" ? projectOutputSlot : projectSlot;
+      out[k] = v.toArray().map((slot) => projector(slot));
     } else if (v instanceof Y.Map) {
       out[k] = yMapToObject(v);
     } else {
@@ -139,9 +188,11 @@ function projectNode(ym: Y.Map<unknown>, catalog: WidgetCatalog): WorkflowNode {
  * ## The gate is exactly as wide as "projecting this entry would throw"
  *
  * Two conditions, and no more. An entry that is not a `Y.Map` cannot be
- * iterated by {@link projectNode}; an entry whose `widgets` slot is not a
- * `Y.Map` cannot be walked by {@link widgetsToPositional}. Everything else a
- * node can carry projects verbatim under schema §1.1's passthrough rule — a
+ * iterated by {@link projectNode}; an entry whose authoritative named
+ * `widgets` slot is not a `Y.Map` cannot be walked by
+ * {@link widgetsToPositional}. Opaque storage remains authoritative when stale
+ * named storage is malformed. Everything else a node can carry projects
+ * verbatim under schema §1.1's passthrough rule — a
  * `flags` that is not an object, an `inputs` that is not an array, a blank or
  * absent `type`, an `id` that disagrees with its map key. Those are odd, but
  * they are READABLE, and this function must not have an opinion about them.
@@ -187,15 +238,21 @@ function projectNode(ym: Y.Map<unknown>, catalog: WidgetCatalog): WorkflowNode {
  */
 function tryProjectNode(value: unknown, catalog: WidgetCatalog): WorkflowNode | null {
   if (!(value instanceof Y.Map)) return null;
-  if (value.has("widgets") && !(value.get("widgets") instanceof Y.Map)) return null;
+  if (
+    widgetStorageOf(value) === "named" &&
+    value.has("widgets") &&
+    !(value.get("widgets") instanceof Y.Map)
+  ) {
+    return null;
+  }
   return projectNode(value, catalog);
 }
 
-/** Definition Y.Map → subgraph definition JSON, interior nodes/links in mint order. */
-function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): Record<string, unknown> {
+/** Definition Y.Map → subgraph JSON, preserving mint order before deterministic additions. */
+export function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): Record<string, unknown> {
   const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   dm.forEach((v, k) => {
-    if (k === "node_order" || k === "link_order") return; // internal order registers
+    if (k === "node_order" || k === "link_order" || k.startsWith("__")) return; // internal registers
     if (k === "nodes" && v instanceof Y.Map) {
       const order = (dm.get("node_order") as string[] | undefined) ?? [...v.keys()].sort();
       out[k] = order
@@ -203,12 +260,41 @@ function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): Record<s
         .map((id) => tryProjectNode(v.get(id), catalog))
         .filter((node): node is WorkflowNode => node !== null);
     } else if (k === "links" && v instanceof Y.Map) {
-      const order = (dm.get("link_order") as string[] | undefined) ?? [...v.keys()].sort();
+      const storedOrder = dm.get("link_order");
+      const order = Array.isArray(storedOrder)
+        ? projectInteriorLinkOrder(storedOrder)
+        : [...v.keys()].sort();
       out[k] = order.filter((id) => v.has(id)).map((id) => structuredClone(v.get(id)));
+    } else if (k === "definitions" && v instanceof Y.Map) {
+      const nestedOut: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+      v.forEach((nestedValue, nestedKey) => {
+        if (nestedKey === "subgraph_order") return;
+        if (nestedKey === "subgraphs" && nestedValue instanceof Y.Map) {
+          const order = (v.get("subgraph_order") as string[] | undefined) ?? [...nestedValue.keys()].sort();
+          nestedOut.subgraphs = order
+            .filter((id) => nestedValue.has(id))
+            .map((id) => nestedValue.get(id))
+            .filter((definition): definition is Y.Map<unknown> => definition instanceof Y.Map)
+            .map((definition) => projectDefinition(definition, catalog));
+        } else {
+          nestedOut[nestedKey] = structuredClone(nestedValue);
+        }
+      });
+      out[k] = nestedOut;
     } else {
       out[k] = structuredClone(v);
     }
   });
+  return scrubPrivateKeys(out) as Record<string, unknown>;
+}
+
+function scrubPrivateKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(scrubPrivateKeys);
+  if (typeof value !== "object" || value === null) return value;
+  const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  for (const [key, child] of Object.entries(value)) {
+    if (!key.startsWith("__")) out[key] = scrubPrivateKeys(child);
+  }
   return out;
 }
 
@@ -257,7 +343,7 @@ export function project(doc: Y.Doc, catalog: WidgetCatalog): WorkflowJSON {
   });
 
   const nodes: WorkflowNode[] = [];
-  nodesMap(doc).forEach((ym, id) => {
+  nodesMap(doc).forEach((ym) => {
     const node = tryProjectNode(ym, catalog);
     if (node) nodes.push(node);
   });

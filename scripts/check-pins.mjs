@@ -44,8 +44,10 @@
  *
  * Exit codes: 0 pinned, 1 violation, 2 inconclusive (registry missing or
  * unparseable, nothing scanned, or — in remote mode — no definitive answer from
- * upstream). "No definitive answer" includes an unusable token and a rate limit:
- * only 404/422/451 are evidence about a pin.
+ * upstream). "No definitive answer" includes an unusable token, a rate limit,
+ * and a 404 unless repository metadata explicitly establishes that the
+ * repository is public. Metadata access to a private repository does not prove
+ * Contents permission. 422/451 remain object-scoped answers by themselves.
  */
 
 import { spawnSync } from "node:child_process";
@@ -54,7 +56,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const root = process.env.PINS_ROOT ?? dirname(dirname(fileURLToPath(import.meta.url)));
 const registryPath = join(root, "docs", "upstream-pins.json");
 const verifyRemote = process.argv.includes("--verify-remote");
 
@@ -170,6 +172,7 @@ if (tracked.length < MIN_SCANNED_FILES) {
 }
 
 const errors = [];
+const malformedPinLocations = new Set();
 
 // --------------------------------------------------------------------------
 // 2. Registry shape, and every citation site carries its pin's SHA.
@@ -184,9 +187,11 @@ for (const [id, pin] of Object.entries(pins)) {
   }
   if (typeof pin.repo !== "string" || !pin.repo.startsWith("https://")) {
     errors.push(`${id}: repo must be an https URL`);
+    malformedPinLocations.add(id);
   }
   if (typeof pin.path !== "string" || pin.path.length === 0) {
     errors.push(`${id}: path must name the cited file in the upstream repository`);
+    malformedPinLocations.add(id);
   }
   if (typeof pin.established_by !== "string" || pin.established_by.length < 40) {
     errors.push(
@@ -325,7 +330,10 @@ if (ghProbe.error || ghProbe.status !== 0) {
  * Statuses that are evidence about the OBJECT that was asked for. Only these
  * may be read as "this pin is broken".
  *
- *   404 — no such commit/path in this repository
+ *   404 — no such commit/path, but only after repository metadata identifies
+ *         the matching repository and explicitly says it is public. Public
+ *         contents need no endpoint permission; private metadata visibility
+ *         does not establish private Contents permission.
  *   422 — the SHA is well-formed but names no object here
  *   451 — the object exists but is legally unavailable; not a pin problem to
  *         fix by re-pinning, but it is a definite answer about this object
@@ -355,15 +363,57 @@ function gh(endpoint) {
   };
 }
 
-function requireDefinitive(result, what) {
-  if (result.ok || result.definitive) return;
+function establishPublicRepository(slug) {
+  const repository = gh(`repos/${slug}`);
+  if (!repository.ok) {
+    const status = repository.http === null ? "no HTTP status (DNS/TLS/proxy)" : `HTTP ${repository.http}`;
+    inconclusive(
+      `could not establish public repository visibility for ${slug} — ${status}`,
+      repository.stderr.split("\n")[0] || "no error output",
+      "GitHub hides inaccessible private repositories behind 404, so this response cannot prove",
+      "whether the repository is hidden or the requested commit/path is genuinely absent.",
+      `Offline result: ${errors.length === 0 ? "clean" : `${errors.length} violation(s)`}`,
+    );
+  }
+
+  let metadata;
+  try {
+    metadata = JSON.parse(repository.stdout);
+  } catch {
+    inconclusive(`repository metadata for ${slug} was malformed, so repository visibility was not established`);
+  }
+  if (
+    !metadata ||
+    typeof metadata !== "object" ||
+    typeof metadata.full_name !== "string" ||
+    metadata.full_name.toLowerCase() !== slug.toLowerCase() ||
+    typeof metadata.private !== "boolean"
+  ) {
+    inconclusive(`repository metadata for ${slug} was malformed, so repository visibility was not established`);
+  }
+  if (metadata.private) {
+    inconclusive(
+      `repository metadata for ${slug} identifies a private repository, but metadata visibility does not prove Contents access`,
+      "GitHub fine-grained permissions separate Metadata read from Contents read. A private-object",
+      "404 may therefore mean either a missing object or missing endpoint permission.",
+    );
+  }
+}
+
+function requireDefinitive(result, what, slug) {
+  if (result.ok) return;
+  if (result.http === 404) {
+    establishPublicRepository(slug);
+    return;
+  }
+  if (result.definitive) return;
   const status = result.http === null ? "no HTTP status (DNS/TLS/proxy)" : `HTTP ${result.http}`;
   inconclusive(
     `could not get a definitive answer from GitHub while checking ${what} — ${status}`,
     result.stderr.split("\n")[0] || "no error output",
     "This is NOT a passing pin and NOT a failing pin — the check did not happen.",
-    "Only 404/422/451 are answers about the object; 401/403/429/5xx are answers about the",
-    "request (credentials, rate limit, outage) and prove nothing about the pin.",
+    "Only 422/451, or 404 after public repository visibility is established, are answers about the",
+    "object; 401/403/429/5xx are about the request and prove nothing about the pin.",
     `Offline result: ${errors.length === 0 ? "clean" : `${errors.length} violation(s)`}`,
   );
 }
@@ -386,10 +436,11 @@ if (!preflight.ok) {
 
 for (const [id, pin] of Object.entries(pins)) {
   if (typeof pin?.commit !== "string" || !/^[0-9a-f]{40}$/.test(pin.commit)) continue;
+  if (malformedPinLocations.has(id)) continue;
   const slug = pin.repo.replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "");
 
   const commit = gh(`repos/${slug}/commits/${pin.commit}`);
-  requireDefinitive(commit, `${id} commit ${pin.commit}`);
+  requireDefinitive(commit, `${id} commit ${pin.commit}`, slug);
   if (!commit.ok) {
     errors.push(
       `${id}: commit ${pin.commit} no longer resolves in ${slug} — ${commit.stderr.split("\n")[0]}`,
@@ -398,7 +449,7 @@ for (const [id, pin] of Object.entries(pins)) {
   }
 
   const contents = gh(`repos/${slug}/contents/${pin.path}?ref=${pin.commit}`);
-  requireDefinitive(contents, `${id} path ${pin.path}`);
+  requireDefinitive(contents, `${id} path ${pin.path}`, slug);
   if (!contents.ok) {
     errors.push(`${id}: ${pin.path} is absent at ${pin.commit} in ${slug}`);
     continue;

@@ -1,6 +1,6 @@
-# Multiplayer workflow-document schema — v1
+# Multiplayer workflow-document schema — v4
 
-`SCHEMA_VERSION = 1`
+`SCHEMA_VERSION = 4`
 
 > **State: DRAFT — awaiting FE sign-off (FE-1330).**
 >
@@ -22,7 +22,7 @@
 
 This document is the authoritative reference for the Y.Doc layout and op
 semantics of `@comfyorg/comfy-multi-player`. It is versioned: a change to the
-layout bumps `SCHEMA_VERSION` and requires a `migrate()` path (§10) plus FE
+layout bumps `SCHEMA_VERSION` and requires an explicit old-layout disposition (§10) plus FE
 sign-off.
 
 Normative inputs, in precedence order:
@@ -44,6 +44,9 @@ Normative inputs, in precedence order:
    `fixtures/` (the evidence: three replayable sessions, six LWW vectors, the
    exported catalog, machine-captured findings). Every DECISION below cites
    the spike finding that forced it.
+3. **ADR-022 / ADR-T8** — the local decision and accepted in-app-agent program
+   TDD add `insert_workflow` as the eighth implemented op without moving the
+   pinned comfy-cli vocabulary.
 
 ---
 
@@ -58,8 +61,45 @@ Y.Doc
 │                        last_node_id, last_link_id,
 │                        groups, extra, config, version, …          (§1.4)
 ├── Y.Map "__applied"    op_id → 1                                  (§4)
-└── Y.Map "__stamps"     write-target key → [base_version, actor, op_id]  (§4)
+├── Y.Map "__stamps"     write-target key → [base_version, actor, op_id]  (§4)
+├── Y.Map "__link_state" normalized link id → imported durable descriptor (§1.5)
+└── Y.Map "__clock_reservations" producer identity → reserved counter tuple (§1.6)
 ```
+
+### 1.5 Durable link state
+
+Schema v3 adds `__link_state` as the accepted first-class storage boundary for
+durable link intent. `mint()` seeds one versioned `authority: "imported"`
+descriptor per coherent six-field link tuple. It retains the complete tuple and
+the complete persisted destination-slot object, classifying it as concrete,
+promoted (by full definition input name), or autogrow (by `grow_id`). Readers
+fail closed on unknown descriptor versions or kinds. A successful `connect`
+replaces that baseline with an operation-owned descriptor carrying its A18
+stamp and authoritative concrete, full-name promoted, or autogrow destination
+metadata. Endpoint deletion strands the live tuple but retains the descriptor;
+a winning endpoint re-add restores the exact tuple, slot and endpoint
+references. Winning disconnect, replacement, and explicitly named
+`delete_node.removed_links` retire the descriptor. Composed destinations remain
+undefined until a producer and public type contract exist.
+
+### 1.6 Durable clock reservations
+
+Schema v4 stores Lamport admissions separately from winning semantic stamps.
+`__clock_reservations` is created lazily on the first successful admission.
+Its key is `JSON.stringify(["__lamport_clock", workflow_id, lineage_id, producer_id])`;
+its value is exactly `[counter, producer_id, key]`. All identity fields are
+strings and the reserved counter is a positive safe integer. The key and tuple
+retain their pre-v4 encoding; only their root changes. Reservations never appear
+in `readStamps()` or projected workflow JSON.
+
+`observedDocCounter()` validates the current schema, both root types and every
+tuple, then returns the maximum across `__stamps` and `__clock_reservations`.
+Winning stamps may have counter zero; reservations may not. Missing ledgers
+are empty, and neither a read nor a rejected admission creates them. Snapshot
+roots are typed without writing structs; sequence content is refused rather
+than silently viewed as an empty map. A malformed entry fails the entire scan.
+Store wrappers for one caller-owned document still share ADR-021's weakly keyed
+transaction queue; no durable counter lives outside that document.
 
 ### 1.1 Per-node Y.Map
 
@@ -74,6 +114,7 @@ Keyed in `nodes` by `String(node.id)`. Fields:
 | `order`, `mode` | plain | execution order is node state and IS preserved (§7) |
 | `properties` | plain object | passthrough |
 | `widgets` | **name-keyed Y.Map** | widget name → value. See §1.2 — this is the load-bearing decision |
+| `__incarnation` | plain string | internal node lifetime token; never projected. Imported nodes use `"0"`; modern adds carry a creator token (normally their `op_id`), while legacy adds map to `"0"` |
 | `inputs` | Y.Array\<Y.Map\> | slot records `{name, type, link, widget?, grow_id?}`; autogrow appends carry `grow_id` (§8.3) |
 | `outputs` | Y.Array\<Y.Map\> | slot records; `links` is a Y.Array of link ids, or `null` preserved verbatim (§7) |
 | anything else | plain | passthrough, projected back verbatim |
@@ -122,6 +163,14 @@ Therefore v1 stores widgets as a Y.Map keyed by **widget name**:
   `__widgets_opaque`, and projected back verbatim. See Amendment A2 for why
   this does not reopen the corruption this section closed.
 
+- Fourth consequence, pinned (Amendment A15): a **subgraph instance** is
+  exactly such a class — its `type` is a definition UUID that no `object_info`
+  catalog will ever carry — and the frontend (ComfyUI_frontend ADR 0009) keeps a
+  promoted widget's value on the instance as `widgets_values[i]`, POSITIONAL
+  over the definition's widget-backed inputs. That array is A2's opaque
+  storage, and a promoted host `set_widget` (carrying `promoted.value_index`) is
+  a whole-value replace of it: one index written, never decomposed by name.
+
 Note the residual conflict semantics: a name-keyed Y.Map fixes the
 *structural* corruption, but Y.Map's native conflict pick is client-based,
 not stamp-based (spike experiment 5: bob's write beat alice's higher stamp).
@@ -134,6 +183,11 @@ merge behavior.
 `[id, from_node, from_slot, to_node, to_slot, type]`. Stored as a plain value
 (replaced whole on rewire): a link is created/retired atomically, never
 field-edited, so there is nothing to merge inside one.
+
+The normalized key is also a scalar link-identity register. Distinct `connect`
+ops whose ids share `String(link_id)` contend on `("link", String(link_id))`;
+the greatest embedded `[base_version, actor, op_id]` owns the complete tuple
+and every coherent endpoint reference. See Amendment A18.
 
 ### 1.4 Meta
 
@@ -311,6 +365,10 @@ here:
    is rejected by a replica that still holds the node and applied as a no-op by
    one that does not; under §4 abort-remainder that reaches the projection.
    Measured. Amendment A6.
+   Amendment A15's promoted host write has the same shape: `hostWriteStorage`
+   (opaque vs named, `catalog_required`, `uncatalogued_widget_write`) reads the
+   instance and sits below `resolveInteriorNode(...) === null`; the payload's
+   shape checks (`promotedHostWrite`) are op-only and hoisted above the gate.
 7. ~~The same shape used to recur in `applyAddNode`: structural idempotency
    returned before payload validation.~~ **CLOSED by Amendment A7.** The
    node-presence stamp gate makes the same winner reach validation in either
@@ -423,10 +481,13 @@ so a raw key gave `7` and `"7"` two registers for one node.
 
 | Op | Target key | Gated? |
 |---|---|---|
-| `set_widget` (top-level) | `("widget", String(node_id), widget_name)` | yes |
-| `set_widget` (interior) | `("widget", resolved_path, inner_widget)` — all three address forms normalize here (§5.2) | yes |
+| `set_widget` (top-level) | `("widget", String(node_id), node_incarnation, widget_name)` | yes |
+| `set_widget` (interior) | `("widget", resolved_path, node_incarnation, inner_widget)` — all three address forms normalize here (§5.2) | yes |
+| `set_widget` (promoted host write, A15) | `("widget", String(node_id), node_incarnation, widget_name)` — `node_id` is the instance id, or the joined `instance_path` (`"57/61"`) for a nested host; the SAME register a top-level named write on that node claims (comfy-cli `_write_target`) | yes |
 | `connect` (concrete slot) | `("input", String(to_node), to_slot)` | **yes (A1)** |
 | `connect` (autogrow) | `("input", String(to_node), "grow", base_name)` | no — identity only, canonicalized by stamp (A7) |
+| `connect` (promoted input, A15) | `("input", String(to_node), "grow", name)` with the FULL declared name (names may contain dots — `images.image0`), matching comfy-cli `_write_target` at amendment v1.5 (`ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`); only an ordinary autogrow keys by base name | **yes (A15)** — one register named by the definition |
+| every `connect` (link identity, A18) | `("link", String(link_id))` | **yes (A18)** — greatest stamp owns the complete tuple and coherent endpoint references |
 | `add_node` / `delete_node` (presence) | `("node", String(node_id))` | **yes (A7)** |
 | `clear` (one row per entry in `removed_nodes`) | `("node", String(node_id))` | **yes (A7)** |
 | `delete_node` (severance of the link ids in `removed_links`) | none | no — monotonic, ungated (A7) |
@@ -517,7 +578,8 @@ stays mandatory.
    unreadable (§7 rule 0) or the catalogue pin is violated (§3 pin 4), neither
    of which is a state a host can be compacting from, and it drops individual
    entries only per §7 rule 6 —
-   carrying forward: `__stamps` entries for still-live targets, the actor
+   carrying forward: `__stamps` entries for still-live targets, all
+   `__link_state` descriptors (including temporarily stranded endpoint intent), the actor
    watermarks, `catalog_version`, and the id high-water marks. The fresh doc
    is a new **doc epoch**: its bootstrap snapshot replaces the old one (§9),
    and followers resynchronize by full re-fetch (an epoch bump is a signal on
@@ -560,20 +622,38 @@ node/link arrays are **not** sorted at projection — the §7 sorted-by-id rule
 applies to the top-level arrays only. Python's `canonical` sorts
 `definitions.subgraphs` by id but leaves each definition's interior arrays
 in authored order, and the fixtures pin that (`session-subgraph`'s def lists
-node 27 before node 3). Since only `set_widget` is subgraph-scoped, interior
-membership and order are static after mint; the def Y.Map therefore stores
-plain `node_order`/`link_order` registers (written once at mint) and
-projection emits interior arrays in that order. Definitions themselves
-project sorted by definition id.
+node 27 before node 3). The def Y.Map stores plain scalar
+`node_order`/`link_order` registers, and projection emits interior arrays in
+that order. Interior `connect` preserves surviving imported links as an
+authored-order prefix and sorts op-added links after them by winning stamp.
+The scalar `link_order` itself is updated to that canonical order; projection
+does not depend on an object marker hidden inside the array. Definitions
+themselves project sorted by definition id.
+
+Added-link ordering stamps use the internal `__stamps` key
+`["interior_link_order", String(definition_id), String(link_id)]`. A winning
+same-ID rewrite refreshes that stamp; rewriting a still-present imported link
+does not reclassify it as an addition. Definition IDs identify unique
+definitions. These are additional internal stamp entries, not a new root or
+scalar-array layout, so the interior-order metadata did not itself trigger an
+additional version bump. The combined current document schema is v3.
 
 ### 5.2 Addressing: three forms, one write target
 
-Only `set_widget` is subgraph-scoped in the frozen vocabulary (spike Q6;
-error strings captured verbatim in `fixtures/findings.json`):
+The frozen spike supported only subgraph-scoped `set_widget` (spike Q6;
+historical error strings remain in `fixtures/findings.json`). The current
+package also supports `connect` with a non-empty instance `path`:
 
-- `connect` structurally refuses interior endpoints ("a link cannot cross
-  the subgraph boundary") and promoted-widget targets ("promoted widget (a
-  value), not a link input").
+- Interior `connect` resolves both endpoints within one definition and rejects
+  interior autogrow and writes to shared, unforked definitions. Input stamps
+  include the path; normalized link identity stamps do too. This does not
+  enable cross-boundary wiring or an interior `disconnect` operation. Its path
+  is an instance route only: after the visible head is deleted, resolution
+  requires that instance's retained `interior_route` stamp (including its
+  incarnation), and a definition id is never resolved as a direct alias.
+  A missing instance without a retained route is an accepted, consumed no-op,
+  including when the path happens to name a definition. It does not edit that
+  definition; it is not a rejected operation with a byte-identity guarantee.
 - `add_node`/`delete_node` cannot address interior nodes at all.
 
 `set_widget` accepts three address forms — flat promoted (`57.text`, routed
@@ -584,6 +664,17 @@ proxyWidgets logic, and all three forms normalize to the single write target
 `("widget", resolved_path, inner_widget)`. Spike-verified: a flat-form and a
 nested-form concurrent write to the same interior widget LWW-converge
 (vector `subgraph-flat-vs-nested`).
+
+**Superseded for PROMOTED widgets by Amendment A15** (comfy-cli PR #815, pinned
+at `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`). The flat form `57.width` no
+longer resolves into the definition: it is a HOST write carrying
+`promoted: {value_index, instance_path, host_widgets_values}` and no `path`, and
+an interior address that backs a promotion (`57/13.width`) is redirected to the
+same host write at mint time (`redirected_from`). What still arrives here as a
+`path` write is an UNPROMOTED interior widget (`57/3.cfg`). The host register
+`("widget", "57", "width")` and the interior register
+`("widget", ["57","13"], "width")` are different registers and are deliberately
+not unified — see A15.
 
 ### 5.3 OPEN: shared-definition forking
 
@@ -744,10 +835,12 @@ the epoch; cross-epoch struct updates never merge.
 
 ## 10. Versioning and `migrate()`
 
-- `SCHEMA_VERSION = 1`, stored in `meta.schema_version` at mint.
-- `migrate(doc, fromVersion)` contract: in-place, stepwise `vN → vN+1`
-  migrations composed in order; exact no-op when
-  `fromVersion === SCHEMA_VERSION`; host-only (followers receive the migrated
+- `SCHEMA_VERSION = 4`, stored in `meta.schema_version` at mint.
+- Private-alpha policy keeps one current format: old layouts are re-minted at
+  their source and compatibility readers/migrations are not provided.
+- `migrate(doc, fromVersion)` contract: exact no-op when
+  `fromVersion === SCHEMA_VERSION`; fail closed without mutation for every
+  older or newer version; host-only (followers receive the current-format
   doc via the struct stream / a new epoch); a doc whose `schema_version` is
   **greater** than the code's `SCHEMA_VERSION` is rejected, fail-closed —
   never best-effort read.
@@ -755,8 +848,8 @@ the epoch; cross-epoch struct updates never merge.
   current-version one), an unreadable `meta.schema_version` is rejected rather
   than assumed current, and "exact no-op" is defined at the byte level. Read A3
   for the normative rule and for what this deliberately stopped checking.
-- Bumping `SCHEMA_VERSION` requires: a migration step, updated fixtures or a
-  fixture-format note, an amendment section in this document, and FE
+- Bumping `SCHEMA_VERSION` requires: an explicit old-layout disposition,
+  updated fixtures or a fixture-format note, an amendment section, and FE
   sign-off (the layout is a cross-repo contract with the FE follower).
 - **The version check is on the READ path, not only on `migrate()`.**
   `project(doc, catalog)` refuses — `SchemaVersionError`, before it reads any
@@ -769,8 +862,9 @@ the epoch; cross-epoch struct updates never merge.
   migration is a host-only write, `project()` is a pure read available to every
   replica, and a follower that writes the shared doc breaks KA-6/FC-5 outright
   and becomes an independently edited replica, which is the FC-1 raw-struct
-  divergence path. The caller runs `migrate(doc, storedVersion)` first, then
-  reads. The refusal is byte-exact and materializes no root type, the same as
+  divergence path. Private-alpha callers re-mint old source data into a new
+  current-format document rather than relabelling its layout. The refusal is
+  byte-exact and materializes no root type, the same as
   `migrate()`'s — asserted on `[...doc.share.keys()]`, since an empty
   materialized root encodes to zero bytes (A3).
   Both entrypoints share ONE definition of the read, `readSchemaVersion` in
@@ -786,6 +880,10 @@ the epoch; cross-epoch struct updates never merge.
 ---
 
 ## 11. Op kind → bounded key writes (§6.2 conformance)
+
+Amendment A18 adds exactly one `__stamps` mutation to every successful
+`connect`; the autogrow liveness case therefore moves from seven to eight
+Y-level mutations and from two to three stamp rows.
 
 Y-level mutation counts measured by the spike's instrumented applier across
 all three sessions (positional-widgets prototype; the name-keyed map (§1.2)
@@ -1245,11 +1343,10 @@ materialization contrast on a snapshot-forked replica) and `test/roundtrip.test.
 path). Every fail-closed case runs against a real fixture workflow that projects cleanly one line
 earlier, so a `toThrow()` cannot pass for a reason unrelated to the schema version.
 
-The "document is OLDER than the reader" arm has no production reachability at `SCHEMA_VERSION = 1`
-— no older version exists to construct. It is exercised through
-`assertSchemaVersionAgainst(doc, context, expected)`, exported from the module but deliberately NOT
-from the entrypoint, since a caller free to choose `expected` could pass the document's own version
-and switch the gate off. An arm no test can turn red is dead code; this one can be turned red.
+At the time of this amendment, `SCHEMA_VERSION` was 1 and the older-document arm was reachable only
+through the module-only `assertSchemaVersionAgainst` test seam. Schema v3 now exercises the public
+read and migration entrypoints directly with preserved v1/v2 counterexamples; all are refused
+byte-identically rather than translated.
 
 ### Consumer impact
 
@@ -1268,9 +1365,10 @@ consumer repositories at their current revisions, not by analogy to A3:
   `clear`'s `groups`, and `clear` preserves everything else.
 - **The op producer never constructs a document at all.** `comfy-cli` emits ops as plain JSON; it has
   no Yjs dependency, no `Y.Doc`, no snapshot handling.
-- **The frontend does not consume this package.** `@comfyorg/comfy-multi-player` is absent from its
-  `package.json` on every branch, so there is no follower call site to break, which is what ADR-004
-  already records.
+- **At the time of this amendment, the frontend did not consume this package.** That historical
+  observation does not establish present consumer compatibility. ADR-006 requires consumers to pin
+  the same exact published npm version; frontend source migration is deferred and package development
+  remains in standalone `Comfy-Org/comfy-multi-player`. Future changes require fresh consumer checks.
 - **Two endpoints reach `project()`**, both in the doc-host sidecar: `/project` and `/apply` (whose
   response embeds a projection computed after `applyOps`). `/mint` and `/resync` do not.
 
@@ -1705,3 +1803,357 @@ arrived yet", not "a frame arrived out of order".
 
 No `SCHEMA_VERSION` bump: no Y.Doc layout changes, and no currently-valid
 document becomes unreadable that `project()` did not already refuse.
+
+---
+
+## Amendment A15 — 2026-08-27 — promoted subgraph widgets are written on the HOST; `connect` materializes a declared input
+
+Tracks comfy-cli PR #815 (`fix(subgraph): edit promoted widgets where the
+frontend reads them`), cited by SHA `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`
+and registered in `docs/upstream-pins.json` as
+`comfy-cli/workflow_ops@promoted-host-writes`. No `SCHEMA_VERSION` bump — see
+the end of this amendment.
+
+**The production defect this closes.** ComfyUI_frontend ADR 0009 keeps a
+promoted subgraph widget's value on the HOST instance — `widgets_values[i]` on
+the instance node, positional over the definition's inputs that resolve to an
+interior widget (socket-only inputs own no slot) — and runs that value over
+the interior default. Until now the only subgraph-scoped write this package
+applied was the interior `path` form (§5.2), which lands on the interior
+default the frontend neither runs nor displays: an agent's `set-widget
+57.width 768` was "applied" and changed nothing the user could see. comfy-cli
+now mints the host write; the doc host must apply it, and it could not: a
+subgraph instance's `type` is a definition UUID, never in the catalog, so the
+instance's `widgets_values` is stored opaquely (A2) and `validateWidgetName`
+refused the named form with `uncatalogued_widget_write`.
+
+### The two op shapes (comfy-cli's, field for field)
+
+1. **Host write** — a `set_widget` with NO `path`/`inner_widget` and a
+   `promoted` payload:
+
+   ```jsonc
+   {"op":"set_widget", "node_id":57, "widget":"width", "value":768, "old":1024,
+    "promoted":{"value_index":1, "instance_path":["57"],
+                "host_widgets_values":["<prompt>",768,1024,0,8,"unet…","clip…","vae…"]},
+    "redirected_from":"57/13.width"}   // optional, informational
+   ```
+
+   `value_index` is the position in the instance's positional array;
+   `host_widgets_values` is the FULL array after the write as comfy-cli
+   materialized it (missing entries seeded from the interior defaults, so the
+   array stays aligned with the definition's inputs); `instance_path` has one
+   segment for a top-level instance and more when the host is itself interior
+   to another definition, in which case comfy-cli mints `node_id` as the
+   joined path (`"57/61"`).
+
+2. **Promoted connect** — a `connect` whose `grow` carries `promoted: true`:
+
+   ```jsonc
+   {"op":"connect", "link_id":…, "from_node":…, "from_slot":0, "to_node":57,
+    "to_slot":null, "link_type":"INT",
+    "grow":{"name":"width","type":"INT","promoted":true,"widget":"width"}}
+   ```
+
+   The destination is a subgraph instance and `grow.name` is one of its
+   definition's DECLARED inputs; the frontend rebuilds those `inputs[]`
+   entries from the definition on load, so the instance may not carry one yet.
+   `grow.widget` is present exactly when the declared input backs an interior
+   widget; absent for a socket-only input.
+
+### The rules
+
+**Host write.** After the op-only checks (`promotedHostWrite`: `value_index`
+a non-negative integer, `host_widgets_values` an array covering it,
+`instance_path` a non-empty array when present AND joining with `/` to
+`String(node_id)` — the register is named by `node_id`, the mutated node by
+`instance_path`, and nothing else ties them, so a disagreement is refused
+rather than left to claim two registers for one node; the array storable; a
+host write that also carries `path` is `malformed_op`) and the ordinary LWW gate on
+`("widget", String(node_id), widget)` — the SAME register a top-level named
+write on that node claims, which is what comfy-cli's `_write_target` produces
+for these ops — the instance is resolved through `resolveInteriorNode` over
+`instance_path`, exactly as an interior `path` is (delete of the head wins as
+a no-op; a nested path through a SHARED definition is rejected
+`shared_definition_unforked`, the §5.3 rule comfy-cli forks its way past —
+already an EXCEPTIONS row). Then `hostWriteStorage` decides:
+
+| Instance storage | Catalogue | Disposition |
+|---|---|---|
+| opaque (A2) | any, or none | POSITIONAL write |
+| named, class DESCRIBED by the catalogue | present | the ordinary named path — defined, never minted by comfy-cli |
+| named | absent | `catalog_required` — the same "reject rather than guess" boundary `add_node` draws |
+| named, non-empty map, class NOT described | present | `uncatalogued_widget_write` — the document is unprojectable with this catalogue (KA-12 drift); an opaque array laid over the map would heal it silently |
+| named, EMPTY map, class not described | present | POSITIONAL write, converting the node to opaque storage (the instance was minted with `widgets_values: []`) |
+
+The positional write is ONE whole-value `set` of the opaque array (plus the
+stamp; plus retiring the empty `widgets` map on first conversion, so the node
+carries exactly one storage key): copy the stored array; if it is shorter than
+`value_index + 1`, extend it from `host_widgets_values` — **entries the
+document already holds win**, only the missing tail is seeded; set
+`value_index`. Whole-value storage means two concurrent writes to DIFFERENT
+indexes each read-modify-write the whole array and commute (pinned in both
+orders), and §1.2's element-wise merge corruption cannot arise (A2's
+argument). `project()` hands the array back verbatim.
+
+**Promoted connect.** ONE register named by the definition, so — unlike an
+autogrow, and exactly like a concrete input (A1) — it is stamp-gated on
+`("input", String(to_node), "grow", name)` with the FULL declared name. Not
+the autogrow base-name key: a declared subgraph input name may contain a dot
+(`images.image0`), and truncating at the first dot made `foo.bar` and
+`foo.baz` contend for one slot. comfy-cli spells it the same way since
+amendment v1.5 (PR #818, `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`), which
+also gates the register and moves `grow_id` to the winner — closing the
+deviation recorded below.
+Once the gate passes the register is claimed unconditionally, then: reuse the
+`inputs[]` entry whose `name` is `grow.name` (or whose `grow_id` is this
+`link_id`, on replay) — retiring its prior occupant whole, and moving a
+materialized entry's `grow_id` to the winning link so both arrival orders
+project one slot — or append `{name, type, link: null, grow_id, widget?}`
+VERBATIM: no collision numbering, no family template, no `grow`/`grow_request`
+canonicalization entries (A7 ranks only slots that carry them). The slot is
+materialized whether or not the SOURCE still exists; the link is installed
+only if it does. So `[connect, delete src]` and `[delete src, connect]` both
+end with the input present and empty — the autogrow source-delete race (§2.5
+item 2) does not recur here. Delete of the DESTINATION is a no-op before any
+register is claimed, as for every connect.
+
+Reuse by NAME is the ordinary sequential case, not only the race: at comfy-cli
+main a later `connect` to `57.width` is minted as a promoted grow again (the
+declared-input check precedes the concrete-slot lookup in
+`_resolve_input_target`), so it claims the same full-name register, wins on
+stamp, retires the prior link and takes the slot's `grow_id`.
+`fixtures/session-promoted-host.session.jsonl` — regenerated at that revision
+— carries exactly that sequence; `test/promoted-host-writes.test.ts` pins the
+concurrent race in both orders. (At the PR-#815 head the second connect was
+minted as a concrete `to_slot: 1`, a different register; a peer minting that
+form still applies, through the concrete branch.)
+
+### Deliberately NOT unified: the host register and the interior register
+
+A host write claims `("widget", "57", "width")`; an unpromoted interior write to
+the widget BEHIND the promotion claims `("widget", ["57","13"], "width")`.
+comfy-cli redirects the interior ADDRESS of a promoted widget to the host at
+mint time, so in practice the interior register is reached only for
+unpromoted widgets — but a peer that mints the interior form for a promoted
+widget (an older comfy-cli, a hand-authored op) writes the definition's
+default while the host value stands, and the two do not contend. Unifying
+them would require this applier to know, at apply time, which interior widget
+a promotion resolves to (comfy-cli `cql.promoted.find_promoted`), i.e. to
+re-derive the promotion table from the definition on every write. Recorded,
+pinned (`an interior path write … is a different register`), and left for a
+vocabulary amendment.
+
+### Deviation from comfy-cli — RESOLVED by comfy-cli amendment v1.5
+
+At PR #815 comfy-cli's `_apply_connect` did not `_lww_gate` a promoted grow
+and left `grow_id` on the first arrival; this applier gated and moved
+`grow_id` to the winner, and the divergence was logged in
+`docs/decisions/EXCEPTIONS.md`. comfy-cli PR #818 (amendment v1.5,
+`ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`) now gates the same register under
+the same full-name spelling and moves `grow_id` identically, pinned in both
+arrival orders; the EXCEPTIONS row is struck.
+
+`legacy_primitive` writes: at PR #815 the `set_widget` addressed at a
+frontend-only `PrimitiveNode` carried no positional payload and was rejected
+`opaque_widgets` here (the class is opaque). Amendment v1.5 (§14.3) makes it
+carry `promoted.value_index` + `host_widgets_values` with a one-segment
+`instance_path`, i.e. exactly a host write; the `legacy_primitive` flag itself
+is informational and unread.
+
+**OPEN — `promoted.repair` (vocabulary §14.4, merged to main after this
+amendment was drafted).** When the host instance carries a legacy
+`properties.proxyWidgets` entry the definition does not back with a linked
+input, comfy-cli first repairs it the way the frontend's forward migration
+does (`promoted.flush_proxy_migration`) and the host write additionally
+carries `promoted.repair = {entry, ids}`; its apply then MUTATES THE
+DEFINITION (mints a subgraph input and boundary links, ids derived by
+SHA-256 so replay is byte-identical). This applier reads only
+`value_index`/`instance_path`/`host_widgets_values`, ignores `repair`, and
+writes the host value only — the definition is left unrepaired and the two
+implementations then project different definitions for such a document. No
+shipped template in the corpus carries a legacy proxy entry (the z-image
+session has no `repair`), so nothing pins it yet; implementing it is a
+follow-up amendment, not a silent extension of this one.
+
+### A mint defect this fixture exposed, fixed alongside
+
+A definition's interior `links` are serialized by the frontend as OBJECTS
+(`{id, origin_id, origin_slot, target_id, target_slot, type}`), not the
+top-level tuple form. `mintDefinition` keyed every interior link by `link[0]`,
+which reads `undefined` off an object, so every interior link of a real
+template collapsed onto the one key `"undefined"` and the round trip emitted
+the last link N times. The verbatim z-image turbo template did not round-trip.
+Keys are now the tuple's `[0]`, an object's `id`, or the mint position for an
+id-less entry. Pinned by `mint/project round-trips a definition's interior
+links in the frontend's OBJECT form` and by the corpus session, whose
+`base_workflow` is the verbatim template.
+
+### `SCHEMA_VERSION` is NOT bumped — the reasoning, for review
+
+No new root, no new per-node key: the opaque key is A2's, and a host array on
+a subgraph instance is precisely the case A2 introduced it for (a non-empty
+positional array for a class the catalogue does not describe — every
+post-migration template already mints that way). What is new is a per-node
+STATE TRANSITION: an instance minted with `widgets_values: []` (an empty named
+map) becomes opaque on its first host write. A reader at A2 or later projects
+both states correctly; the transition is additive and the old state remains
+valid. A reader older than A2 could not read the pre-existing opaque nodes
+either, which A2 already recorded as the ordinary consequence of a SHA-pinned
+consumer moving its pin.
+
+### Guarded by
+
+`test/promoted-host-writes.test.ts` (materialize/align, one-slot second
+write, entries-win extension, opaque single-key layout, bounded writes,
+replay idempotency, LWW both orders, commuting different-index writes, the
+un-unified interior register, delete-wins, shared-definition top-level OK /
+nested rejected, `interior_node_not_found`, eleven `malformed_op` shapes with
+byte identity, `catalog_required`, opaque-without-catalogue, the named
+fallback, `uncatalogued_widget_write`; connect: materialize + wire, socket-only,
+reuse by name, reuse of a mint-time entry, LWW both orders, replay, both
+delete-wins axes, malformed grow, host write + wired input coexisting;
+object-form definition links round trip; the shapes type-check without
+casts), four rows in `test/ka4-rejection-byte-identity.test.ts`, and
+`fixtures/session-promoted-host.session.jsonl` — ops MINTED AND FINALIZED BY
+comfy-cli at the pinned revision against its own object_info fixture, with
+the verbatim gallery template as `base_workflow`, replayed through this
+applier by `test/replay.test.ts`.
+
+### Consumer impact
+
+`services/agent/dochost` pins this package by SHA and the agent image pins
+comfy-cli separately; a doc host at the old pin rejects every host write with
+`uncatalogued_widget_write` and every promoted connect… applies it as an
+ungated autogrow. **Both pins move in the same change — the applier first,
+then the CLI**, as A1 already requires. comfy-cli's side is the #815 + #818 stack, merged to main as
+`ba0b0b92abcc86b01e8a6704d07088f92afe7aa7` (amendment v1.5): the promoted-grow
+gate, the full-name register, and the positional `legacy_primitive` payload;
+the pins above cite that merge commit. §14.4's `promoted.repair` is the one
+piece this package does not yet apply (OPEN above).
+
+## Amendment A16 — 2026-08-28 — DQ-11 incarnation-namespaced widget stamps
+
+**Touches:** §1.1, §3, §4, and §10. This amendment is the enactment of DQ-11
+option (c) and KEEP-ALIVE 4.
+
+Each node map carries the internal `__incarnation` string. Nodes imported by
+`mint()` and v1 documents upgraded by `migrate(doc, 1)` use the deterministic
+legacy token `"0"`. A modern winning `add_node` carries a creator-chosen
+`node_incarnation` (normally that add operation's immutable `op_id`) as the new
+incarnation token. Legacy adds without the field remain life `"0"`. The token
+is never projected into workflow JSON.
+
+The creator carries `node_incarnation` on node-scoped widget writes. A
+top-level or interior `set_widget` whose token does not equal the addressed
+node's current token is a consumed no-op and cannot write a stamp. The same
+rule applies to the widget register embedded in a `connect` with
+`grow.inputcount`. Missing `node_incarnation` is the legacy v1 translation to
+`"0"`; it is retained only so historical ops remain replayable.
+
+Widget target keys now include the incarnation:
+
+```text
+["widget", String(node_id), node_incarnation, widget_name]
+["widget", resolved_path, node_incarnation, inner_widget]
+```
+
+This prevents a life-1 stamp from contending with any life-2 write while
+preserving ordinary same-incarnation LWW. The v1→v2 migration adds the legacy
+node token and inserts `"0"` into existing widget target keys. This is a
+persisted document-layout and semantic-op contract change, so `SCHEMA_VERSION`
+is 2 and old readers fail closed.
+
+The shared package does not own the WebSocket envelope version. Cloud/FE
+integration must treat `node_incarnation` as a protocol-v2 compatibility
+requirement before durable or offline queues are public: v1 transport may be
+translated only with the documented legacy token `"0"`, and mixed readers must
+not silently exchange the new semantics. This amendment does not implement a
+transport `v == 2` decoder.
+
+---
+
+## Amendment A17 — 2026-08-29 — DQ-10 direct Lamport counter semantics
+
+Private alpha keeps one op format and assigns Lamport semantics directly to its counter:
+
+```text
+winner   = [counter, actor, op_id]
+counter  = op.base_version, creator-owned and durably advanced
+```
+
+The existing tuple comparator is reused unchanged; no second comparison
+implementation is introduced.
+
+This is a direct private-alpha semantic change, not a v2→v3 migration.
+Amendment A16's incarnation-qualified target keys remain byte-for-byte the
+register namespace, including legacy incarnation token `"0"`. Same-lineage
+reconnect continues to use state-vector delta replay.
+
+---
+
+## Amendment A18 — 2026-08-30 — normalized stamped link identity
+
+Every `connect` claims `("link", String(link_id))`. Distinct raw ids such as
+`700` and `"700"` therefore contend for one scalar register. The greatest
+embedded `[base_version, actor, op_id]` stamp owns the complete LiteGraph tuple
+and all coherent input/output references; fields never merge across writers.
+
+The gate runs before endpoint mutation. A loser is dropped whole. A new winner
+first removes the prior normalized tuple and every normalized-id endpoint
+reference, then installs its own tuple and exactly its own references. The
+separate input register still decides whether that identity may occupy the
+requested destination; losing that gate leaves no tuple or dangling reference.
+This adds an internal `__stamps` key, not a root-layout change, so
+this amendment did not itself require a version bump. The combined document
+schema at that integration was v3; A20 advances it to v4.
+
+---
+
+## Amendment A19 — 2026-09-11 — atomic workflow-template insertion
+
+ADR-031 adds the standalone-only `insert_workflow` op. Its payload is one
+authoritative workflow containing required top-level `nodes` and optional
+`links`, `groups`, and `definitions`. The applier deterministically remaps every
+inserted id from the immutable `op_id`, graph scope, id kind, and original id,
+then rewrites internal references. Producers emit raw payloads. Distinct ops
+cannot collide; exact replay derives the same ids. Duplicate ids within one raw
+payload remain collision errors. Malformed link tuples are `malformed_op`.
+
+Definition ids and every nested definition-interior graph id are remapped in
+scoped namespaces. Definition-instance `type` values are rewritten with them,
+so a consumer definition id is never used as a live id and no live-definition
+conflict path remains.
+
+The whole merge occurs in one Yjs transaction and claims the
+`("insert_workflow", op_id)` stamp target. Exact replay is stopped by the
+existing applied-op gate and is byte-identical. This adds graph content but no
+new root or node-map layout, so insertion did not itself require a version
+bump. The combined document schema at that integration was v3. Other op payloads remain
+closed to definition-bearing fields.
+
+---
+
+## Amendment A20 — 2026-09-18 — separate Lamport reservation ledger (schema v4)
+
+The carried finding by **coderabbitai[bot]**, submitted **2026-09-04T18:54:52Z**
+in [frontend PR #16644](https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#pullrequestreview-5116820123),
+identified `commitCounter()` writing non-write-target reservations into
+`__stamps`, which the public `readStamps()` returns as the LWW ledger. §1.6
+moves those rows to `__clock_reservations`, preserving their identity and tuple.
+ADR-021 Amendment CLK-3 records the clock contract and test scope. Prior QA is
+historical evidence, not approval of this new layout.
+
+**Version decision (KA-11): bump 3 → 4.** A v3 clock scans only `__stamps` and
+would miss reservations in the new root, potentially reusing counters even
+though graph projection looks unchanged. New readers refuse v1–v3, absent and
+future versions; no legacy-reservation lookup, conversion or relabelling is
+provided. Under private-alpha policy, the host re-mints source workflows into a
+new lineage and distributes that snapshot; this is not same-lineage recovery
+of old pending operations. Hosts must settle or discard those queues before
+cutover. `migrate()` remains a validator and refuses old layouts byte-identically.
+
+The wire-layout vector now names eight roots and schema v4. Semantic-op golden
+vectors remain unchanged: the op stamp and target namespaces did not change.
+Schema v4 requires coordinated reader adoption and FE sign-off before rollout;
+this implementation does not claim that sign-off or publish/deploy a package.

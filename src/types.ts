@@ -1,7 +1,7 @@
 /**
  * Types and constants for @comfyorg/comfy-multi-player.
  *
- * The op vocabulary is frozen at six kinds; the normative contract is
+ * The op vocabulary is frozen at eight kinds; the normative contract is
  * comfy-cli's `docs/op-vocabulary-v1.md` and the stamp shapes minted by
  * `comfy_cli/workflow_ops.py` (`_new_op`), pinned by SHA at comfy-cli
  * `7e732242d971daf0d2d30f22f997abfacd78986e` (FC-10: never by branch — the
@@ -16,18 +16,65 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Version of the Y.Doc layout. Bump requires FE sign-off + a `migrate` path.
+ * Version of the Y.Doc layout. Bump requires FE sign-off and an explicit old-layout disposition.
  * The authoritative layout + op-semantics reference is docs/multiplayer-schema.md.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 4;
+
+/** Version of an imported destination reconstruction descriptor in `__link_state`. */
+export const LINK_STATE_DESCRIPTOR_VERSION = 1;
+
+/** A coherent six-field LiteGraph link tuple retained verbatim for reconstruction. */
+export type LinkTuple = [id: NodeId, fromNode: NodeId, fromSlot: number, toNode: NodeId, toSlot: number, type: unknown];
+
+export type ImportedLinkDestination =
+  | { kind: "concrete"; to_slot: number; slot: Record<string, unknown> }
+  | { kind: "promoted"; to_slot: number; name: string; slot: Record<string, unknown> }
+  | { kind: "autogrow"; to_slot: number; slot: Record<string, unknown> };
+
+/** Durable baseline imported by `mint`; operation lifecycle rules are intentionally separate. */
+export interface ImportedLinkState {
+  version: typeof LINK_STATE_DESCRIPTOR_VERSION;
+  authority: "imported";
+  tuple: LinkTuple;
+  destination: ImportedLinkDestination;
+}
+
+export type OperationLinkDestination =
+  | { kind: "concrete"; to_slot: number; slot: Record<string, unknown> }
+  | { kind: "promoted"; to_slot: number; name: string; slot: Record<string, unknown> }
+  | { kind: "autogrow"; to_slot: number; slot: Record<string, unknown>; request: GrowSpec };
+
+/** Durable intent created by an installed connect, owned by its A18 operation stamp. */
+export interface OperationLinkState {
+  version: typeof LINK_STATE_DESCRIPTOR_VERSION;
+  authority: { kind: "operation"; stamp: StampKey };
+  tuple: LinkTuple;
+  destination: OperationLinkDestination;
+}
+
+/** Internal per-node lifetime key. It never projects into workflow JSON. */
+export const NODE_INCARNATION_KEY = "__incarnation";
+
+/** Incarnation assigned to nodes imported from a pre-incarnation workflow. */
+export const LEGACY_NODE_INCARNATION = "0";
 
 // ---------------------------------------------------------------------------
 // Machine-readable op-kind projection (mirrors comfy_cli.workflow_ops
 // FROZEN_OPS / DEFERRED_OPS / BATCHABLE_OPS — op-vocabulary-v1.md §1)
 // ---------------------------------------------------------------------------
 
-/** The five implemented op kinds. `apply` rejects anything else loudly. */
-export const FROZEN_OPS = ["add_node", "connect", "set_widget", "delete_node", "clear"] as const;
+/** The implemented op kinds. `apply` rejects anything else loudly. */
+export const FROZEN_OPS = [
+  "add_node",
+  "connect",
+  "disconnect",
+  "set_widget",
+  "delete_node",
+  "clear",
+  "define_subgraph",
+  "insert_workflow",
+] as const;
 
 /** Defined by the vocabulary but deferred (§1.6): rejected until un-deferred by amendment. */
 export const DEFERRED_OPS = ["reset_doc"] as const;
@@ -54,10 +101,7 @@ export const DEFERRED_OPS = ["reset_doc"] as const;
  * belongs. `test/batch-policy.test.ts` pins the list, the README table, and
  * the deliberate non-enforcement together.
  */
-export const BATCHABLE_OPS = ["add_node", "connect", "set_widget", "delete_node"] as const;
-
-/** Every kind the vocabulary defines — implemented ({@link Op}) plus deferred ({@link DeferredOp}). */
-export type OpKind = WireOp["op"];
+export const BATCHABLE_OPS = ["add_node", "connect", "disconnect", "set_widget", "delete_node", "define_subgraph"] as const;
 
 /** A kind `applyOps` implements. */
 export type FrozenOpKind = (typeof FROZEN_OPS)[number];
@@ -79,7 +123,7 @@ export type BatchableOpKind = (typeof BATCHABLE_OPS)[number];
 // ---------------------------------------------------------------------------
 
 /** Who minted an op — a frozen origin string (vocabulary §7): `agent:<thread>:<turn>`, `human:<user>:<tab>`, `system:mint`, legacy `cli`. MUST be ASCII (§8.1). */
-export type Actor = string;
+export type Actor = OpBase["actor"];
 
 /**
  * Node / link identity. comfy-cli mints ints (`mint_id()`, `[2^40, 2^53)`),
@@ -116,7 +160,7 @@ export type StampKey = [baseVersion: number, actor: Actor, opId: string];
 export interface OpBase {
   /** Unique op identity: uuid4 hex, 32 lowercase `[0-9a-f]` chars (vocabulary §8.2 — LWW-load-bearing, never regenerated). */
   op_id: string;
-  actor: Actor;
+  actor: string;
   /** Doc version the op was minted against. */
   base_version: number;
   /** `[base_version, actor]` — see {@link Stamp}. */
@@ -124,19 +168,42 @@ export interface OpBase {
 }
 
 // ---------------------------------------------------------------------------
-// The six declared op kinds: five implemented (`Op`) plus the deferred
+// The nine declared op kinds: eight implemented (`Op`) plus the deferred
 // `reset_doc` (`DeferredOp`); together `WireOp`. "Frozen" now means
 // implemented — `FROZEN_OPS` is pinned to `Op["op"]` exactly (issue #17).
 // ---------------------------------------------------------------------------
 
 export interface AddNodeOp extends OpBase {
   op: "add_node";
+  /** Creator-carried lifetime token; omitted by legacy v1 op streams (life 0). */
+  node_incarnation?: string;
   node_id: NodeId;
   class_type: string;
   /** Layout decided at mint time so replay stays convergent. */
   pos: number[];
   /** Full mint-time node snapshot — AUTHORITATIVE, inserted verbatim (vocabulary §8.5). */
   node: WorkflowNode;
+}
+
+/**
+ * Merge a workflow template (nodes, links, `definitions.subgraphs`) into an
+ * existing doc in one transaction (ADR-022; agent-subgraph TDD V1.5).
+ *
+ * The applier remaps every carried id deterministically from `op_id` and the
+ * original id. Exact replay therefore chooses the same ids, while distinct
+ * insert ops cannot collide or depend on document state. `links`, `groups`,
+ * and `definitions` are optional and default to empty.
+ */
+export interface InsertWorkflowOp extends OpBase {
+  op: "insert_workflow";
+  /** The template to merge — AUTHORITATIVE, nodes inserted verbatim after id validation. */
+  workflow: {
+    nodes: WorkflowNode[];
+    links?: unknown[];
+    groups?: unknown[];
+    definitions?: { subgraphs?: unknown[]; [key: string]: unknown };
+    [key: string]: unknown;
+  };
 }
 
 /** Autogrow slot descriptor carried by a `connect` (vocabulary §1.2 / §8.4). */
@@ -148,18 +215,75 @@ export interface GrowSpec {
   widget?: string;
   /** inputcount-family two-register grow (§8.4): also LWW-write this widget to the mint-time-planned value. */
   inputcount?: { widget: string; value: unknown };
+  /**
+   * The destination is a subgraph instance and `name` is one of its
+   * definition's DECLARED inputs (schema Amendment A15; comfy-cli
+   * `_resolve_promoted_target`, PR #815 at
+   * `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`). The input is ONE register
+   * named by the definition: an `inputs[]` entry with that `name` is reused if
+   * the instance already carries one, otherwise `{name, type, link, grow_id,
+   * widget?}` is appended VERBATIM — never a numbered collision rename, never a
+   * family template. `widget` is present exactly when the declared input backs
+   * an interior widget; absent for a socket-only input. Unlike an autogrow,
+   * the register IS stamp-gated — `("input", to_node, "grow", name)` with the
+   * FULL declared name, since names may contain dots (comfy-cli amendment
+   * v1.5, PR #818 at `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`) — because
+   * two connects into one declared input contend for one slot the way two
+   * concrete connects do.
+   */
+  promoted?: boolean;
   [key: string]: unknown;
+}
+
+/**
+ * A `set_widget` addressed at a promoted subgraph widget's HOST value
+ * (schema Amendment A15; ComfyUI_frontend ADR 0009; comfy-cli PR #815 at
+ * `ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`).
+ *
+ * The frontend keeps a promoted widget's value on the INSTANCE node, as
+ * `widgets_values[value_index]` positional over the definition's widget-backed
+ * inputs, and runs it over the interior default. A subgraph instance's `type`
+ * is a definition UUID and is never in the widget catalog, so this applier
+ * stores its `widgets_values` opaquely (Amendment A2) — a named write cannot
+ * be expressed against it, and a POSITIONAL one is what this payload carries.
+ */
+export interface PromotedHostWrite {
+  /** Position in the instance's positional `widgets_values`; a non-negative integer. */
+  value_index: number;
+  /**
+   * The RESOLVED path to the host instance, one segment per nesting level:
+   * `["57"]` for a top-level instance; `["57", "61"]` when the host is itself
+   * interior to another definition (comfy-cli then mints `node_id` as the
+   * joined path, `"57/61"`). Resolved exactly like an interior `path`
+   * (`resolveInteriorNode`), including the schema §5.3 shared-definition rule.
+   * Defaults to `[String(node_id)]` when absent, and when present MUST join
+   * (with `/`) to `String(node_id)` — the register is named by `node_id`, so a
+   * disagreement is `malformed_op`, never two registers for one node.
+   */
+  instance_path?: Array<string | number>;
+  /**
+   * The FULL host array after the write, as comfy-cli materialized it (missing
+   * entries seeded from the interior defaults so the array stays aligned with
+   * the definition's inputs). Used only to EXTEND a stored array that is
+   * shorter than `value_index + 1`; entries the document already holds win.
+   * Must cover `value_index`.
+   */
+  host_widgets_values: unknown[];
 }
 
 /** Fields every `connect` carries, whichever way its destination slot is addressed. */
 interface ConnectOpBase extends OpBase {
   op: "connect";
+  /** Non-empty subgraph-instance path for a connect inside its definition. */
+  path?: [NodeId, ...NodeId[]];
   /** Link identity, minted at op-mint time (int in comfy-cli). */
   link_id: NodeId;
   from_node: NodeId;
   from_slot: number;
   to_node: NodeId;
   link_type: string;
+  /** Lifetime of `to_node` for the optional inputcount widget write. */
+  node_incarnation?: string;
 }
 
 /**
@@ -218,6 +342,15 @@ export interface GrowConnectOp extends ConnectOpBase {
  */
 export type ConnectOp = ConcreteConnectOp | GrowConnectOp;
 
+export interface DisconnectOp extends OpBase {
+  op: "disconnect";
+  /** Link identity being severed. */
+  link_id: NodeId;
+  /** Concrete destination input register this disconnect claims. */
+  to_node: NodeId;
+  to_slot: number;
+}
+
 /** Fields every `set_widget` carries, whichever node the write is addressed to. */
 interface SetWidgetOpBase extends OpBase {
   op: "set_widget";
@@ -235,10 +368,20 @@ interface SetWidgetOpBase extends OpBase {
    */
   widget: string;
   value: unknown;
+  /** Creator-carried lifetime of the addressed node; absent means legacy life 0. */
+  node_incarnation?: string;
   /** Previous value at mint time (informational; not used for convergence). */
   old?: unknown;
   /** Non-fatal validation notes attached at mint time. */
   warnings?: unknown[];
+  /**
+   * The address the writer GAVE when comfy-cli redirected the write elsewhere
+   * (`"57/13.width"` for an interior address that backs a promotion, rewritten
+   * to the host; `"57.width"` for a promoted input fed by a primitive,
+   * rewritten to that primitive). Informational only: the applier never reads
+   * it, and the register is decided by the fields the op actually carries.
+   */
+  redirected_from?: string;
 }
 
 /**
@@ -253,6 +396,15 @@ interface SetWidgetOpBase extends OpBase {
 export interface TopLevelSetWidgetOp extends SetWidgetOpBase {
   path?: null;
   inner_widget?: null;
+  /**
+   * Present on a promoted HOST write (Amendment A15): the value goes to
+   * `widgets_values[value_index]` of the instance at `instance_path`, never to
+   * a named widget. `node_id` + `widget` still name the LWW register —
+   * `("widget", String(node_id), widget)`, the same one a named top-level
+   * write on that node would claim (comfy-cli `_write_target`). A host write
+   * never carries `path`; one that does is rejected `malformed_op`.
+   */
+  promoted?: PromotedHostWrite | null;
 }
 
 /**
@@ -264,10 +416,18 @@ export interface TopLevelSetWidgetOp extends SetWidgetOpBase {
  * non-empty by type, because the applier's interior branch is entered on
  * `path.length > 0` and needs `inner_widget` to know what to write. An empty
  * path with an `inner_widget` is silently treated as a top-level write.
+ *
+ * Since comfy-cli PR #815 an interior address that BACKS a promotion is
+ * redirected to the host at mint time and arrives as a
+ * {@link TopLevelSetWidgetOp} with `promoted`; what still arrives here is a
+ * write to an unpromoted interior widget. The two are DIFFERENT registers —
+ * `("widget", ["57","13"], "width")` vs `("widget", "57", "width")` — and are
+ * deliberately not unified (Amendment A15).
  */
 export interface InteriorSetWidgetOp extends SetWidgetOpBase {
   path: [string, ...string[]];
   inner_widget: string;
+  promoted?: null;
 }
 
 /**
@@ -295,6 +455,12 @@ export interface ClearOp extends OpBase {
   removed_nodes: NodeId[];
 }
 
+export interface DefineSubgraphOp extends OpBase {
+  op: "define_subgraph";
+  subgraph_id: string;
+  subgraph_definition: SubgraphDefinition;
+}
+
 /**
  * Replace the entire document with a workflow snapshot.
  *
@@ -317,7 +483,7 @@ export interface ResetDocOp extends OpBase {
 }
 
 /**
- * The five op kinds `applyOps` IMPLEMENTS — a discriminated union on `op`.
+ * The op kinds `applyOps` IMPLEMENTS — a discriminated union on `op`.
  *
  * Every member is a kind that can actually be applied. Deferred kinds are in
  * {@link DeferredOp}; the full declared vocabulary is {@link WireOp}.
@@ -325,9 +491,12 @@ export interface ResetDocOp extends OpBase {
 export type Op =
   | AddNodeOp
   | ConnectOp
+  | DisconnectOp
   | SetWidgetOp
   | DeleteNodeOp
-  | ClearOp;
+  | ClearOp
+  | DefineSubgraphOp
+  | InsertWorkflowOp;
 
 /**
  * A kind the vocabulary declares but this package refuses to apply
@@ -378,18 +547,20 @@ export type WireOp = Op | DeferredOp;
 // ---------------------------------------------------------------------------
 
 type Equals<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
-type Assert<T extends true> = T;
+type Checked<T, Checks extends readonly true[]> = T &
+  (Checks[number] extends true ? unknown : never);
 
-/** `FROZEN_OPS` names exactly the kinds `applyOps` implements. */
-type _FrozenIsExactlyTheImplementedUnion = Assert<Equals<FrozenOpKind, Op["op"]>>;
-/** `DEFERRED_OPS` names exactly the kinds declared-but-not-implemented. */
-type _DeferredIsExactlyTheDeferredUnion = Assert<Equals<DeferredOpKind, DeferredOp["op"]>>;
-/** Every declared kind is exactly once in FROZEN_OPS or DEFERRED_OPS. */
-type _OpKindsArePartitioned = Assert<Equals<FrozenOpKind | DeferredOpKind, OpKind>>;
-/** No kind is both implemented and deferred. */
-type _FrozenAndDeferredAreDisjoint = Assert<Equals<FrozenOpKind & DeferredOpKind, never>>;
-/** Batchable kinds are a subset of the implemented kinds. */
-type _BatchableIsSubsetOfFrozen = Assert<Equals<Exclude<BatchableOpKind, FrozenOpKind>, never>>;
+/** Every kind the vocabulary defines — implemented ({@link Op}) plus deferred ({@link DeferredOp}). */
+export type OpKind = Checked<
+  WireOp["op"],
+  [
+    Equals<FrozenOpKind, Op["op"]>,
+    Equals<DeferredOpKind, DeferredOp["op"]>,
+    Equals<FrozenOpKind | DeferredOpKind, WireOp["op"]>,
+    Equals<FrozenOpKind & DeferredOpKind, never>,
+    Equals<Exclude<BatchableOpKind, FrozenOpKind>, never>,
+  ]
+>;
 
 // ---------------------------------------------------------------------------
 // Widget catalog (pinned object_info projection)
@@ -443,9 +614,16 @@ export interface WorkflowNode {
 export interface WorkflowJSON {
   nodes: WorkflowNode[];
   links: unknown[];
+  definitions?: { subgraphs?: unknown[]; [key: string]: unknown };
   groups?: unknown[];
   extra?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+export interface SubgraphDefinition extends Record<string, unknown> {
+  id: string;
+  nodes: unknown[];
+  links: unknown[];
 }
 
 // ---------------------------------------------------------------------------
@@ -479,12 +657,12 @@ export interface ApplyFailure {
 /**
  * Outcome of `applyOps` — per-op accounting, never a throw for a rejected op.
  *
- * `applied` counts every op that consumed its `op_id` in this call — including
- * LWW-dropped writes and delete-wins no-ops, which are protocol-level applies
- * (comfy-cli records their op_id too). `skipped` is idempotency only: op_ids
- * already applied before this call. On failure, `failed` is set, ops after
- * `failed.index` are NOT applied (abort-remainder), and the applied prefix is
- * retained — a retried batch converges via the op_id gate.
+ * Each submitted op receives an ordered discriminated outcome. A refused op
+ * has `outcome: "rejected"` and a machine-readable and human-readable
+ * `reason`. On rejection while processing a batch, later operations receive
+ * `batch_aborted` rejection reasons and are not applied (abort-remainder);
+ * the processed prefix is retained, so a retried batch converges via the
+ * op_id gate. An oversized batch is refused before processing any operation.
  */
 export type ApplyOutcome =
   | { op_id: string; outcome: "applied" }
@@ -503,14 +681,29 @@ export interface ApplyResult {
   ops_seen: number;
 }
 
+/** Pure, ordered storage facts for one validated stamped semantic op. */
+export interface CanonicalOpInspection {
+  /** Original index in the inspected batch. */
+  index: number;
+  op_id: string;
+  /** Exact UTF-8 bytes of the canonical semantic-op envelope. */
+  canonical_op: Uint8Array;
+  /** Raw 32-byte SHA-256 of {@link canonical_op}. */
+  canonical_digest: Uint8Array;
+  /** Creator identity from the op's authoritative stamp, not host arrival metadata. */
+  creator_actor: string;
+  creator_lamport: number;
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
 
 /**
  * A rejected op (unknown/deferred kind, malformed payload, unknown widget,
- * missing slot, …). `applyOps` converts this into `ApplyResult.failed` —
- * rejection is loud but never a throw at the batch surface.
+ * missing slot, …). `applyOps` converts this into an `ApplyOutcome` whose
+ * `outcome` is `"rejected"` and whose `reason` carries this error's code and
+ * message. Rejection is loud but never a throw at the batch surface.
  */
 export class OpRejectedError extends Error {
   override name = "OpRejectedError";

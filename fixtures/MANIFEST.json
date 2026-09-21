@@ -14,7 +14,8 @@
     },
     "findings.json": {
       "generator": "crdt-spike/gen_fixtures.py: workflow_ops probe capture",
-      "sha256": "c9015f64f66e5fe842671cc808c363ddb007abb78f9e5919c339cd2c35297efe"
+      "notes": "Historical probe capture, not regenerated. The clear-scope prose was manually corrected on 2026-09-18 against test/clear-empty-removed-nodes.test.ts and the current applier; source request: https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#discussion_r3914401872. Executable vectors are unchanged.",
+      "sha256": "d1462ed6786745e843f651dea8889b189f875f41358d14fa3cb7fca1b18d691e"
     },
     "lww-vectors.json": {
       "generator": "crdt-spike/gen_fixtures.py: workflow_ops.apply_op both-order vectors",
@@ -31,6 +32,10 @@
     "session-large-build.session.jsonl": {
       "generator": "crdt-spike/gen_fixtures.py: comfy_cli.workflow_ops",
       "sha256": "1d1dbf658d86762fdb6280265da255df7763f026411e42e2864e247d3b7ea18f"
+    },
+    "session-promoted-host.session.jsonl": {
+      "generator": "comfy_cli.workflow_ops at comfy-cli main ba0b0b92abcc86b01e8a6704d07088f92afe7aa7 (the merged PR #815 + #818 stack, op-vocabulary amendment v1.5) via the script recorded in fixtures/README.md; base_workflow is the verbatim gallery template image_z_image_turbo.json from that revision",
+      "sha256": "51b73c6622fe33cbaa2879676abdd5381b12a8ef34c6b14ec588d62ac4cbb77f"
     },
     "session-subgraph.session.jsonl": {
       "generator": "crdt-spike/gen_fixtures.py: comfy_cli.workflow_ops",

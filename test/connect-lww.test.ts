@@ -22,13 +22,17 @@ import {
   applyOps,
   mint,
   project,
-  type ConnectOp,
-  type DeleteNodeOp,
-  type Op,
-  type WorkflowJSON,
-  type WorkflowNode,
+} from "../src/index.js";
+import type {
+  AddNodeOp,
+  ConnectOp,
+  DeleteNodeOp,
+  Op,
+  WorkflowJSON,
+  WorkflowNode,
 } from "../src/index.js";
 import { canonicalize, loadCatalog } from "./helpers.js";
+import { checkGraphInvariants } from "./graph-invariant-oracle.js";
 
 const catalog = loadCatalog();
 
@@ -147,7 +151,7 @@ function connectOp(
   };
 }
 
-function addEncoder(tag: string, actor: string, baseVersion: number, nodeId: number, text: string): Op {
+function addEncoder(tag: string, actor: string, baseVersion: number, nodeId: number, text: string): AddNodeOp {
   return {
     op: "add_node",
     op_id: opId(tag),
@@ -158,7 +162,7 @@ function addEncoder(tag: string, actor: string, baseVersion: number, nodeId: num
     class_type: "CLIPTextEncode",
     pos: [40, 300],
     node: encoderNode(nodeId, text),
-  } as Op;
+  };
 }
 
 function deleteOp(tag: string, actor: string, baseVersion: number, nodeId: number, removed: number[]): DeleteNodeOp {
@@ -188,7 +192,11 @@ function interleavings<T>(a: T[], b: T[]): T[][] {
 }
 
 function tags(ops: Op[]): string {
-  return ops.map((o) => o.op_id.replace(/0+$/, "")).join(",");
+  return ops.map((o) => {
+    let end = o.op_id.length;
+    while (end > 0 && o.op_id[end - 1] === "0") end--;
+    return o.op_id.slice(0, end);
+  }).join(",");
 }
 
 /**
@@ -223,7 +231,17 @@ function runOrder(base: WorkflowJSON, ops: Op[]): { json: string; wf: WorkflowJS
   const doc = new Y.Doc();
   Y.applyUpdate(doc, Y.encodeStateAsUpdate(minted));
   const res = applyOps(doc, ops, catalog);
-  expect(res.failed, `a legal interleaving must never abort the batch: ${JSON.stringify(res.failed)}`).toBeNull();
+  const failed = res.outcomes.find((outcome) => outcome.outcome === "rejected");
+  expect(failed, `a legal interleaving must never abort the batch: ${JSON.stringify(failed)}`).toBeUndefined();
+  const beforeReplayBytes = Y.encodeStateAsUpdate(doc);
+  const beforeReplayProjection = project(doc, catalog);
+  const replay = applyOps(doc, ops, catalog);
+  expect(replay.outcomes).toHaveLength(ops.length);
+  expect(replay.outcomes.every((outcome) => outcome.outcome === "no-op"), "identical replays must all be no-ops").toBe(true);
+  expect(Y.encodeStateAsUpdate(doc), "an identical same-document replay must be byte-identical").toEqual(beforeReplayBytes);
+  expect(project(doc, catalog), "an identical same-document replay must leave the exact projection unchanged").toEqual(beforeReplayProjection);
+  const violations = checkGraphInvariants(doc);
+  expect(violations, `graph invariant violation: ${JSON.stringify(violations)}`).toEqual([]);
   const wf = project(doc, catalog);
   return { json: comparable(wf), wf };
 }
@@ -457,8 +475,11 @@ describe("generated two-writer streams over a contested input", () => {
     };
   }
 
-  for (let seed = 1; seed <= 12; seed++) {
-    it(`seed ${seed}: every interleaving converges`, () => {
+  it("all 12 seeds include both contending and independent input registers", () => {
+    let contendingCases = 0;
+    let independentCases = 0;
+
+    for (let seed = 1; seed <= 12; seed++) {
       const rand = lcg(seed);
       const pick = <T>(xs: T[]): T => xs[Math.floor(rand() * xs.length)]!;
       const bvA = pick([3, 5, 7, 9]);
@@ -467,49 +488,57 @@ describe("generated two-writer streams over a contested input", () => {
       const srcB = pick([ENCODER, OTHER_ENCODER]);
       const slotA = pick([POSITIVE, 2]);
       const slotB = pick([POSITIVE, 2]);
+      const connectA = connectOp("j2", AGENT, bvA, 9801, srcA, SAMPLER, slotA);
+      const connectB = connectOp("j3", HUMAN, bvB, 9802, srcB, SAMPLER, slotB);
 
       const writerA: Op[] = [
         addEncoder("j1", AGENT, bvA, FRESH, "generated"),
-        connectOp("j2", AGENT, bvA, 9801, srcA, SAMPLER, slotA),
+        connectA,
       ];
-      const writerB: Op[] = [connectOp("j3", HUMAN, bvB, 9802, srcB, SAMPLER, slotB)];
+      const writerB: Op[] = [connectB];
       if (rand() < 0.5) writerB.push(deleteOp("j4", HUMAN, bvB, srcB, [9802]));
 
-      expectConvergent(wiredBaseWorkflow(), writerA, writerB);
-    });
-  }
+      try {
+        expectConvergent(wiredBaseWorkflow(), writerA, writerB);
+      } catch (error) {
+        if (error instanceof Error) {
+          error.message = `seed ${seed} (slotA=${slotA}, slotB=${slotB}): ${error.message}`;
+        }
+        throw error;
+      }
+      if (connectA.to_node === connectB.to_node && connectA.to_slot === connectB.to_slot) contendingCases++;
+      else independentCases++;
+    }
+
+    // The fixed 12-seed domain currently exercises six cases of each class.
+    expect(contendingCases, "generated seeds must exercise same-register contention").toBeGreaterThanOrEqual(6);
+    expect(independentCases, "generated seeds must preserve independent-register coverage").toBeGreaterThanOrEqual(6);
+  });
 });
 
 // ---------------------------------------------------------------------------
 // 6. the batch-interior caveat, pinned honestly
 // ---------------------------------------------------------------------------
 
-describe("KNOWN GAP amendment v1.2 does NOT close", () => {
-  it("outputs[].links is appended in arrival order, so its ORDER is not convergent", () => {
+describe("canonical source references", () => {
+  it("projects outputs[].links in numeric link_id order", () => {
     // Two connects out of node 300 into two DIFFERENT inputs of node 200:
     // different registers, so both land in both orders — but the source's
-    // out-links array records them in arrival order. Same set, different
-    // sequence, so a byte-comparison of §7's projection still differs.
-    //
-    // This is an ordering artifact of a set-valued field (no link is lost or
-    // invented), and closing it is a §7 projection-canonicalization change
-    // that would invalidate the recorded fixture finals — several of which
-    // carry unsorted out-links today. Filed, not fixed here.
+    // out-links array stores arrival order, while projection gives this
+    // set-valued field its canonical numeric link-id order (#156 option D).
     const a = connectOp("l1", AGENT, 5, 9001, ENCODER, SAMPLER, POSITIVE);
     const b = connectOp("l2", HUMAN, 9, 9002, ENCODER, SAMPLER, 2);
     const outLinks = (ops: Op[]): unknown[] => {
       const minted = mint(baseWorkflow(), catalog);
       const doc = new Y.Doc();
       Y.applyUpdate(doc, Y.encodeStateAsUpdate(minted));
-      expect(applyOps(doc, ops, catalog).failed).toBeNull();
+      expect(applyOps(doc, ops, catalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
       const wf = project(doc, catalog);
       const src = wf.nodes.find((n) => String(n.id) === String(ENCODER))!;
       return (src.outputs as { links: unknown[] }[])[0]!.links;
     };
     expect(outLinks([a, b])).toEqual([9001, 9002]);
-    expect(outLinks([b, a])).toEqual([9002, 9001]);
-    // …and the SET is convergent, which is the part v1.2 guarantees.
-    expect([...outLinks([a, b])].sort()).toEqual([...outLinks([b, a])].sort());
+    expect(outLinks([b, a])).toEqual([9001, 9002]);
   });
 });
 
@@ -522,7 +551,7 @@ describe("ops minted in one batch share a base_version", () => {
     const first = connectOp("k1", AGENT, 5, 9901, ENCODER, SAMPLER, POSITIVE);
     const second = connectOp("k0", AGENT, 5, 9902, OTHER_ENCODER, SAMPLER, POSITIVE);
     const { wf } = runOrder(baseWorkflow(), [first, second]);
-    // "k0…" < "k1…" by code point, so the FIRST spec wins despite arriving first.
+    // "k1…" > "k0…" by code point, so the greater op_id wins and selects link 9901.
     expect(inputLink(wf, SAMPLER, POSITIVE)).toBe(9901);
     expect(linkIds(wf)).toEqual([9901]);
   });

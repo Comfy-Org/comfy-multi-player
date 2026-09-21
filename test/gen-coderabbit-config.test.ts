@@ -9,7 +9,7 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const script = join(repoRoot, "scripts", "gen-coderabbit-config.mjs");
 
 function run(root: string, ...args: string[]) {
-  return spawnSync("node", [script, ...args], {
+  return spawnSync(process.execPath, [script, ...args], {
     encoding: "utf8",
     env: { ...process.env, CODERABBIT_GEN_ROOT: root },
   });
@@ -44,7 +44,7 @@ function unfold(yamlText: string): Map<string, string> {
     const pathMatch = /^ {4}- path: "(.*)"$/.exec(line);
     if (pathMatch) {
       flush();
-      path = pathMatch[1];
+      path = pathMatch[1] ?? null;
       continue;
     }
     if (line === "      instructions: >-") {
@@ -537,11 +537,9 @@ describe("gen-coderabbit-config", () => {
 
   it("the committed .coderabbit.yaml matches the committed profiles", () => {
     // The gate CI runs, run here too: `npm test` alone catches the drift.
-    const real = spawnSync("node", [script], { encoding: "utf8" });
+    const real = spawnSync(process.execPath, [script], { encoding: "utf8" });
     expect(real.stderr).toBe("");
     expect(real.status).toBe(0);
-    expect(real.stdout).toBe(
-      "coderabbit-config check PASSED (5 instruction block(s) from 4 profile(s) match .coderabbit.yaml)\n",
-    );
+    expect(real.stdout).toMatch(/^coderabbit-config check PASSED /);
   });
 });

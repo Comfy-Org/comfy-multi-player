@@ -46,7 +46,12 @@ yjs-only (KA-3/FC-3) — flag any new runtime dependency. Cite the frozen
 vocabulary/catalog by SHA, never a moving branch (FC-10). Do not remove or
 make non-fatal the verify:corpus, build, check:purity,
 check:profile-claims, check:coderabbit, check:imports, check:pins, or test CI
-steps.
+steps. Required named CI steps (exact): `Install`, `Verify conformance corpus`,
+`Build`, `Type-check gate`, `Purity gate`, `Statelessness gate`,
+`Profile-claim staleness gate`, `CodeRabbit config drift gate`,
+`Import-graph gate`, `Citation-pin gate (FC-10)`, `Tests`, and
+`Clock ordering matrix`. Both CI and release must also run the shared
+`Verify package contents` step after `Build` and propagate its failure.
 ```
 <!-- /coderabbit-instructions -->
 

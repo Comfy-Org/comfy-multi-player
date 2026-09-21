@@ -51,7 +51,7 @@ describe("catalog SHA binding across mint → apply → project (KA-12 / FC-10)"
     assertImmutableCatalogCitation(pinnedAtMint);
     expect(pinnedAtMint).toBe(catalogSha);
 
-    expect(applyOps(doc, [setWidget(1, "steps", 30)], catalog).failed).toBeNull();
+    expect(applyOps(doc, [setWidget(1, "steps", 30)], catalog).outcomes.some((o) => o.outcome === "rejected")).toBe(false);
     expect(project(doc, catalog).nodes[0]?.widgets_values).toEqual([30, 8]);
     expect(metaMap(doc).get("catalog_version")).toBe(pinnedAtMint);
   });
@@ -64,15 +64,17 @@ describe("catalog SHA binding across mint → apply → project (KA-12 / FC-10)"
     );
 
     const result = applyOps(doc, [setWidget(2, "text", "changed")], catalog);
-    expect(result.failed).toMatchObject({ index: 0, code: "opaque_widgets" });
-    expect(result.failed?.message).toContain("absent from the pinned catalog");
+    expect(result.outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "opaque_widgets" } });
+    expect(result.outcomes.find((o) => o.outcome === "rejected")?.reason.message).toContain("absent from the pinned catalog");
     expect(project(doc, catalog).nodes[0]?.widgets_values).toEqual(["opaque"]);
     expect(metaMap(doc).get("catalog_version")).toBe(catalogSha);
   });
 
   it("flags a moving branch-style catalog citation", () => {
     const doc = mint(workflow, catalog, "main");
-    expect(() => assertImmutableCatalogCitation(metaMap(doc).get("catalog_version"))).toThrow(
+    const catalogVersion = metaMap(doc).get("catalog_version");
+    expect(catalogVersion).toBe("main");
+    expect(() => assertImmutableCatalogCitation(catalogVersion)).toThrow(
       "KA-12 / FC-10: catalog_version must be an immutable sha256, got 'main'",
     );
   });
