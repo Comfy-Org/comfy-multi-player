@@ -52,10 +52,30 @@ function fork(snapshot: Uint8Array): Y.Doc {
 }
 
 function logical(doc: Y.Doc) {
-  return Object.fromEntries(roots.map((name) => [name, doc.getMap(name).toJSON()]));
+  // Empty root types emit no snapshot structs (KA-10). Compare contents while
+  // leaving absent roots absent; getMap only materializes already-present types.
+  return Object.fromEntries(roots.map((name) => [name, doc.share.has(name) ? doc.getMap(name).toJSON() : {}]));
 }
 
 describe("same-target logical state, beyond projection equality", () => {
+  it("compares empty root contents without creating absent roots", () => {
+    const host = new Y.Doc();
+    host.getMap("__clock_reservations");
+    const follower = fork(Y.encodeStateAsUpdate(host));
+    try {
+      const hostRoots = [...host.share.keys()];
+      const followerRoots = [...follower.share.keys()];
+      expect(hostRoots).toEqual(["__clock_reservations"]);
+      expect(followerRoots).toEqual([]);
+      expect(logical(follower)).toEqual(logical(host));
+      expect([...host.share.keys()]).toEqual(hostRoots);
+      expect([...follower.share.keys()]).toEqual(followerRoots);
+    } finally {
+      host.destroy();
+      follower.destroy();
+    }
+  });
+
   it.each(["together", "split"] as const)("%s: contested writes admit the same continuation", (mode) => {
     const seed = mint(base, catalog);
     const snapshot = Y.encodeStateAsUpdate(seed);
