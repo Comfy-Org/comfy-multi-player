@@ -42,7 +42,8 @@
     "check:stateless": "node scripts/check-stateless.mjs",
     "verify:package": "node scripts/verify-package.mjs",
     "test:clock-matrix": "npm run build && vitest run test/clock-matrix/clock-matrix.test.ts --reporter=verbose",
-    "verify:corpus": "node scripts/verify-corpus.mjs"
+    "verify:corpus": "node scripts/verify-corpus.mjs",
+    "bench": "vitest bench --run bench/apply-project.bench.ts --reporter=default --reporter=./bench/frame-share-reporter.ts"
   },
   "dependencies": {
     "yjs": "^13.6.27"
