@@ -2866,7 +2866,7 @@ function applySetNodeField(doc: Y.Doc, op: SetNodeFieldOp): SuccessfulOutcome {
         }
         break;
       default:
-        assertNever(op.field, "applier.applySetNodeField");
+        assertNever(op, "applier.applySetNodeField");
     }
   }
 
