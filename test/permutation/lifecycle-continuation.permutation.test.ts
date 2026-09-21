@@ -219,7 +219,7 @@ describe("precise rejection vs consumed no-op and batch abort", () => {
       last_node_id: 2,
     }, catalog);
     const deletion: Op = { op: "delete_node", ...envelope(20, 10), node_id: 1, removed_links: [] };
-    const candidate = { ...write(21, 20, "candidate", "0"), widget: null } as unknown as Op;
+    const candidate: SetWidgetOp = { ...write(21, 20, "candidate", "0"), widget: null as unknown as string };
     const suffix: Op = { ...write(22, 30, "suffix", "0"), node_id: 2 };
     try {
       expect(applyOps(doc, [deletion], catalog).outcomes).toEqual([
@@ -253,7 +253,7 @@ describe("precise rejection vs consumed no-op and batch abort", () => {
   // implementation rejecting every candidate cannot satisfy this matrix.
   for (const shape of ["valid", "malformed", "unknown-widget"] as const) {
     for (const deletedFirst of [false, true]) {
-      const widget = { valid: "text", malformed: null, "unknown-widget": "absent-widget" }[shape];
+      const widget = { valid: "text", malformed: null as unknown as string, "unknown-widget": "absent-widget" }[shape];
       const code = {
         valid: undefined,
         malformed: "malformed_op",
@@ -266,10 +266,10 @@ describe("precise rejection vs consumed no-op and batch abort", () => {
           last_node_id: 2,
         }, catalog);
         const deletion: Op = { op: "delete_node", ...envelope(20, 10), node_id: 1, removed_links: [] };
-        const candidate = {
+        const candidate: SetWidgetOp = {
           ...write(21, 20, "candidate", "0"),
           widget,
-        } as unknown as Op;
+        };
         const suffix: Op = { ...write(22, 30, "suffix", "0"), node_id: 2 };
         const history = deletedFirst ? [deletion, candidate, suffix] : [candidate, deletion, suffix];
         const candidateIndex = deletedFirst ? 1 : 0;
