@@ -103,6 +103,11 @@ export function writeTarget(op: WireOp): unknown[] {
         return ["widget", op.path.map(String), incarnation, op.inner_widget];
       }
       return ["widget", String(op.node_id), incarnation, op.widget];
+    case "set_title":
+      // Its own namespace, not the widget one: `title` is not a catalogued
+      // widget name (ADR-032; op-vocabulary-v1.md is not amended for this
+      // kind — see the package-local note in src/types.ts).
+      return ["title", String(op.node_id), incarnation];
     case "add_node":
     case "delete_node":
       return ["node", String(op.node_id)];
@@ -143,7 +148,7 @@ export function writeTarget(op: WireOp): unknown[] {
       return ["definition", op.subgraph_id];
     default:
       // Exhaustiveness guard (issue #21): with every `WireOp` member cased
-      // above — the six `Op` kinds plus the deferred `reset_doc` — `op` is
+      // above — every `Op` kind plus the deferred `reset_doc` — `op` is
       // `never` here, so adding a kind to EITHER union fails `tsc` at this
       // line until it is given a write target.
       //

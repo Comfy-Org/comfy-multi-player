@@ -49,6 +49,8 @@ function touchedNodes(op: WireOp): string[] {
       return [String(op.node_id)];
     case "set_widget":
       return [String(op.path && op.path.length > 0 ? op.path[0] : op.node_id)];
+    case "set_title":
+      return [String(op.node_id)];
     case "connect":
       return [String(op.from_node), String(op.to_node)];
     case "disconnect":

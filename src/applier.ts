@@ -137,6 +137,7 @@ import {
   type Op,
   type OperationLinkDestination,
   type OperationLinkState,
+  type SetTitleOp,
   type SetWidgetOp,
   type StampKey,
   type SubgraphDefinition,
@@ -553,6 +554,8 @@ function dispatch(doc: Y.Doc, op: Op, catalog?: WidgetCatalog): SuccessfulOutcom
       return applyAddNode(doc, op, catalog);
     case "set_widget":
       return applySetWidget(doc, op, catalog);
+    case "set_title":
+      return applySetTitle(doc, op);
     case "connect":
       return applyConnect(doc, op, catalog);
     case "disconnect":
@@ -1726,6 +1729,50 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
   // Top-level writes may extend past the current positional length — comfy-cli
   // pads with None; here the name-keyed map makes padding a projection concern.
   mset(widgetsOf(node), op.widget, structuredClone(op.value));
+  mset(stamps, targetKey, key);
+  return "applied";
+}
+
+/**
+ * `set_title` (ADR-032, package-local — see the module note in
+ * `src/types.ts`). Follows `applySetWidget`'s top-level shape: op-only
+ * checks first, then the LWW gate on this op's own register, then
+ * delete-wins on the live node, then the incarnation check.
+ *
+ * No catalog is involved — `title` is not a widget name and carries no
+ * `widget_order` position — and there is no interior/promoted variant: a
+ * subgraph-interior node's `title` is out of scope for this addition (see
+ * ADR-032's stated follow-ups).
+ */
+function applySetTitle(doc: Y.Doc, op: SetTitleOp): SuccessfulOutcome {
+  if (op.node_id === undefined) {
+    throw new OpRejectedError("malformed_op", "set_title: missing node_id");
+  }
+  if (op.title !== null && typeof op.title !== "string") {
+    throw new OpRejectedError("malformed_op", "set_title: title must be a string or null");
+  }
+  if (
+    op.node_incarnation !== undefined &&
+    (typeof op.node_incarnation !== "string" || op.node_incarnation.length === 0)
+  ) {
+    throw new OpRejectedError("malformed_op", "set_title: node_incarnation must be a non-empty string");
+  }
+
+  // LWW gate (comfy-cli-style `_stamp_key` comparison, mirrors
+  // `applySetWidget`): a lower-or-equal stamp is dropped — a protocol-level
+  // apply that still consumes its op_id.
+  const stamps = stampsMap(doc);
+  const targetKey = stampTargetKey(op);
+  const prior = stamps.get(targetKey) as StampKey | undefined;
+  const key = stampKey(op);
+  if (prior != null && compareStampKeys(key, prior) <= 0) return "lww-dropped";
+
+  const node = nodesMap(doc).get(String(op.node_id));
+  if (!node) return "no-op"; // target concurrently deleted → no-op (delete wins)
+  if (nodeIncarnation(node) !== (op.node_incarnation ?? LEGACY_NODE_INCARNATION)) return "no-op";
+
+  if (op.title === null) mdel(node, "title");
+  else mset(node, "title", op.title);
   mset(stamps, targetKey, key);
   return "applied";
 }

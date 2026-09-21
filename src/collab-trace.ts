@@ -411,6 +411,12 @@ function assertOpPayload(value: unknown, context: string) {
     if (hostValues.length <= valueIndex) invalid(`${context}.promoted.host_widgets_values`, "must cover value_index");
     if (Object.hasOwn(promoted, "instance_path")) assertNodeIdArray(promoted["instance_path"], `${context}.promoted.instance_path`);
   }
+  function assertTitleWrite(): void {
+    asNodeId(required(payload, "node_id", context), `${context}.node_id`);
+    const title = required(payload, "title", context);
+    if (title !== null && typeof title !== "string") invalid(`${context}.title`, "must be a string or null");
+    assertOptionalString(payload, "node_incarnation", context);
+  }
   function assertWidgetWrite(): void {
     asNodeId(required(payload, "node_id", context), `${context}.node_id`);
     asString(required(payload, "widget", context), `${context}.widget`);
@@ -436,6 +442,7 @@ function assertOpPayload(value: unknown, context: string) {
     case "add_node": assertNodeAddition(); break;
     case "connect": assertConnection(); break;
     case "set_widget": assertWidgetWrite(); break;
+    case "set_title": assertTitleWrite(); break;
     case "disconnect":
       asNodeId(required(payload, "link_id", context), `${context}.link_id`);
       asNodeId(required(payload, "to_node", context), `${context}.to_node`);

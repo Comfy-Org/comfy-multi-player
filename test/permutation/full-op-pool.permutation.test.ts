@@ -7,7 +7,7 @@
  * equivalence classes, both arrival orders, and both batch boundaries.
  * Longer streams are fixed-seed fast-check samples with shrinking
  * left enabled. The default tier rotates actor/stamp classes across all
- * 64 kind pairs × 8 states (2,048 executions), plus 128 seeded streams (256 executions).
+ * 81 kind pairs × 8 states (2,592 executions), plus 128 seeded streams (256 executions).
  * Every frozen kind still meets every state, both orders, and both batch modes.
  *
  * Amendment A6 / docs/decisions/EXCEPTIONS.md and schema §2.5 item 2 are the
@@ -54,8 +54,8 @@ const PRECONDITIONS = [
   "promoted-or-autogrow",
 ] as const;
 // Keep the full pre-separation domain in the dedicated exhaustive CI job:
-// 64 kind pairs × 8 states × 2 actor pairs × 4 stamp pairs × 2 orders × 2 batches.
-const PAIR_EXECUTIONS = 16_384;
+// 81 kind pairs × 8 states × 2 actor pairs × 4 stamp pairs × 2 orders × 2 batches.
+const PAIR_EXECUTIONS = 20_736;
 const SAMPLED_RUNS = 1_696;
 const SAMPLE_SEED = 0x4f70504;
 
@@ -221,6 +221,12 @@ function makeOp(
         to_slot: precondition === "to-slot-out-of-range" ? 5 : 0,
       };
     case "set_widget": return makeWidgetWrite();
+    case "set_title":
+      // No interior/promoted variant exists for `set_title` (ADR-032), so —
+      // like `makeWidgetWrite`'s default arm — every precondition falls back
+      // to the same plain top-level write; "destination-missing" still
+      // exercises delete-wins because node 20 is the target either way.
+      return { ...env, op: "set_title", node_id: 20, title: `title-${value}` };
     case "delete_node":
       return { ...env, op: "delete_node", node_id: side === 0 ? 10 : 20, removed_links: [80, 100, 101] };
     case "clear":
@@ -494,7 +500,7 @@ function* pairCases(tier: string) {
 }
 
 describe.each([
-  { tier: "representative", tags: [], timeout: 15_000, expectedPairs: 2_048, sampledRuns: 128 },
+  { tier: "representative", tags: [], timeout: 15_000, expectedPairs: 2_592, sampledRuns: 128 },
   { tier: "exhaustive", tags: ["exhaustive"], timeout: 900_000, expectedPairs: PAIR_EXECUTIONS, sampledRuns: SAMPLED_RUNS },
 ])("full op-pool permutation equivalence ($tier)", ({ tier, tags, timeout, expectedPairs, sampledRuns }) => {
   it("covers every declared op-kind pair across representative state, stamp, actor, order, and batch dimensions", { tags, timeout }, () => {

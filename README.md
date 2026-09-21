@@ -360,7 +360,9 @@ Every op carries the same envelope, minted by its creator before dispatch:
 }
 ```
 
-Eight kinds, frozen:
+Nine kinds, frozen — eight pinned to comfy-cli's op-vocabulary-v1.md (FC-10)
+plus one package-local addition, `set_title` (ADR-032), proposed to close a
+sync gap ahead of upstream ratification:
 
 | Kind | Payload beyond the envelope | Batchable (authoring) |
 |---|---|---|
@@ -369,6 +371,7 @@ Eight kinds, frozen:
 | `connect` | `link_id`, `from_node`, `from_slot`, `to_node`, `link_type`, then EITHER a numeric `to_slot` (`ConcreteConnectOp`) OR a `grow` payload with `to_slot` null/absent (`GrowConnectOp`); `grow.promoted: true` names a subgraph instance's DECLARED input, materialized on the instance and LWW-gated as one register (schema Amendment A15) | yes |
 | `disconnect` | `link_id`, `to_node`, `to_slot`; claims the same concrete input register as `connect` and removes the winning slot occupant | yes |
 | `set_widget` | `node_id`, `widget` (name, never index), `value`, optional `old`; an interior write adds `path` AND `inner_widget` together (`InteriorSetWidgetOp`); a promoted HOST write adds `promoted: {value_index, instance_path, host_widgets_values}` instead — a positional write into a subgraph instance's opaque array (schema Amendment A15) | yes |
+| `set_title` | `node_id`, `title` (string, or `null` to clear a custom title) — **package-local, ADR-032, not yet in comfy-cli's pinned vocabulary** | yes |
 | `delete_node` | `node_id`, `removed_links` | yes |
 | `clear` | `removed_nodes` | no |
 | `insert_workflow` | `workflow` containing required raw-ID `nodes` plus optional `links`, `groups`, and `definitions`; the applier remaps IDs deterministically from `op_id` | no |

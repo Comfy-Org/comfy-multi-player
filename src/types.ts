@@ -1,13 +1,20 @@
 /**
  * Types and constants for @comfyorg/comfy-multi-player.
  *
- * The op vocabulary is frozen at eight kinds; the normative contract is
- * comfy-cli's `docs/op-vocabulary-v1.md` and the stamp shapes minted by
- * `comfy_cli/workflow_ops.py` (`_new_op`), pinned by SHA at comfy-cli
- * `7e732242d971daf0d2d30f22f997abfacd78986e` (FC-10: never by branch — the
- * branch this file used to cite has since been deleted upstream). Every `§`
- * below is a section of that revision; see docs/upstream-pins.json for the pin
- * registry and the amendments upstream has added since.
+ * The op vocabulary mirrors comfy-cli's `docs/op-vocabulary-v1.md` and the
+ * stamp shapes minted by `comfy_cli/workflow_ops.py` (`_new_op`), pinned by
+ * SHA at comfy-cli `7e732242d971daf0d2d30f22f997abfacd78986e` (FC-10: never by
+ * branch — the branch this file used to cite has since been deleted
+ * upstream). Every `§` below is a section of that revision; see
+ * docs/upstream-pins.json for the pin registry and the amendments upstream
+ * has added since.
+ *
+ * `set_title` is the one exception to "every kind is pinned": it is a
+ * PACKAGE-LOCAL addition (ADR-032), proposed to close a title-rename sync gap
+ * but not yet mirrored by an upstream comfy-cli amendment. Treat it as
+ * provisional until comfy-cli's vocabulary adopts it — see ADR-032 for the
+ * disposition and docs/decisions/EXCEPTIONS.md for why this is not silently
+ * assumed to be safe.
  * The doc layout + op semantics reference is docs/multiplayer-schema.md.
  */
 
@@ -64,12 +71,18 @@ export const LEGACY_NODE_INCARNATION = "0";
 // FROZEN_OPS / DEFERRED_OPS / BATCHABLE_OPS — op-vocabulary-v1.md §1)
 // ---------------------------------------------------------------------------
 
-/** The implemented op kinds. `apply` rejects anything else loudly. */
+/**
+ * The implemented op kinds. `apply` rejects anything else loudly.
+ *
+ * `set_title` is a package-local addition (ADR-032) — see the module
+ * docstring above and FC-10.
+ */
 export const FROZEN_OPS = [
   "add_node",
   "connect",
   "disconnect",
   "set_widget",
+  "set_title",
   "delete_node",
   "clear",
   "define_subgraph",
@@ -101,7 +114,7 @@ export const DEFERRED_OPS = ["reset_doc"] as const;
  * belongs. `test/batch-policy.test.ts` pins the list, the README table, and
  * the deliberate non-enforcement together.
  */
-export const BATCHABLE_OPS = ["add_node", "connect", "disconnect", "set_widget", "delete_node", "define_subgraph"] as const;
+export const BATCHABLE_OPS = ["add_node", "connect", "disconnect", "set_widget", "set_title", "delete_node", "define_subgraph"] as const;
 
 /** A kind `applyOps` implements. */
 export type FrozenOpKind = (typeof FROZEN_OPS)[number];
@@ -437,6 +450,29 @@ export interface InteriorSetWidgetOp extends SetWidgetOpBase {
  */
 export type SetWidgetOp = TopLevelSetWidgetOp | InteriorSetWidgetOp;
 
+/**
+ * Rename a node's `title` after creation — a package-local addition
+ * (ADR-032), not yet part of comfy-cli's pinned op-vocabulary-v1.md (FC-10).
+ *
+ * `add_node`'s `node` snapshot is the only way `title` has ever entered the
+ * doc: it rides along verbatim as a passthrough field (schema §1.1), and
+ * nothing updates it afterward. A canvas rename therefore never produced an
+ * op, so it never replicated to other clients — this op closes that gap.
+ *
+ * LWW-gated like a top-level `set_widget`, but on its OWN register
+ * (`("title", node_id, node_incarnation)`, docs/multiplayer-schema.md §3)
+ * rather than the widget one: title is not a catalogued widget name, has no
+ * `widget_order` position, and is never subject to catalog validation.
+ */
+export interface SetTitleOp extends OpBase {
+  op: "set_title";
+  node_id: NodeId;
+  /** New title. `null` clears a custom title, reverting display to the class default. */
+  title: string | null;
+  /** Creator-carried lifetime of the addressed node; absent means legacy life 0. */
+  node_incarnation?: string;
+}
+
 export interface DeleteNodeOp extends OpBase {
   op: "delete_node";
   node_id: NodeId;
@@ -493,6 +529,7 @@ export type Op =
   | ConnectOp
   | DisconnectOp
   | SetWidgetOp
+  | SetTitleOp
   | DeleteNodeOp
   | ClearOp
   | DefineSubgraphOp

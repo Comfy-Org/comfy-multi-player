@@ -488,6 +488,7 @@ so a raw key gave `7` and `"7"` two registers for one node.
 | `connect` (autogrow) | `("input", String(to_node), "grow", base_name)` | no — identity only, canonicalized by stamp (A7) |
 | `connect` (promoted input, A15) | `("input", String(to_node), "grow", name)` with the FULL declared name (names may contain dots — `images.image0`), matching comfy-cli `_write_target` at amendment v1.5 (`ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`); only an ordinary autogrow keys by base name | **yes (A15)** — one register named by the definition |
 | every `connect` (link identity, A18) | `("link", String(link_id))` | **yes (A18)** — greatest stamp owns the complete tuple and coherent endpoint references |
+| `set_title` (package-local, A21) | `("title", String(node_id), node_incarnation)` | yes |
 | `add_node` / `delete_node` (presence) | `("node", String(node_id))` | **yes (A7)** |
 | `clear` (one row per entry in `removed_nodes`) | `("node", String(node_id))` | **yes (A7)** |
 | `delete_node` (severance of the link ids in `removed_links`) | none | no — monotonic, ungated (A7) |
@@ -897,6 +898,7 @@ and first-class definitions (§5.1) only shrink these):
 | `connect` (concrete) | 4–5.2 / 7 | yes — bounded by the displaced link's source degree |
 | `connect` (autogrow) | ~4 → **+2 under A7** | yes — `grow_id` identity keeps replays non-clobbering; A7 adds the `("grow", …)` stamp and the `("grow_request", …)` row, plus renames bounded by the family's concurrent-grow count |
 | `delete_node` | 4.7–5 / 6 → **+1 under A7** | yes — writes bounded by the node's degree, plus the `("node", id)` stamp; the dangling-reference *scan* is O(nodes) read cost, accepted |
+| `set_title` (package-local, A21) | 2 — `node.set("title", …)` + the `("title", …)` stamp | yes |
 | `clear` | O(doc), **+1 stamp per `removed_nodes` entry under A7** | **no — inherent.** Rare; standalone-only at the *authoring* surface (vocabulary §1.5: `apply_specs` rejects a spec batch containing it, code `workflow_clear_not_batchable`) — the *replay* surface (`apply_op` / `applyOps`, §4 abort-remainder) accepts it in any position and must, per `docs/portability.md`. SHOULD be host-mediated and never merged casually |
 
 ---
@@ -2157,3 +2159,60 @@ The wire-layout vector now names eight roots and schema v4. Semantic-op golden
 vectors remain unchanged: the op stamp and target namespaces did not change.
 Schema v4 requires coordinated reader adoption and FE sign-off before rollout;
 this implementation does not claim that sign-off or publish/deploy a package.
+
+## Amendment A21 — 2026-09-21 — `set_title`: a node-rename op (package-local, ADR-032)
+
+A node's `title` enters the doc only as a passthrough field on `add_node`'s
+initial `node` snapshot (§1.1). Nothing wrote it afterward: a canvas rename
+made by a user or the in-app agent after node creation produced no CRDT op,
+so it never replicated to other connected clients. This amendment adds
+`set_title` to close that gap.
+
+### The rule
+
+`set_title` carries `node_id` and `title` (a string, or `null` to clear a
+custom title back to the class default) plus the ordinary envelope and an
+optional `node_incarnation`. It is LWW-gated exactly like a top-level
+`set_widget` write — same stamp comparison (§3), same delete-wins no-op when
+the target node is gone, same incarnation check — but on its OWN register,
+`("title", String(node_id), node_incarnation)`, not the widget one: `title`
+is not a catalogued widget name, has no `widget_order` position, and is
+never subject to catalog validation. No catalog is required to apply it.
+
+There is no interior or promoted-host variant. A subgraph-interior node's
+title is out of scope for this amendment; if that need is confirmed, it
+should follow `set_widget`'s interior shape (`path` + a title-equivalent of
+`inner_widget`) rather than growing a distinct mechanism.
+
+### Why this is NOT pinned like the other eight kinds
+
+Every other frozen op kind mirrors a normative definition in comfy-cli's
+`docs/op-vocabulary-v1.md`, pinned by SHA (FC-10; `docs/upstream-pins.json`).
+`set_title` does not: comfy-cli's vocabulary has not been amended to define
+it. This package is adding it first, ahead of upstream ratification, because
+the bug it closes (title renames silently failing to sync) was diagnosed and
+scoped here. Treat `set_title` as PROVISIONAL: a future comfy-cli amendment
+may define an equivalent op with a different name or payload shape, at which
+point this amendment is superseded and `set_title` is reconciled with it
+(renamed, reshaped, or both) rather than the two living in permanent
+disagreement. `docs/decisions/ADR-032-set-title-op.md` records the
+disposition and the specific follow-ups this leaves for `comfy-cli` and
+`ComfyUI_frontend`.
+
+### `SCHEMA_VERSION` is NOT bumped
+
+`set_title` writes into the existing `nodes` and `__stamps` roots — no new
+root, no new per-node reserved key. §1's root-map inventory and the golden
+wire-layout vector are unchanged; only the *op* vocabulary grew, the same way
+Amendment A1 added a new op without touching the schema version.
+
+### Consumer impact
+
+A host or consumer that switches on `Op["op"]`/`FROZEN_OPS` exhaustively must
+add a `set_title` arm (the compiler enforces this — see `src/types.ts`'s
+partition guard). A consumer that only reads `project()`'s output needs no
+change: a node's projected `title` field behaves exactly as it always did,
+just now updatable after creation. Wiring an emitting UI affordance (a canvas
+rename action that mints this op) and a corresponding read in
+`ComfyUI_frontend`/`cloud` is explicitly OUT OF SCOPE for this amendment —
+see ADR-032.
