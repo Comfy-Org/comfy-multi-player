@@ -54,8 +54,8 @@ const PRECONDITIONS = [
   "promoted-or-autogrow",
 ] as const;
 // Keep the full pre-separation domain in the dedicated exhaustive CI job:
-// 64 kind pairs × 8 states × 2 actor pairs × 4 stamp pairs × 2 orders × 2 batches.
-const PAIR_EXECUTIONS = 16_384;
+// 81 kind pairs × 8 states × 2 actor pairs × 4 stamp pairs × 2 orders × 2 batches.
+const PAIR_EXECUTIONS = 20_736;
 const SAMPLED_RUNS = 1_696;
 const SAMPLE_SEED = 0x4f70504;
 
