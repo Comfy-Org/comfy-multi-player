@@ -2834,7 +2834,7 @@ function scrubNodeLinkRefs(
  * encodability are all op-only checks and all precede the first write, so a
  * rejected op leaves the document byte-identical.
  */
-function applySetNodeField(doc: Y.Doc, op: SetNodeFieldOp): SuccessfulOutcome {
+function validateSetNodeField(op: SetNodeFieldOp): void {
   if (op.node_id === undefined) {
     throw new OpRejectedError("malformed_op", "set_node_field: missing node_id");
   }
@@ -2847,28 +2847,35 @@ function applySetNodeField(doc: Y.Doc, op: SetNodeFieldOp): SuccessfulOutcome {
   if (op.node_incarnation !== undefined && (typeof op.node_incarnation !== "string" || op.node_incarnation.length === 0)) {
     throw new OpRejectedError("malformed_op", "set_node_field: node_incarnation must be a non-empty string");
   }
-  if (op.value !== null) {
-    switch (op.field) {
-      case "title":
-        if (typeof op.value !== "string") {
-          throw new OpRejectedError("malformed_op", "set_node_field: title must be a string or null");
-        }
-        break;
-      case "mode":
-        if (!Number.isInteger(op.value) || op.value < 0) {
-          throw new OpRejectedError("malformed_op", "set_node_field: mode must be a non-negative integer or null");
-        }
-        break;
-      case "flags.collapsed":
-      case "flags.pinned":
-        if (typeof op.value !== "boolean") {
-          throw new OpRejectedError("malformed_op", `set_node_field: ${op.field} must be a boolean or null`);
-        }
-        break;
-      default:
-        assertNever(op, "applier.applySetNodeField");
-    }
+  validateSetNodeFieldValue(op);
+}
+
+function validateSetNodeFieldValue(op: SetNodeFieldOp): void {
+  if (op.value === null) return;
+  switch (op.field) {
+    case "title":
+      if (typeof op.value !== "string") {
+        throw new OpRejectedError("malformed_op", "set_node_field: title must be a string or null");
+      }
+      break;
+    case "mode":
+      if (!Number.isInteger(op.value) || op.value < 0) {
+        throw new OpRejectedError("malformed_op", "set_node_field: mode must be a non-negative integer or null");
+      }
+      break;
+    case "flags.collapsed":
+    case "flags.pinned":
+      if (typeof op.value !== "boolean") {
+        throw new OpRejectedError("malformed_op", `set_node_field: ${op.field} must be a boolean or null`);
+      }
+      break;
+    default:
+      assertNever(op, "applier.validateSetNodeFieldValue");
   }
+}
+
+function applySetNodeField(doc: Y.Doc, op: SetNodeFieldOp): SuccessfulOutcome {
+  validateSetNodeField(op);
 
   const stamps = stampsMap(doc);
   const targetKey = stampTargetKey(op);
