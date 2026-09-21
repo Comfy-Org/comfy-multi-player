@@ -38,7 +38,7 @@ entrypoint: `readGraph`, `readMeta`, `docCatalogPin`, `hasNode`,
 constant. Every entry maps to a demonstrated call site above; nothing was added
 for symmetry.
 
-The surface is enforced, not conventional. Four mechanical properties, each
+The surface is enforced, not conventional. Five mechanical properties, each
 proved by attempting the violation in `test/readonly-surface.test.ts`:
 
 1. **No live handle escapes.** Nothing reachable from a return value is a

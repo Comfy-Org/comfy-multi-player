@@ -1,6 +1,6 @@
-# Multiplayer workflow-document schema — v2
+# Multiplayer workflow-document schema — v4
 
-`SCHEMA_VERSION = 2`
+`SCHEMA_VERSION = 4`
 
 > **State: DRAFT — awaiting FE sign-off (FE-1330).**
 >
@@ -22,7 +22,7 @@
 
 This document is the authoritative reference for the Y.Doc layout and op
 semantics of `@comfyorg/comfy-multi-player`. It is versioned: a change to the
-layout bumps `SCHEMA_VERSION` and requires a `migrate()` path (§10) plus FE
+layout bumps `SCHEMA_VERSION` and requires an explicit old-layout disposition (§10) plus FE
 sign-off.
 
 Normative inputs, in precedence order:
@@ -44,6 +44,9 @@ Normative inputs, in precedence order:
    `fixtures/` (the evidence: three replayable sessions, six LWW vectors, the
    exported catalog, machine-captured findings). Every DECISION below cites
    the spike finding that forced it.
+3. **ADR-022 / ADR-T8** — the local decision and accepted in-app-agent program
+   TDD add `insert_workflow` as the eighth implemented op without moving the
+   pinned comfy-cli vocabulary.
 
 ---
 
@@ -58,8 +61,45 @@ Y.Doc
 │                        last_node_id, last_link_id,
 │                        groups, extra, config, version, …          (§1.4)
 ├── Y.Map "__applied"    op_id → 1                                  (§4)
-└── Y.Map "__stamps"     write-target key → [base_version, actor, op_id]  (§4)
+├── Y.Map "__stamps"     write-target key → [base_version, actor, op_id]  (§4)
+├── Y.Map "__link_state" normalized link id → imported durable descriptor (§1.5)
+└── Y.Map "__clock_reservations" producer identity → reserved counter tuple (§1.6)
 ```
+
+### 1.5 Durable link state
+
+Schema v3 adds `__link_state` as the accepted first-class storage boundary for
+durable link intent. `mint()` seeds one versioned `authority: "imported"`
+descriptor per coherent six-field link tuple. It retains the complete tuple and
+the complete persisted destination-slot object, classifying it as concrete,
+promoted (by full definition input name), or autogrow (by `grow_id`). Readers
+fail closed on unknown descriptor versions or kinds. A successful `connect`
+replaces that baseline with an operation-owned descriptor carrying its A18
+stamp and authoritative concrete, full-name promoted, or autogrow destination
+metadata. Endpoint deletion strands the live tuple but retains the descriptor;
+a winning endpoint re-add restores the exact tuple, slot and endpoint
+references. Winning disconnect, replacement, and explicitly named
+`delete_node.removed_links` retire the descriptor. Composed destinations remain
+undefined until a producer and public type contract exist.
+
+### 1.6 Durable clock reservations
+
+Schema v4 stores Lamport admissions separately from winning semantic stamps.
+`__clock_reservations` is created lazily on the first successful admission.
+Its key is `JSON.stringify(["__lamport_clock", workflow_id, lineage_id, producer_id])`;
+its value is exactly `[counter, producer_id, key]`. All identity fields are
+strings and the reserved counter is a positive safe integer. The key and tuple
+retain their pre-v4 encoding; only their root changes. Reservations never appear
+in `readStamps()` or projected workflow JSON.
+
+`observedDocCounter()` validates the current schema, both root types and every
+tuple, then returns the maximum across `__stamps` and `__clock_reservations`.
+Winning stamps may have counter zero; reservations may not. Missing ledgers
+are empty, and neither a read nor a rejected admission creates them. Snapshot
+roots are typed without writing structs; sequence content is refused rather
+than silently viewed as an empty map. A malformed entry fails the entire scan.
+Store wrappers for one caller-owned document still share ADR-021's weakly keyed
+transaction queue; no durable counter lives outside that document.
 
 ### 1.1 Per-node Y.Map
 
@@ -538,7 +578,8 @@ stays mandatory.
    unreadable (§7 rule 0) or the catalogue pin is violated (§3 pin 4), neither
    of which is a state a host can be compacting from, and it drops individual
    entries only per §7 rule 6 —
-   carrying forward: `__stamps` entries for still-live targets, the actor
+   carrying forward: `__stamps` entries for still-live targets, all
+   `__link_state` descriptors (including temporarily stranded endpoint intent), the actor
    watermarks, `catalog_version`, and the id high-water marks. The fresh doc
    is a new **doc epoch**: its bootstrap snapshot replaces the old one (§9),
    and followers resynchronize by full re-fetch (an epoch bump is a signal on
@@ -581,20 +622,38 @@ node/link arrays are **not** sorted at projection — the §7 sorted-by-id rule
 applies to the top-level arrays only. Python's `canonical` sorts
 `definitions.subgraphs` by id but leaves each definition's interior arrays
 in authored order, and the fixtures pin that (`session-subgraph`'s def lists
-node 27 before node 3). Since only `set_widget` is subgraph-scoped, interior
-membership and order are static after mint; the def Y.Map therefore stores
-plain `node_order`/`link_order` registers (written once at mint) and
-projection emits interior arrays in that order. Definitions themselves
-project sorted by definition id.
+node 27 before node 3). The def Y.Map stores plain scalar
+`node_order`/`link_order` registers, and projection emits interior arrays in
+that order. Interior `connect` preserves surviving imported links as an
+authored-order prefix and sorts op-added links after them by winning stamp.
+The scalar `link_order` itself is updated to that canonical order; projection
+does not depend on an object marker hidden inside the array. Definitions
+themselves project sorted by definition id.
+
+Added-link ordering stamps use the internal `__stamps` key
+`["interior_link_order", String(definition_id), String(link_id)]`. A winning
+same-ID rewrite refreshes that stamp; rewriting a still-present imported link
+does not reclassify it as an addition. Definition IDs identify unique
+definitions. These are additional internal stamp entries, not a new root or
+scalar-array layout, so the interior-order metadata did not itself trigger an
+additional version bump. The combined current document schema is v3.
 
 ### 5.2 Addressing: three forms, one write target
 
-Only `set_widget` is subgraph-scoped in the frozen vocabulary (spike Q6;
-error strings captured verbatim in `fixtures/findings.json`):
+The frozen spike supported only subgraph-scoped `set_widget` (spike Q6;
+historical error strings remain in `fixtures/findings.json`). The current
+package also supports `connect` with a non-empty instance `path`:
 
-- `connect` structurally refuses interior endpoints ("a link cannot cross
-  the subgraph boundary") and promoted-widget targets ("promoted widget (a
-  value), not a link input").
+- Interior `connect` resolves both endpoints within one definition and rejects
+  interior autogrow and writes to shared, unforked definitions. Input stamps
+  include the path; normalized link identity stamps do too. This does not
+  enable cross-boundary wiring or an interior `disconnect` operation. Its path
+  is an instance route only: after the visible head is deleted, resolution
+  requires that instance's retained `interior_route` stamp (including its
+  incarnation), and a definition id is never resolved as a direct alias.
+  A missing instance without a retained route is an accepted, consumed no-op,
+  including when the path happens to name a definition. It does not edit that
+  definition; it is not a rejected operation with a byte-identity guarantee.
 - `add_node`/`delete_node` cannot address interior nodes at all.
 
 `set_widget` accepts three address forms — flat promoted (`57.text`, routed
@@ -776,10 +835,12 @@ the epoch; cross-epoch struct updates never merge.
 
 ## 10. Versioning and `migrate()`
 
-- `SCHEMA_VERSION = 2`, stored in `meta.schema_version` at mint.
-- `migrate(doc, fromVersion)` contract: in-place, stepwise `vN → vN+1`
-  migrations composed in order; exact no-op when
-  `fromVersion === SCHEMA_VERSION`; host-only (followers receive the migrated
+- `SCHEMA_VERSION = 4`, stored in `meta.schema_version` at mint.
+- Private-alpha policy keeps one current format: old layouts are re-minted at
+  their source and compatibility readers/migrations are not provided.
+- `migrate(doc, fromVersion)` contract: exact no-op when
+  `fromVersion === SCHEMA_VERSION`; fail closed without mutation for every
+  older or newer version; host-only (followers receive the current-format
   doc via the struct stream / a new epoch); a doc whose `schema_version` is
   **greater** than the code's `SCHEMA_VERSION` is rejected, fail-closed —
   never best-effort read.
@@ -787,8 +848,8 @@ the epoch; cross-epoch struct updates never merge.
   current-version one), an unreadable `meta.schema_version` is rejected rather
   than assumed current, and "exact no-op" is defined at the byte level. Read A3
   for the normative rule and for what this deliberately stopped checking.
-- Bumping `SCHEMA_VERSION` requires: a migration step, updated fixtures or a
-  fixture-format note, an amendment section in this document, and FE
+- Bumping `SCHEMA_VERSION` requires: an explicit old-layout disposition,
+  updated fixtures or a fixture-format note, an amendment section, and FE
   sign-off (the layout is a cross-repo contract with the FE follower).
 - **The version check is on the READ path, not only on `migrate()`.**
   `project(doc, catalog)` refuses — `SchemaVersionError`, before it reads any
@@ -801,8 +862,9 @@ the epoch; cross-epoch struct updates never merge.
   migration is a host-only write, `project()` is a pure read available to every
   replica, and a follower that writes the shared doc breaks KA-6/FC-5 outright
   and becomes an independently edited replica, which is the FC-1 raw-struct
-  divergence path. The caller runs `migrate(doc, storedVersion)` first, then
-  reads. The refusal is byte-exact and materializes no root type, the same as
+  divergence path. Private-alpha callers re-mint old source data into a new
+  current-format document rather than relabelling its layout. The refusal is
+  byte-exact and materializes no root type, the same as
   `migrate()`'s — asserted on `[...doc.share.keys()]`, since an empty
   materialized root encodes to zero bytes (A3).
   Both entrypoints share ONE definition of the read, `readSchemaVersion` in
@@ -1281,11 +1343,10 @@ materialization contrast on a snapshot-forked replica) and `test/roundtrip.test.
 path). Every fail-closed case runs against a real fixture workflow that projects cleanly one line
 earlier, so a `toThrow()` cannot pass for a reason unrelated to the schema version.
 
-The "document is OLDER than the reader" arm has no production reachability at `SCHEMA_VERSION = 1`
-— no older version exists to construct. It is exercised through
-`assertSchemaVersionAgainst(doc, context, expected)`, exported from the module but deliberately NOT
-from the entrypoint, since a caller free to choose `expected` could pass the document's own version
-and switch the gate off. An arm no test can turn red is dead code; this one can be turned red.
+At the time of this amendment, `SCHEMA_VERSION` was 1 and the older-document arm was reachable only
+through the module-only `assertSchemaVersionAgainst` test seam. Schema v3 now exercises the public
+read and migration entrypoints directly with preserved v1/v2 counterexamples; all are refused
+byte-identically rather than translated.
 
 ### Consumer impact
 
@@ -1304,9 +1365,10 @@ consumer repositories at their current revisions, not by analogy to A3:
   `clear`'s `groups`, and `clear` preserves everything else.
 - **The op producer never constructs a document at all.** `comfy-cli` emits ops as plain JSON; it has
   no Yjs dependency, no `Y.Doc`, no snapshot handling.
-- **The frontend does not consume this package.** `@comfyorg/comfy-multi-player` is absent from its
-  `package.json` on every branch, so there is no follower call site to break, which is what ADR-004
-  already records.
+- **At the time of this amendment, the frontend did not consume this package.** That historical
+  observation does not establish present consumer compatibility. ADR-006 requires consumers to pin
+  the same exact published npm version; frontend source migration is deferred and package development
+  remains in standalone `Comfy-Org/comfy-multi-player`. Future changes require fresh consumer checks.
 - **Two endpoints reach `project()`**, both in the doc-host sidecar: `/project` and `/apply` (whose
   response embeds a projection computed after `applyOps`). `/mint` and `/resync` do not.
 
@@ -2043,4 +2105,55 @@ reference, then installs its own tuple and exactly its own references. The
 separate input register still decides whether that identity may occupy the
 requested destination; losing that gate leaves no tuple or dangling reference.
 This adds an internal `__stamps` key, not a root-layout change, so
-`SCHEMA_VERSION` remains 2.
+this amendment did not itself require a version bump. The combined document
+schema at that integration was v3; A20 advances it to v4.
+
+---
+
+## Amendment A19 — 2026-09-11 — atomic workflow-template insertion
+
+ADR-031 adds the standalone-only `insert_workflow` op. Its payload is one
+authoritative workflow containing required top-level `nodes` and optional
+`links`, `groups`, and `definitions`. The applier deterministically remaps every
+inserted id from the immutable `op_id`, graph scope, id kind, and original id,
+then rewrites internal references. Producers emit raw payloads. Distinct ops
+cannot collide; exact replay derives the same ids. Duplicate ids within one raw
+payload remain collision errors. Malformed link tuples are `malformed_op`.
+
+Definition ids and every nested definition-interior graph id are remapped in
+scoped namespaces. Definition-instance `type` values are rewritten with them,
+so a consumer definition id is never used as a live id and no live-definition
+conflict path remains.
+
+The whole merge occurs in one Yjs transaction and claims the
+`("insert_workflow", op_id)` stamp target. Exact replay is stopped by the
+existing applied-op gate and is byte-identical. This adds graph content but no
+new root or node-map layout, so insertion did not itself require a version
+bump. The combined document schema at that integration was v3. Other op payloads remain
+closed to definition-bearing fields.
+
+---
+
+## Amendment A20 — 2026-09-18 — separate Lamport reservation ledger (schema v4)
+
+The carried finding by **coderabbitai[bot]**, submitted **2026-09-04T18:54:52Z**
+in [frontend PR #16644](https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#pullrequestreview-5116820123),
+identified `commitCounter()` writing non-write-target reservations into
+`__stamps`, which the public `readStamps()` returns as the LWW ledger. §1.6
+moves those rows to `__clock_reservations`, preserving their identity and tuple.
+ADR-021 Amendment CLK-3 records the clock contract and test scope. Prior QA is
+historical evidence, not approval of this new layout.
+
+**Version decision (KA-11): bump 3 → 4.** A v3 clock scans only `__stamps` and
+would miss reservations in the new root, potentially reusing counters even
+though graph projection looks unchanged. New readers refuse v1–v3, absent and
+future versions; no legacy-reservation lookup, conversion or relabelling is
+provided. Under private-alpha policy, the host re-mints source workflows into a
+new lineage and distributes that snapshot; this is not same-lineage recovery
+of old pending operations. Hosts must settle or discard those queues before
+cutover. `migrate()` remains a validator and refuses old layouts byte-identically.
+
+The wire-layout vector now names eight roots and schema v4. Semantic-op golden
+vectors remain unchanged: the op stamp and target namespaces did not change.
+Schema v4 requires coordinated reader adoption and FE sign-off before rollout;
+this implementation does not claim that sign-off or publish/deploy a package.

@@ -10,10 +10,9 @@
  *    apply the SAME pair of rules — an asymmetry there just relocates the
  *    poisoning to the laxer op.
  *  - Structurally corrupt doc state is skipped per node, so one bad entry
- *    cannot make the whole document unprojectable. The gate is exactly two
- *    conditions wide — not a `Y.Map`, or a `widgets` slot that is not a
- *    `Y.Map` — because those are the only two states that make projection
- *    THROW. Neither is reachable through `mint`/`applyOps`.
+ *    cannot make the whole document unprojectable. The gate skips a non-`Y.Map`
+ *    node or malformed authoritative named-widget storage. Malformed legacy
+ *    named storage is ignored when opaque storage is authoritative.
  *  - Everything else a node can carry is READABLE and must project verbatim,
  *    even when it is odd: a mistyped `flags`/`inputs`/`outputs`, a blank or
  *    absent `type`, an `id` disagreeing with its map key. All of those ARE
@@ -24,10 +23,11 @@
  *    other than the one the doc pins still throws loudly (KA-12 / schema §3
  *    pin 4); silently dropping nodes there would hide contract drift.
  */
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { appliedMap, createNodeMap, initDoc } from "../src/doc.js";
-import { applyOps, mint, nodesMap, project, type Op, type WorkflowJSON } from "../src/index.js";
+import { applyOps, mint, nodesMap, project } from "../src/index.js";
+import type { Op, WorkflowJSON } from "../src/index.js";
 import { loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
@@ -38,6 +38,7 @@ function bytes(doc: Y.Doc): Buffer {
 }
 
 let opSeq = 0;
+beforeEach(() => { opSeq = 0; });
 /** A well-formed stamped envelope; the tests vary only the payload under test. */
 function op(fields: Record<string, unknown>): Op {
   opSeq += 1;
@@ -91,6 +92,15 @@ describe("project invalid node input", () => {
       expect(projected.length, `${label} was dropped by project()`).toBe(1);
       expect(projected[0], `${label} did not round-trip`).toEqual(node);
     }
+  });
+
+  it("keeps opaque widget storage authoritative over malformed legacy named storage", () => {
+    const doc = mint({ nodes: [{ id: 4, type: "Unknown", widgets_values: ["opaque"] }], links: [] }, catalog);
+    nodesMap(doc).get("4")!.set("widgets", "malformed legacy value");
+
+    expect(project(doc, catalog).nodes).toEqual([
+      { id: 4, type: "Unknown", widgets_values: ["opaque"] },
+    ]);
   });
 
   it("does not project a node whose payload id disagrees with its op node_id", () => {

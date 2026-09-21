@@ -59,7 +59,7 @@ const root = process.env.IMPORT_GRAPH_ROOT || dirname(dirname(fileURLToPath(impo
  * not one per change. See `.agents/checks/import-graph.md` and the config's own
  * "NO includeOnly" comment.
  */
-const MIN_MODULES = Number(process.env.IMPORT_GRAPH_MIN_MODULES ?? 10);
+const MIN_MODULES = Number(process.env.IMPORT_GRAPH_MIN_MODULES ?? 11);
 
 const cli = join(root, "node_modules", ".bin", "depcruise");
 const run = spawnSync(cli, ["--output-type", "json", "src"], {
@@ -82,6 +82,39 @@ try {
 } catch {
   process.stderr.write(run.stderr ?? "");
   console.error("import-graph check INCONCLUSIVE: could not parse dependency-cruiser JSON output");
+  process.exit(2);
+}
+
+if (
+  typeof report !== "object" ||
+  report === null ||
+  typeof report.summary !== "object" ||
+  report.summary === null ||
+  !Number.isInteger(report.summary.totalCruised) ||
+  report.summary.totalCruised < 0 ||
+  !Number.isInteger(report.summary.totalDependenciesCruised) ||
+  report.summary.totalDependenciesCruised < 0 ||
+  !Array.isArray(report.summary.violations) ||
+  report.summary.violations.some(
+    (violation) =>
+      typeof violation !== "object" ||
+      violation === null ||
+      typeof violation.from !== "string" ||
+      (violation.to !== undefined && typeof violation.to !== "string") ||
+      typeof violation.rule !== "object" ||
+      violation.rule === null ||
+      typeof violation.rule.name !== "string" ||
+      typeof violation.rule.severity !== "string" ||
+      (violation.cycle !== undefined &&
+        (!Array.isArray(violation.cycle) ||
+          violation.cycle.some(
+            (segment) =>
+              typeof segment !== "string" &&
+              (typeof segment !== "object" || segment === null || typeof segment.name !== "string"),
+          ))),
+  )
+) {
+  console.error("import-graph check INCONCLUSIVE: dependency-cruiser report has no valid summary");
   process.exit(2);
 }
 

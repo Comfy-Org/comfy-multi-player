@@ -57,6 +57,25 @@ export function loadLwwVectors(): LwwVectorsFile {
   return JSON.parse(readFileSync(join(fixturesDir, "lww-vectors.json"), "utf8")) as LwwVectorsFile;
 }
 
+export function compareText(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
+const canonicalNodes = (nodes: WorkflowNode[]): WorkflowNode[] => nodes.map((node) => ({
+  ...node,
+  ...(Array.isArray(node.outputs)
+    ? {
+        outputs: node.outputs.map((output) => {
+          if (typeof output !== "object" || output === null || !("links" in output) || !Array.isArray(output.links)) {
+            return output;
+          }
+          return { ...output, links: [...output.links].sort((a, b) => Number(a) - Number(b)) };
+        }),
+      }
+    : {}),
+}));
+
 /**
  * Schema §7 rule 1: sorted-by-id node/link order is canonical (definitions
  * sorted by id too, matching comfy-cli `workflow_ops.canonical`). Fixture
@@ -65,25 +84,12 @@ export function loadLwwVectors(): LwwVectorsFile {
  */
 export function canonicalize(wf: WorkflowJSON): WorkflowJSON {
   const byId = (a: { id: unknown }, b: { id: unknown }) =>
-    String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0;
+    compareText(String(a.id), String(b.id));
   const linkId = (l: unknown) => String((l as unknown[])[0]);
-  const canonicalNodes = (nodes: WorkflowNode[]): WorkflowNode[] => nodes.map((node) => ({
-    ...node,
-    ...(Array.isArray(node.outputs)
-      ? {
-          outputs: node.outputs.map((output) => {
-            if (typeof output !== "object" || output === null || !("links" in output) || !Array.isArray(output.links)) {
-              return output;
-            }
-            return { ...output, links: [...output.links].sort((a, b) => Number(a) - Number(b)) };
-          }),
-        }
-      : {}),
-  }));
   const out: WorkflowJSON = {
     ...wf,
     nodes: canonicalNodes(wf.nodes).sort(byId),
-    links: [...wf.links].sort((a, b) => (linkId(a) < linkId(b) ? -1 : linkId(a) > linkId(b) ? 1 : 0)),
+    links: [...wf.links].sort((a, b) => compareText(linkId(a), linkId(b))),
   };
   const defs = out["definitions"] as { subgraphs?: { id?: unknown }[] } | undefined;
   if (defs && Array.isArray(defs.subgraphs)) {
@@ -96,7 +102,7 @@ export function canonicalize(wf: WorkflowJSON): WorkflowJSON {
             ? { nodes: canonicalNodes((definition as { nodes: WorkflowNode[] }).nodes) }
             : {}),
         }))
-        .sort((a, b) => String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0),
+        .sort((a, b) => compareText(String(a.id), String(b.id))),
     };
   }
   return out;

@@ -30,17 +30,28 @@ export function codePointCompare(a: string, b: string): -1 | 0 | 1 {
   }
   const ra = a.length - i;
   const rb = b.length - j;
-  return ra === rb ? 0 : ra < rb ? -1 : 1;
+  if (ra === rb) return 0;
+  return ra < rb ? -1 : 1;
+}
+
+function validStampCounter(counter: number): number {
+  if (!Number.isSafeInteger(counter) || counter < 0) {
+    throw new RangeError("Stamp counter must be a non-negative safe integer");
+  }
+  return counter;
 }
 
 /**
  * Total-order comparison of two stamp keys `[base_version, actor, op_id]`:
  * element-wise, first difference decides — numeric on `base_version`,
  * code-point order on `actor` and `op_id` (vocabulary §3 / §8.1). Two keys
- * compare equal only if they are the same op.
+ * compare equal only if they are the same op. Counters outside the valid
+ * non-negative-safe-integer domain are rejected rather than compared.
  */
 export function compareStampKeys(a: StampKey, b: StampKey): -1 | 0 | 1 {
-  if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1;
+  const aCounter = validStampCounter(a[0]);
+  const bCounter = validStampCounter(b[0]);
+  if (aCounter !== bCounter) return aCounter < bCounter ? -1 : 1;
   const byActor = codePointCompare(a[1], b[1]);
   if (byActor !== 0) return byActor;
   return codePointCompare(a[2], b[2]);
@@ -53,10 +64,10 @@ export function compareStampKeys(a: StampKey, b: StampKey): -1 | 0 | 1 {
  */
 export function stampKey(op: WireOp): StampKey {
   const stamp =
-    Array.isArray(op.stamp) && op.stamp.length >= 2
+    Array.isArray(op.stamp) && op.stamp.length === 2
       ? op.stamp
       : ([op.base_version ?? 0, op.actor ?? ""] as const);
-  return [Number(stamp[0] ?? 0), String(stamp[1] ?? ""), op.op_id];
+  return [validStampCounter(Number(stamp[0] ?? 0)), String(stamp[1] ?? ""), op.op_id];
 }
 
 /**
@@ -109,9 +120,18 @@ export function writeTarget(op: WireOp): unknown[] {
         }
         return ["input", String(op.to_node), "grow", String(op.grow.name).split(".", 1)[0]];
       }
+      if (op.path && op.path.length > 0) {
+        return ["input", op.path.map(String), String(op.to_node), op.to_slot];
+      }
       return ["input", String(op.to_node), op.to_slot];
     case "disconnect":
       return ["input", String(op.to_node), op.to_slot];
+    case "insert_workflow":
+      // One insertion is one register: the op is idempotent by `op_id` (exact
+      // replay is a no-op via the applied-set gate), and two distinct
+      // insertions never contend because the minter allocates fresh ids
+      // (ADR-022). Keyed by op_id so a stamp lookup is per-insertion.
+      return ["insert_workflow", op.op_id];
     case "clear":
     case "reset_doc":
       // Whole-document ops: no scalar register to contest, so the target is
@@ -119,9 +139,11 @@ export function writeTarget(op: WireOp): unknown[] {
       // made the arm look like a catch-all for future kinds as well; they are
       // now named, and the arm below is a guard rather than a fallback.
       return [op.op];
+    case "define_subgraph":
+      return ["definition", op.subgraph_id];
     default:
       // Exhaustiveness guard (issue #21): with every `WireOp` member cased
-      // above — the five `Op` kinds plus the deferred `reset_doc` — `op` is
+      // above — the six `Op` kinds plus the deferred `reset_doc` — `op` is
       // `never` here, so adding a kind to EITHER union fails `tsc` at this
       // line until it is given a write target.
       //

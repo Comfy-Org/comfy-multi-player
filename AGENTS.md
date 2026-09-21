@@ -22,11 +22,11 @@ npm run check:profile-claims
 npm run check:coderabbit
 npm run verify:corpus
 npm test
+npm run test:exhaustive
 ```
 
-Run all nine commands before review — that is the set CI runs, and the list was
-short by three (`check:pins`, `check:profile-claims`, `verify:corpus`) from the
-day each of those gates landed. `check:coderabbit` regenerates `.coderabbit.yaml`'s sentinel-delimited region from the
+Run these ten commands before review, including both CI test tiers.
+`check:coderabbit` regenerates `.coderabbit.yaml`'s sentinel-delimited region from the
 `<!-- coderabbit-instructions -->` blocks in `.agents/checks/*.md` and fails on any byte
 difference — including inside the generated header comments, which are emitted too. If it
 fails, edit the block in the owning profile and run `npm run gen:coderabbit`, never the YAML

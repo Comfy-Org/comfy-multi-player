@@ -36,6 +36,7 @@ import {
   project,
   SchemaVersionError,
   readGraph,
+  readLinkState,
   readMeta,
   readStamps,
   type Op,
@@ -120,6 +121,7 @@ function fixtureDoc(): Y.Doc {
 function readSurfaceResults(doc: Y.Doc): [string, unknown][] {
   return [
     ["readGraph(doc)", readGraph(doc)],
+    ["readLinkState(doc)", readLinkState(doc)],
     ["readMeta(doc)", readMeta(doc)],
     ["docCatalogPin(doc)", docCatalogPin(doc)],
     ["hasNode(doc, id)", hasNode(doc, KSAMPLER_ID)],
@@ -183,7 +185,7 @@ describe("read-only surface — it actually reads the document", () => {
 
   it("readMeta returns schema/catalog version and the §6 passthrough keys", () => {
     const meta = readMeta(fixtureDoc());
-    expect(meta["schema_version"]).toBe(2);
+    expect(meta["schema_version"]).toBe(4);
     expect(meta["catalog_version"]).toBe(CATALOG_SHA);
     expect(meta["groups"]).toEqual([{ title: "g", bounding: [0, 0, 10, 10] }]);
     expect(meta["extra"]).toEqual({ ds: { scale: 1, offset: [0, 0] } });
@@ -254,6 +256,36 @@ describe("read-only surface — no live handle escapes", () => {
     expect(snapshotValue).not.toBe(aliased);
     expect(snapshotValue).toEqual(aliased);
     expect(readMeta(doc)["extra"]).not.toBe(doc.getMap("meta").get("extra"));
+  });
+
+  it("preserves hostile __proto__ keys as isolated snapshot data", () => {
+    const doc = fixtureDoc();
+    const hostileNode = new Y.Map<unknown>();
+    hostileNode.set("type", "Note");
+    hostileNode.set("pos", JSON.parse('{"__proto__":{"polluted":true},"x":7}'));
+    const hostileWidgets = new Y.Map<unknown>();
+    hostileWidgets.set("__proto__", "widget value");
+    hostileWidgets.set("safe", "retained value");
+    hostileNode.set("widgets", hostileWidgets);
+    nodesMap(doc).set("__proto__", hostileNode);
+    doc.getMap<unknown>(ROOT_LINKS).set("__proto__", [1, 2, 3]);
+
+    const graph = readGraph(doc);
+    const node = graph.nodes["__proto__"]!;
+    const pos = node.pos as Record<string, unknown>;
+    const widgets = node.widgets as Record<string, unknown>;
+
+    for (const record of [graph.nodes, graph.links, pos, widgets]) {
+      expect(Object.getPrototypeOf(record)).toBeNull();
+      expect(Object.hasOwn(record, "__proto__")).toBe(true);
+    }
+    expect(graph.links["__proto__"]).toEqual([1, 2, 3]);
+    expect(pos["__proto__"]).toEqual({ polluted: true });
+    expect(pos["x"]).toBe(7);
+    expect(widgets["__proto__"]).toBe("widget value");
+    expect(widgets["safe"]).toBe("retained value");
+    expect((pos as { polluted?: unknown }).polluted).toBeUndefined();
+    expect((Object.prototype as { polluted?: unknown }).polluted).toBeUndefined();
   });
 });
 
@@ -369,9 +401,9 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
   /**
    * The defect this block exists for: `project()` grew a schema-version read
    * gate in #60, and a surface that reads the SAME layout by the SAME key
-   * names without one is a way AROUND that gate — `readGraph` would hand back
-   * v1 key names for a v2 document, which is precisely the KA-11
-   * mis-projection #60 refused. A guard a consumer can walk around is
+   * names without one is a way AROUND that gate — `readGraph` could hand back
+   * old-layout key names for a current-schema document, which is precisely the
+   * KA-11 mis-projection #60 refused. A guard a consumer can walk around is
    * decorative.
    *
    * The rule has TWO clauses and both are load-bearing:
@@ -389,11 +421,9 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
    * bump trigger — a name-keyed probe is blind to exactly the document the
    * gate exists to refuse.
    *
-   * The "document is OLDER than the reader" arm is not constructible at
-   * `SCHEMA_VERSION = 1` (there is no v0). It is not re-implemented here: this
-   * gate delegates the comparison to `assertReadableSchema`, where #60's
-   * `test/schema-version-on-read.test.ts` reaches that arm through
-   * `assertSchemaVersionAgainst`.
+   * `SCHEMA_VERSION` is 4, so a schema-v1 document exercises the
+   * older-than-reader arm through the same `assertReadableSchema` comparison
+   * used by project().
    */
 
   /** A document that carries real content, with `meta.schema_version` forced to `version`. */
@@ -414,7 +444,8 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
   }
 
   const UNREADABLE: [string, () => Y.Doc][] = [
-    ["newer than this package", () => docWithSchemaVersion(3)],
+    ["newer than this package", () => docWithSchemaVersion(5)],
+    ["older than this package", () => docWithSchemaVersion(1)],
     ["not an integer version", () => docWithSchemaVersion("1")],
     ["a zero version", () => docWithSchemaVersion(0)],
     ["absent from a document that has meta", () => {
@@ -468,7 +499,7 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
     // The positive control: without it every assertion above passes for a
     // surface that refused unconditionally.
     const doc = fixtureDoc();
-    expect(readMeta(doc)["schema_version"]).toBe(2);
+    expect(readMeta(doc)["schema_version"]).toBe(4);
     expect(Object.keys(readGraph(doc).nodes).sort()).toEqual([
       String(KSAMPLER_ID),
       String(NOTE_ID),
@@ -646,7 +677,7 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
     // an untypable root as content instead, so the refusal type matches.
     const doc = new Y.Doc();
     doc.getArray<unknown>("nodes").push([1]);
-    metaMap(doc).set("schema_version", 3);
+    metaMap(doc).set("schema_version", 5);
     expect(() => project(doc, catalog)).toThrow(SchemaVersionError);
     expect(() => readGraph(doc)).toThrow(SchemaVersionError);
     expect(() => readStamps(doc)).toThrow(SchemaVersionError);
@@ -689,10 +720,12 @@ describe("read-only surface — classification", () => {
    */
   const OP_LAYER_AND_TYPES: readonly string[] = [
     "applyOps",
+    "inspectOps",
     "project",
     "mint",
     "migrate",
     "SCHEMA_VERSION",
+    "LINK_STATE_DESCRIPTOR_VERSION",
     "OpRejectedError",
     "SchemaVersionError",
     "FROZEN_OPS",
@@ -733,6 +766,7 @@ describe("read-only surface — classification", () => {
   ];
   const READ_SURFACE: readonly string[] = [
     "readGraph",
+    "readLinkState",
     "readMeta",
     "docCatalogPin",
     "hasNode",

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import {
   applyOps,
@@ -28,6 +28,7 @@ const catalog: WidgetCatalog = {
 };
 
 let sequence = 0;
+beforeEach(() => { sequence = 0; });
 const envelope = (actor = "actor") => ({
   op_id: String(++sequence).padStart(32, "0"),
   actor,

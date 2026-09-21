@@ -74,9 +74,8 @@ import { _getMutationCount, _resetMutationCount, stampsMap } from "../src/doc.js
 
 const catalog: WidgetCatalog = { types: { Hub: { widget_order: ["text"] }, Peer: { widget_order: [] } } };
 
-let seq = 0;
-const env = () => {
-  const op_id = ("b" + String(seq++).padStart(4, "0")).padEnd(32, "0");
+const env = (sequence: number) => {
+  const op_id = ("b" + String(sequence).padStart(4, "0")).padEnd(32, "0");
   return { op_id, actor: "a", base_version: 1, stamp: [1, "a"] as [number, string] };
 };
 
@@ -129,7 +128,7 @@ function deleteHubCost(degree: number): number {
   const doc = mint(hubWorkflow(degree), catalog);
   const op: DeleteNodeOp = {
     op: "delete_node",
-    ...env(),
+    ...env(degree),
     node_id: 1,
     removed_links: Array.from({ length: degree }, (_, i) => i + 1),
   };
@@ -154,8 +153,9 @@ describe("schema §11: the bounded-writes count grows with the op's blast radius
     }
     // The exact law, so a change to the write pattern is a visible diff rather
     // than a still-passing inequality: one node delete, one delete per severed
-    // link, one scrub per peer input slot, and one node-presence stamp.
-    expect(costs).toEqual(degrees.map((d) => 2 * d + 3));
+    // link, one durable-descriptor retirement per explicitly named link, one
+    // scrub per peer input slot, and one node-presence stamp.
+    expect(costs).toEqual(degrees.map((d) => 3 * d + 3));
   });
 
   it("exceeds any ceiling in this gate's range at a large enough degree, so the §11 gate can fire", () => {
@@ -176,7 +176,7 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     // through raw Y instead of `mset` would drop below three; anything that
     // writes more would rise above it. Both are the gate losing its meaning.
     const doc = mint(hubWorkflow(1), catalog);
-    const op = { op: "set_widget", ...env(), node_id: 1, widget: "text", value: "z" } as SetWidgetOp;
+    const op: SetWidgetOp = { op: "set_widget", ...env(0), node_id: 1, widget: "text", value: "z" };
     _resetMutationCount(doc);
     expect(applyOps(doc, [op], catalog).outcomes.some((o) => o.outcome === "rejected")).toBe(false);
     expect(_getMutationCount(doc)).toBe(3);
@@ -189,14 +189,14 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     _resetMutationCount(doc);
     const running: number[] = [];
     for (let i = 0; i < 4; i++) {
-      const op = { op: "set_widget", ...env(), node_id: 1, widget: "text", value: "v" + String(i) } as SetWidgetOp;
+      const op: SetWidgetOp = { op: "set_widget", ...env(i), node_id: 1, widget: "text", value: "v" + String(i) };
       expect(applyOps(doc, [op], catalog).outcomes.some((o) => o.outcome === "rejected")).toBe(false);
       running.push(_getMutationCount(doc));
     }
     expect(running).toEqual([3, 6, 9, 12]);
   });
 
-  it("charges an autogrow connect exactly eight, including link ownership and canonicalization ledger rows", () => {
+  it("charges an autogrow connect exactly nine, including durable link state and canonicalization ledger rows", () => {
     // Reaches both `apush` sites, which `deleteHubCost` never does: wiring the
     // link id into the source output port's list, and appending the grown input
     // slot itself. Itemized precisely because this is an exact-accounting test:
@@ -205,9 +205,9 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     // ledger rows used to canonicalize concurrent grows; neither is an LWW
     // gate that can discard a grow.
     const doc = mint(chainWorkflow(), catalog);
-    const op = {
+    const op: ConnectOp = {
       op: "connect",
-      ...env(),
+      ...env(0),
       link_id: 9,
       from_node: 3,
       from_slot: 0,
@@ -215,10 +215,10 @@ describe("schema §11: the counter measures the applier's real writes", () => {
       to_slot: null,
       link_type: "X",
       grow: { name: "gin", type: "X" },
-    } as unknown as ConnectOp;
+    };
     _resetMutationCount(doc);
     expect(applyOps(doc, [op], catalog).outcomes.some((o) => o.outcome === "rejected")).toBe(false);
-    expect(_getMutationCount(doc)).toBe(8);
+    expect(_getMutationCount(doc)).toBe(9);
     expect(stampsMap(doc).size, "autogrow records link ownership plus stamp + request (A7/A18)").toBe(3);
   });
 
@@ -226,12 +226,13 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     // Reaches `adel`, the applier's only array REMOVE: deleting the middle of
     // 1 → 2 → 3 leaves node 1's output `links` array holding a dead link id,
     // which the dangling scrub removes in place. One node delete, two link
-    // deletes, one array delete, one input-slot scrub, one presence stamp, one applied set.
+    // deletes, two descriptor retirements, one array delete, one input-slot
+    // scrub, one presence stamp, one applied set.
     const doc = mint(chainWorkflow(), catalog);
-    const op: DeleteNodeOp = { op: "delete_node", ...env(), node_id: 2, removed_links: [1, 2] };
+    const op: DeleteNodeOp = { op: "delete_node", ...env(0), node_id: 2, removed_links: [1, 2] };
     _resetMutationCount(doc);
     expect(applyOps(doc, [op], catalog).outcomes.some((o) => o.outcome === "rejected")).toBe(false);
-    expect(_getMutationCount(doc)).toBe(7);
+    expect(_getMutationCount(doc)).toBe(9);
   });
 
   it("charges a de-duplicated replay nothing, so the ceiling is not padded by idempotent retries (KA-4)", () => {
@@ -239,7 +240,7 @@ describe("schema §11: the counter measures the applier's real writes", () => {
     // cost zero Y-writes — if a skipped op still wrote, the ceiling would be
     // absorbing work that the idempotency gate is supposed to have removed.
     const doc = mint(hubWorkflow(1), catalog);
-    const op = { op: "set_widget", ...env(), node_id: 1, widget: "text", value: "z" } as SetWidgetOp;
+    const op: SetWidgetOp = { op: "set_widget", ...env(0), node_id: 1, widget: "text", value: "z" };
     const first = applyOps(doc, [op], catalog);
     expect(first.outcomes.some((o) => o.outcome === "rejected")).toBe(false);
     expect(first.outcomes.filter((o) => o.outcome === "applied").map((o) => o.op_id)).toEqual([op.op_id]);

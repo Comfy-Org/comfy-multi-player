@@ -128,6 +128,30 @@ describe("scrubDanglingLinkRefs current behavior", () => {
     expect(inputLinkId(after, 20)).toBe(1);
   });
 
+  it("keeps live-link references when delete_node removes only the deleted node's own links", () => {
+    const doc = mint(
+      {
+        nodes: [source(10, [1]), destination(20, 1), source(40, [3]), destination(50, 3)],
+        links: [
+          [1, 10, 0, 20, 0, "IMAGE"],
+          [3, 40, 0, 50, 0, "IMAGE"],
+        ],
+      },
+      catalog,
+    );
+
+    expectApplied(doc, deleteNode([1]));
+
+    const after = project(doc, catalog);
+    expect(after.links).toEqual([[3, 40, 0, 50, 0, "IMAGE"]]);
+    expect(outputLinkIds(after, 10)).toEqual([]);
+    expect(after.nodes.some((candidate) => candidate.id === 20)).toBe(false);
+    // The unrelated live link's endpoint references survive: these are the
+    // keptIds branches of the scrub.
+    expect(outputLinkIds(after, 40)).toEqual([3]);
+    expect(inputLinkId(after, 50)).toBe(3);
+  });
+
   it("adds no encoded link-reference writes during a non-scrubbing set_widget", () => {
     const doc = mint(
       {
@@ -138,15 +162,14 @@ describe("scrubDanglingLinkRefs current behavior", () => {
     );
     const sourceNode = nodesMap(doc).get("10")!;
     const destinationNode = nodesMap(doc).get("20")!;
-    const outputLinks = (sourceNode.get("outputs") as Y.Array<Y.Map<unknown>>)
-      .get(0)!
-      .get("links") as Y.Array<unknown>;
-    const input = (destinationNode.get("inputs") as Y.Array<Y.Map<unknown>>).get(0)!;
+    // Observe the parent slot containers, not just the child `links` array:
+    // a whole-value replacement of `port.links` (or `slot.link`) detaches the
+    // old child without firing on it, so only the parent observer sees it.
+    const sourceOutputs = sourceNode.get("outputs") as Y.Array<Y.Map<unknown>>;
+    const destinationInputs = destinationNode.get("inputs") as Y.Array<Y.Map<unknown>>;
     let linkReferenceEvents = 0;
-    outputLinks.observe(() => linkReferenceEvents++);
-    input.observe((event) => {
-      if (event.keysChanged.has("link")) linkReferenceEvents++;
-    });
+    sourceOutputs.observeDeep(() => linkReferenceEvents++);
+    destinationInputs.observeDeep(() => linkReferenceEvents++);
     const beforeProjection = project(doc, catalog);
     const beforeBytes = Buffer.from(Y.encodeStateAsUpdate(doc));
     const op: SetWidgetOp = {
@@ -177,5 +200,12 @@ describe("scrubDanglingLinkRefs current behavior", () => {
       { op_id: op.op_id, outcome: "no-op" },
     ]);
     expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(afterBytes)).toBe(true);
+
+    // Harness sensitivity: a direct whole-value replacement of `port.links`
+    // must be observable through the parent containers above — the exact miss
+    // the child-array observer had. Flip the assertion to prove it is live.
+    const port = sourceOutputs.get(0)!;
+    port.set("links", new Y.Array());
+    expect(linkReferenceEvents).toBeGreaterThan(0);
   });
 });

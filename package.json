@@ -1,6 +1,6 @@
 {
   "name": "@comfyorg/comfy-multi-player",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "license": "GPL-3.0-only",
   "description": "Shared workflow-document package: CRDT op applier + JSON projection used identically by the browser and the server doc host.",
   "type": "module",
@@ -30,6 +30,7 @@
     "prepack": "npm run build",
     "prepare": "npm run build",
     "test": "vitest run",
+    "test:exhaustive": "vitest run test/permutation/full-op-pool.permutation.test.ts --tags-filter=exhaustive",
     "test:mutation": "stryker run",
     "check:mutation-report": "node scripts/check-mutation-report.mjs",
     "check:purity": "node scripts/check-purity.mjs",
@@ -39,8 +40,10 @@
     "gen:coderabbit": "node scripts/gen-coderabbit-config.mjs --write",
     "check:imports": "node scripts/check-import-graph.mjs",
     "check:stateless": "node scripts/check-stateless.mjs",
+    "verify:package": "node scripts/verify-package.mjs",
     "test:clock-matrix": "npm run build && vitest run test/clock-matrix/clock-matrix.test.ts --reporter=verbose",
-    "verify:corpus": "node scripts/verify-corpus.mjs"
+    "verify:corpus": "node scripts/verify-corpus.mjs",
+    "bench": "vitest bench --run bench/apply-project.bench.ts --reporter=default --reporter=./bench/frame-share-reporter.ts"
   },
   "dependencies": {
     "yjs": "^13.6.27"
@@ -50,11 +53,13 @@
     "@stryker-mutator/vitest-runner": "^10.0.0",
     "@types/node": "^26.3.0",
     "@typescript-eslint/parser": "^8.68.0",
+    "ajv6": "npm:ajv@6.15.0",
     "dependency-cruiser": "^18.2.0",
     "eslint": "^9.39.5",
     "eslint-plugin-sonarjs": "^3.0.7",
     "fast-check": "^4.9.0",
     "typescript": "^5.9.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "yaml": "^2.9.1"
   }
 }

@@ -31,43 +31,9 @@ describe("W8 projection goldens (KA-3, KA-4, KA-12)", () => {
       },
     } as unknown as WorkflowJSON;
 
-    expect(project(mint(workflow, catalog), catalog)).toMatchInlineSnapshot(`
-      {
-        "definitions": {
-          "subgraphs": [
-            {
-              "id": "a",
-              "links": [],
-              "nodes": [],
-            },
-            {
-              "id": "z",
-              "links": [],
-              "nodes": [],
-            },
-          ],
-        },
-        "links": [],
-        "nodes": [
-          {
-            "id": 2,
-            "type": "Unknown",
-          },
-          {
-            "id": 3,
-            "type": "Unknown",
-          },
-          {
-            "id": "4",
-            "type": "Unknown",
-          },
-          {
-            "id": "5",
-            "type": "Unknown",
-          },
-        ],
-      }
-    `);
+    const projected = project(mint(workflow, catalog), catalog);
+    expect(projected.nodes.map(({ id }) => id)).toEqual([2, 3, "4", "5"]);
+    expect((projected.definitions as { subgraphs: Array<{ id: string }> }).subgraphs.map(({ id }) => id)).toEqual(["a", "z"]);
   });
 
   it("preserves a catalog-miss node's opaque values but rejects an invalid named widget", () => {

@@ -258,25 +258,33 @@ function assertJsonValue(value: unknown, context: string, ancestors = new Set<ob
 
   ancestors.add(value);
   if (Array.isArray(value)) {
-    const ownKeys = Reflect.ownKeys(value);
-    if (ownKeys.some((key) => key !== "length" && (typeof key !== "string" || !/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= value.length))) {
-      invalid(context, "must be canonical JSON data without ignored array properties");
-    }
-    for (let index = 0; index < value.length; index++) {
-      if (!Object.hasOwn(value, index)) invalid(`${context}[${index}]`, "must be canonical JSON data without sparse entries");
-      assertJsonValue(value[index], `${context}[${index}]`, ancestors);
-    }
+    assertJsonArray(value, context, ancestors);
   } else {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) invalid(context, "must be a canonical JSON object");
-    for (const key of Reflect.ownKeys(value)) {
-      if (typeof key !== "string") invalid(context, "must be canonical JSON data without symbol keys");
-      const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
-      if (!descriptor.enumerable || !("value" in descriptor)) invalid(`${context}.${key}`, "must be canonical JSON data without ignored or computed properties");
-      assertJsonValue(descriptor.value, `${context}.${key}`, ancestors);
-    }
+    assertJsonObject(value, context, ancestors);
   }
   ancestors.delete(value);
+}
+
+function assertJsonArray(value: unknown[], context: string, ancestors: Set<object>): void {
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.some((key) => key !== "length" && (typeof key !== "string" || !/^(0|[1-9]\d*)$/.test(key) || Number(key) >= value.length))) {
+    invalid(context, "must be canonical JSON data without ignored array properties");
+  }
+  for (let index = 0; index < value.length; index++) {
+    if (!Object.hasOwn(value, index)) invalid(`${context}[${index}]`, "must be canonical JSON data without sparse entries");
+    assertJsonValue(value[index], `${context}[${index}]`, ancestors);
+  }
+}
+
+function assertJsonObject(value: object, context: string, ancestors: Set<object>): void {
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) invalid(context, "must be a canonical JSON object");
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") invalid(context, "must be canonical JSON data without symbol keys");
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+    if (!descriptor.enumerable || !("value" in descriptor)) invalid(`${context}.${key}`, "must be canonical JSON data without ignored or computed properties");
+    assertJsonValue(descriptor.value, `${context}.${key}`, ancestors);
+  }
 }
 
 function assertHash(value: unknown, context: string): TraceHash {
@@ -352,7 +360,18 @@ function assertOpPayload(value: unknown, context: string) {
   const stamp = assertStamp(required(payload, "stamp", context), `${context}.stamp`);
   if (stamp[1] !== actor) invalid(`${context}.stamp`, "does not preserve semantic identity");
 
-  if (op === "add_node") {
+  function assertWorkflowInsertion(): void {
+    const workflow = asRecord(required(payload, "workflow", context), `${context}.workflow`);
+    asArray(required(workflow, "nodes", `${context}.workflow`), `${context}.workflow.nodes`);
+    if (Object.hasOwn(workflow, "links")) asArray(workflow["links"], `${context}.workflow.links`);
+    if (Object.hasOwn(workflow, "definitions")) {
+      const definitions = asRecord(workflow["definitions"], `${context}.workflow.definitions`);
+      if (Object.hasOwn(definitions, "subgraphs")) {
+        asArray(definitions["subgraphs"], `${context}.workflow.definitions.subgraphs`);
+      }
+    }
+  }
+  function assertNodeAddition(): void {
     const nodeId = asNodeId(required(payload, "node_id", context), `${context}.node_id`);
     const classType = asString(required(payload, "class_type", context), `${context}.class_type`);
     assertNumberArray(required(payload, "pos", context), `${context}.pos`);
@@ -360,7 +379,8 @@ function assertOpPayload(value: unknown, context: string) {
     if (String(asNodeId(required(node, "id", `${context}.node`), `${context}.node.id`)) !== String(nodeId)) invalid(`${context}.node.id`, "does not match node_id");
     if (asString(required(node, "type", `${context}.node`), `${context}.node.type`) !== classType) invalid(`${context}.node.type`, "does not match class_type");
     assertOptionalString(payload, "node_incarnation", context);
-  } else if (op === "connect") {
+  }
+  function assertConnection(): void {
     asNodeId(required(payload, "link_id", context), `${context}.link_id`);
     asNodeId(required(payload, "from_node", context), `${context}.from_node`);
     asInteger(required(payload, "from_slot", context), `${context}.from_slot`);
@@ -383,7 +403,15 @@ function assertOpPayload(value: unknown, context: string) {
         required(inputcount, "value", `${context}.grow.inputcount`);
       }
     }
-  } else if (op === "set_widget") {
+  }
+  function assertPromotedWidgetWrite(): void {
+    const promoted = asRecord(payload["promoted"], `${context}.promoted`);
+    const valueIndex = asInteger(required(promoted, "value_index", `${context}.promoted`), `${context}.promoted.value_index`);
+    const hostValues = asArray(required(promoted, "host_widgets_values", `${context}.promoted`), `${context}.promoted.host_widgets_values`);
+    if (hostValues.length <= valueIndex) invalid(`${context}.promoted.host_widgets_values`, "must cover value_index");
+    if (Object.hasOwn(promoted, "instance_path")) assertNodeIdArray(promoted["instance_path"], `${context}.promoted.instance_path`);
+  }
+  function assertWidgetWrite(): void {
     asNodeId(required(payload, "node_id", context), `${context}.node_id`);
     asString(required(payload, "widget", context), `${context}.widget`);
     if (required(payload, "value", context) === undefined) invalid(`${context}.value`, "must be JSON-representable");
@@ -399,32 +427,42 @@ function assertOpPayload(value: unknown, context: string) {
     } else if (payload["inner_widget"] !== undefined && payload["inner_widget"] !== null) {
       invalid(`${context}.inner_widget`, "requires a non-empty path");
     } else if (payload["promoted"] !== undefined && payload["promoted"] !== null) {
-      const promoted = asRecord(payload["promoted"], `${context}.promoted`);
-      const valueIndex = asInteger(required(promoted, "value_index", `${context}.promoted`), `${context}.promoted.value_index`);
-      const hostValues = asArray(required(promoted, "host_widgets_values", `${context}.promoted`), `${context}.promoted.host_widgets_values`);
-      if (hostValues.length <= valueIndex) invalid(`${context}.promoted.host_widgets_values`, "must cover value_index");
-      if (Object.hasOwn(promoted, "instance_path")) assertNodeIdArray(promoted["instance_path"], `${context}.promoted.instance_path`);
+      assertPromotedWidgetWrite();
     }
-  } else if (op === "disconnect") {
-    asNodeId(required(payload, "link_id", context), `${context}.link_id`);
-    asNodeId(required(payload, "to_node", context), `${context}.to_node`);
-    asInteger(required(payload, "to_slot", context), `${context}.to_slot`);
-  } else if (op === "delete_node") {
-    asNodeId(required(payload, "node_id", context), `${context}.node_id`);
-    assertNodeIdArray(required(payload, "removed_links", context), `${context}.removed_links`);
-  } else if (op === "clear") {
-    assertNodeIdArray(required(payload, "removed_nodes", context), `${context}.removed_nodes`);
-  } else {
-    // Exhaustiveness guard (issue #21), matching `dispatch` in `applier.ts`:
-    // `op` is narrowed from `FROZEN_OPS`, so with every kind enumerated above
-    // it is `never` here. This arm replaced a terminal `else` that validated
-    // every un-enumerated kind against `clear`'s payload shape — which broke
-    // silently when `disconnect` joined `FROZEN_OPS` in #139, rejecting real
-    // disconnect evidence for a missing `removed_nodes` while never checking
-    // `link_id`, `to_node`, or `to_slot`. Fail-closed reads (KA-11) need the
-    // next added kind to break compilation here, not to be mis-validated at
-    // runtime as some other kind.
-    assertNever(op, `${context}.op`);
+  }
+
+  switch (op) {
+    case "insert_workflow": assertWorkflowInsertion(); break;
+    case "add_node": assertNodeAddition(); break;
+    case "connect": assertConnection(); break;
+    case "set_widget": assertWidgetWrite(); break;
+    case "disconnect":
+      asNodeId(required(payload, "link_id", context), `${context}.link_id`);
+      asNodeId(required(payload, "to_node", context), `${context}.to_node`);
+      asInteger(required(payload, "to_slot", context), `${context}.to_slot`);
+      break;
+    case "delete_node":
+      asNodeId(required(payload, "node_id", context), `${context}.node_id`);
+      assertNodeIdArray(required(payload, "removed_links", context), `${context}.removed_links`);
+      break;
+    case "clear":
+      assertNodeIdArray(required(payload, "removed_nodes", context), `${context}.removed_nodes`);
+      break;
+    case "define_subgraph":
+      asString(required(payload, "subgraph_id", context), `${context}.subgraph_id`);
+      asRecord(required(payload, "subgraph_definition", context), `${context}.subgraph_definition`);
+      break;
+    default:
+      // Exhaustiveness guard (issue #21), matching `dispatch` in `applier.ts`:
+      // `op` is narrowed from `FROZEN_OPS`, so with every kind enumerated above
+      // it is `never` here. This arm replaced a terminal `else` that validated
+      // every un-enumerated kind against `clear`'s payload shape — which broke
+      // silently when `disconnect` joined `FROZEN_OPS` in #139, rejecting real
+      // disconnect evidence for a missing `removed_nodes` while never checking
+      // `link_id`, `to_node`, or `to_slot`. Fail-closed reads (KA-11) need the
+      // next added kind to break compilation here, not to be mis-validated at
+      // runtime as some other kind.
+      assertNever(op, `${context}.op`);
   }
 
   return { actor, baseVersion, op, opId, payload, stamp };
@@ -527,18 +565,20 @@ function assertSemanticStep(step: UnknownRecord, context: string): ValidatedSema
   const decision = assertDecision(required(step, "decision_evidence", context), `${context}.decision_evidence`);
   const batch = Object.hasOwn(step, "batch") ? assertBatch(step["batch"], `${context}.batch`) : undefined;
 
-  if (outcome === "applied") {
+  function assertAppliedOutcome(): void {
     if (reasonCode !== outcome) invalid(`${context}.reason_code`, "must match outcome");
     if (!processed || !consumed) invalid(`${context}.consumed_op_id`, "must be true for an applied outcome");
     if (decision.kind !== "none") invalid(`${context}.decision_evidence`, "must be none for an applied outcome");
-  } else if (outcome === "no-op") {
+  }
+  function assertNoOpOutcome(): void {
     if (reasonCode !== outcome) invalid(`${context}.reason_code`, "must match outcome");
     if (!processed || !consumed) invalid(`${context}.consumed_op_id`, "must be true for a no-op outcome");
     if (decision.kind !== "none" && (decision.kind !== "dedupe" || decision.originalOpId !== opId)) {
       invalid(`${context}.decision_evidence`, "must be none or identify the deduplicated op_id");
     }
     if (!emptyDiff || !hashesMatch(beforeHash, afterHash)) invalid(`${context}.semantic_diff`, "must be empty for a no-op outcome");
-  } else if (outcome === "lww-dropped") {
+  }
+  function assertDroppedOutcome(): void {
     if (reasonCode !== outcome) invalid(`${context}.reason_code`, "must match outcome");
     if (!processed || !consumed) invalid(`${context}.consumed_op_id`, "must be true for an LWW-dropped outcome");
     if (decision.kind !== "lww-comparison" || decision.losing[0] !== stamp[0] || decision.losing[1] !== stamp[1] || decision.losing[2] !== opId) {
@@ -548,7 +588,8 @@ function assertSemanticStep(step: UnknownRecord, context: string): ValidatedSema
       invalid(`${context}.decision_evidence.winning_stamp`, "must outrank the losing stamp");
     }
     if (!emptyDiff || !hashesMatch(beforeHash, afterHash)) invalid(`${context}.semantic_diff`, "must be empty for an LWW-dropped outcome");
-  } else {
+  }
+  function assertRejectedOutcome(): void {
     if (consumed) invalid(`${context}.consumed_op_id`, "must be false for a rejected outcome");
     if (decision.kind !== "rejection" || decision.code !== reasonCode) invalid(`${context}.decision_evidence`, "must match the rejection reason_code");
     if (!emptyDiff || !hashesMatch(beforeHash, afterHash)) invalid(`${context}.semantic_diff`, "must be empty for a rejected outcome");
@@ -561,6 +602,14 @@ function assertSemanticStep(step: UnknownRecord, context: string): ValidatedSema
       ? decision.kind === "rejection" && batch !== undefined && decision.failingIndex !== null && decision.failingIndex < batch.index
       : !processed || (decision.kind === "rejection" && decision.failingIndex === (batch?.index ?? 0));
     if (!expectedFailureIndex) invalid(`${context}.decision_evidence.failing_index`, "does not identify the rejected operation");
+  }
+
+  switch (outcome) {
+    case "applied": assertAppliedOutcome(); break;
+    case "no-op": assertNoOpOutcome(); break;
+    case "lww-dropped": assertDroppedOutcome(); break;
+    case "rejected": assertRejectedOutcome(); break;
+    default: assertNever(outcome, context);
   }
 
   return {
@@ -581,7 +630,17 @@ function assertSemanticStep(step: UnknownRecord, context: string): ValidatedSema
   };
 }
 
-function assertBatchSequences(steps: readonly ValidatedBatchStep[]): void {
+function assertAbortedSuffix(members: ValidatedBatchStep[], failure: ValidatedBatchStep): void {
+  for (const step of members) {
+    if (step.index < failure.index && step.outcome === "rejected") invalid(`${step.context}.batch`, "contains a rejection before failing_index");
+    if (step.index === failure.index && step !== failure) invalid(`${step.context}.batch`, "does not identify the processed rejection");
+    if (step.index > failure.index && (step.outcome !== "rejected" || step.processed || step.reasonCode !== "batch_aborted" || step.failingIndex !== failure.index)) {
+      invalid(`${step.context}.batch`, "must form a contiguous aborted suffix after failing_index");
+    }
+  }
+}
+
+function indexBatchSteps(steps: readonly ValidatedBatchStep[]) {
   const batches = new Map<string, { size: number; steps: Map<number, ValidatedBatchStep> }>();
   for (const step of steps) {
     const existing = batches.get(step.batchId);
@@ -591,7 +650,11 @@ function assertBatchSequences(steps: readonly ValidatedBatchStep[]): void {
     batch.steps.set(step.index, step);
     batches.set(step.batchId, batch);
   }
+  return batches;
+}
 
+function assertBatchSequences(steps: readonly ValidatedBatchStep[]): void {
+  const batches = indexBatchSteps(steps);
   for (const [batchId, batch] of batches) {
     if (batch.steps.size !== batch.size) invalid(`batch '${batchId}'`, `must include all ${batch.size} members under one batch_id`);
     const ordered = Array.from({ length: batch.size }, (_, index) => batch.steps.get(index));
@@ -607,13 +670,7 @@ function assertBatchSequences(steps: readonly ValidatedBatchStep[]): void {
     const failures = rejected.filter((step) => step.processed && step.reasonCode !== "batch_aborted");
     if (failures.length !== 1) invalid(`batch '${batchId}'`, "must contain exactly one processed rejection");
     const failure = failures[0]!;
-    for (const step of members) {
-      if (step.index < failure.index && step.outcome === "rejected") invalid(`${step.context}.batch`, "contains a rejection before failing_index");
-      if (step.index === failure.index && step !== failure) invalid(`${step.context}.batch`, "does not identify the processed rejection");
-      if (step.index > failure.index && (step.outcome !== "rejected" || step.processed || step.reasonCode !== "batch_aborted" || step.failingIndex !== failure.index)) {
-        invalid(`${step.context}.batch`, "must form a contiguous aborted suffix after failing_index");
-      }
-    }
+    assertAbortedSuffix(members, failure);
   }
 }
 
@@ -637,6 +694,25 @@ function assertLifecycleBase(step: UnknownRecord, context: string, workflowId: s
   return { afterDoc, afterLineage, afterStateVectorHash, beforeDoc, beforeLineage, beforeStateVectorHash };
 }
 
+function assertLifecycleTransition(step: UnknownRecord, context: string, kind: "state-vector-replay" | "doc-reset", lifecycle: ReturnType<typeof assertLifecycleBase>): void {
+  if (kind === "state-vector-replay") {
+    if (!asBoolean(required(step, "same_document", context), `${context}.same_document`) || lifecycle.beforeDoc !== lifecycle.afterDoc || lifecycle.beforeLineage !== lifecycle.afterLineage) {
+      invalid(context, "violates same-document replay");
+    }
+    asOneOf(required(step, "reason", context), ["seq-gap", "reconnect"] as const, `${context}.reason`);
+    assertOptionalInteger(step, "requested_from_seq", context);
+    assertOptionalInteger(step, "resumed_at_seq", context);
+  } else {
+    if (asBoolean(required(step, "same_document", context), `${context}.same_document`) || lifecycle.beforeDoc === lifecycle.afterDoc || lifecycle.beforeLineage === lifecycle.afterLineage) {
+      invalid(context, "does not describe a lineage replacement");
+    }
+    asInteger(required(step, "reset_seq", context), `${context}.reset_seq`);
+    if (!asBoolean(required(step, "projectors_notified_before_replace", context), `${context}.projectors_notified_before_replace`)) {
+      invalid(`${context}.projectors_notified_before_replace`, "must be true before document replacement");
+    }
+  }
+}
+
 /** Fail closed at the schema-major boundary before a viewer reads a trace. */
 export function assertCollabReplayTraceV1(value: unknown): asserts value is CollabReplayTraceV1 {
   const trace = asRecord(value, "collaboration trace");
@@ -652,7 +728,7 @@ export function assertCollabReplayTraceV1(value: unknown): asserts value is Coll
   let previousLifecycleAfterStateVectorHash: TraceHash | undefined;
   let previousSemanticAfterProjectionHash: TraceHash | undefined;
 
-  for (const [index, value] of steps.entries()) {
+  function assertTraceStep(value: unknown, index: number): void {
     const context = `trace step ${index}`;
     const step = asRecord(value, context);
     const stepId = asString(required(step, "step_id", context), `${context}.step_id`);
@@ -670,7 +746,7 @@ export function assertCollabReplayTraceV1(value: unknown): asserts value is Coll
       if (semantic.batchStep !== undefined) batchSteps.push(semantic.batchStep);
       previousLifecycleAfterStateVectorHash = undefined;
       previousSemanticAfterProjectionHash = semantic.afterHash;
-      continue;
+      return;
     }
 
     previousSemanticAfterProjectionHash = undefined;
@@ -680,27 +756,13 @@ export function assertCollabReplayTraceV1(value: unknown): asserts value is Coll
     if (previousLifecycleAfterStateVectorHash !== undefined && !hashesMatch(previousLifecycleAfterStateVectorHash, lifecycle.beforeStateVectorHash)) {
       invalid(`${context}.before_state_vector_hash`, "violates state-vector continuity");
     }
-    if (kind === "state-vector-replay") {
-      if (!asBoolean(required(step, "same_document", context), `${context}.same_document`) || lifecycle.beforeDoc !== lifecycle.afterDoc || lifecycle.beforeLineage !== lifecycle.afterLineage) {
-        invalid(context, "violates same-document replay");
-      }
-      asOneOf(required(step, "reason", context), ["seq-gap", "reconnect"] as const, `${context}.reason`);
-      assertOptionalInteger(step, "requested_from_seq", context);
-      assertOptionalInteger(step, "resumed_at_seq", context);
-    } else {
-      if (asBoolean(required(step, "same_document", context), `${context}.same_document`) || lifecycle.beforeDoc === lifecycle.afterDoc || lifecycle.beforeLineage === lifecycle.afterLineage) {
-        invalid(context, "does not describe a lineage replacement");
-      }
-      asInteger(required(step, "reset_seq", context), `${context}.reset_seq`);
-      if (!asBoolean(required(step, "projectors_notified_before_replace", context), `${context}.projectors_notified_before_replace`)) {
-        invalid(`${context}.projectors_notified_before_replace`, "must be true before document replacement");
-      }
-    }
+    assertLifecycleTransition(step, context, kind, lifecycle);
     currentLineage = lifecycle.afterLineage;
     currentDoc = lifecycle.afterDoc;
     previousLifecycleAfterStateVectorHash = lifecycle.afterStateVectorHash;
   }
 
+  for (const [index, value] of steps.entries()) assertTraceStep(value, index);
   assertBatchSequences(batchSteps);
 
   const assertions = asRecord(required(trace, "assertions", "collaboration trace"), "collaboration trace.assertions");
