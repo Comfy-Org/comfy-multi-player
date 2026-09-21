@@ -44,12 +44,12 @@ const statelessRules = {
   "no-restricted-syntax": [
     "error",
     {
-      selector: "Program > VariableDeclaration[kind='let'], Program > VariableDeclaration[kind='var']",
+      selector: ":matches(Program, Program > ExportNamedDeclaration) > VariableDeclaration[kind=/^(let|var)$/]",
       message: "KA-13: no module-level let/var; caller-owned state only.",
     },
     {
       selector:
-        "Program > VariableDeclaration > VariableDeclarator:not([id.name='documentTransactionTails']) > NewExpression[callee.type='Identifier'][callee.name=/^(Map|Set|WeakMap|WeakSet)$/]",
+        ":matches(Program, Program > ExportNamedDeclaration) > VariableDeclaration > VariableDeclarator:not([id.name='documentTransactionTails']) > NewExpression[callee.type='Identifier'][callee.name=/^(Map|Set|WeakMap|WeakSet)$/]",
       message: "KA-13: no module-level mutable collection except the documented Y.Doc-keyed admission queue; inject state through the caller.",
     },
   ],

@@ -1,5 +1,5 @@
 /**
- * Doc layout helpers (schema v2 — docs/multiplayer-schema.md §1) and the
+ * Doc layout helpers (schema v4 — docs/multiplayer-schema.md §1) and the
  * node ⇄ Y conversion used by mint and the applier.
  *
  *   doc
@@ -17,7 +17,9 @@
  *   ├── Y.Map '__applied'   — op_id → sha256 of the canonical op payload
  *   │                         (idempotency + op_id-reuse detection, §4
  *   │                         amendment A8; a legacy `1` is a pre-A8 record)
- *   └── Y.Map '__stamps'    — write-target key → [base_version, actor, op_id] (§4)
+ *   ├── Y.Map '__stamps'    — write-target key → [base_version, actor, op_id] (§4)
+ *   ├── Y.Map '__link_state' — normalized link id → durable descriptor (§1.5)
+ *   └── Y.Map '__clock_reservations' — producer identity → reserved counter tuple (§1.6)
  */
 
 import * as Y from "yjs";
@@ -158,6 +160,9 @@ export const ROOT_DEFINITIONS = "definitions";
 export const ROOT_META = "meta";
 export const ROOT_APPLIED = "__applied";
 export const ROOT_STAMPS = "__stamps";
+export const ROOT_LINK_STATE = "__link_state";
+/** Created lazily by a successful clock admission, never exported from the entrypoint. */
+export const ROOT_CLOCK_RESERVATIONS = "__clock_reservations";
 
 /** Root map holding one Y.Map per node, keyed by String(node id). */
 export function nodesMap(doc: Y.Doc): Y.Map<Y.Map<unknown>> {
@@ -200,10 +205,15 @@ export function stampsMap(doc: Y.Doc): Y.Map<unknown> {
   return doc.getMap<unknown>(ROOT_STAMPS);
 }
 
+/** First-class durable link intent, keyed by normalized link id (schema v3). */
+export function linkStateMap(doc: Y.Doc): Y.Map<unknown> {
+  return doc.getMap<unknown>(ROOT_LINK_STATE);
+}
+
 /**
- * Initialize the v1 layout on a fresh doc (idempotent). Creates the root maps
- * (including bookkeeping) and seeds meta with schema_version, the pinned
- * catalog_version, and the id high-water marks.
+ * Initialize the current layout on a fresh doc (idempotent). Creates the root
+ * maps (including bookkeeping) and seeds meta with `SCHEMA_VERSION`, the
+ * pinned catalog_version, and the id high-water marks.
  *
  * NOTE: initializing a doc is not the bootstrap path for replicas — replicas
  * fork from one common mint() snapshot (schema §9), never re-seed.
@@ -215,6 +225,7 @@ export function initDoc(doc: Y.Doc, catalogVersion = ""): void {
     definitionsMap(doc);
     appliedMap(doc);
     stampsMap(doc);
+    linkStateMap(doc);
     const meta = metaMap(doc);
     if (meta.get("schema_version") === undefined) {
       meta.set("schema_version", SCHEMA_VERSION);
@@ -514,6 +525,14 @@ export function referenceCyclePath(value: unknown): string | null {
     Array.isArray(obj)
       ? { obj, path, keys: [], next: 0, isArray: true }
       : { obj, path, keys: Object.keys(obj), next: 0, isArray: false };
+  const nextChild = (frame: Frame): [unknown, string] => {
+    const index = frame.next++;
+    if (frame.isArray) {
+      return [(frame.obj as unknown[])[index], `${frame.path}[${String(index)}]`];
+    }
+    const key = frame.keys[index]!;
+    return [(frame.obj as Record<string, unknown>)[key], `${frame.path}.${key}`];
+  };
 
   const onPath = new Set<object>([value]);
   const stack: Frame[] = [frameFor(value, "")];
@@ -525,17 +544,7 @@ export function referenceCyclePath(value: unknown): string | null {
       stack.pop();
       continue;
     }
-    const index = frame.next++;
-    let child: unknown;
-    let childPath: string;
-    if (frame.isArray) {
-      child = (frame.obj as unknown[])[index];
-      childPath = `${frame.path}[${String(index)}]`;
-    } else {
-      const key = frame.keys[index]!;
-      child = (frame.obj as Record<string, unknown>)[key];
-      childPath = `${frame.path}.${key}`;
-    }
+    const [child, childPath] = nextChild(frame);
     if (typeof child !== "object" || child === null) continue;
     if (child instanceof Uint8Array) continue;
     if (onPath.has(child)) return childPath;
@@ -804,18 +813,32 @@ export function createNodeMap(node: WorkflowNode, widgetOrder?: readonly string[
  * never resolve).
  */
 export function resolveDefinition(doc: Y.Doc, key: string): Y.Map<unknown> | null {
-  const defs = definitionsMap(doc);
-  const byId = defs.get(key);
+  const all = allDefinitions(doc);
+  const byId = all.find((definition) => String(definition.get("id")) === key);
   if (byId) return byId;
   let found: Y.Map<unknown> | null = null;
   let count = 0;
-  defs.forEach((dm) => {
+  all.forEach((dm) => {
     if (String(dm.get("name") ?? "") === key) {
       count++;
       found = dm;
     }
   });
   return count === 1 ? found : null;
+}
+
+function allDefinitions(doc: Y.Doc): Y.Map<unknown>[] {
+  const all: Y.Map<unknown>[] = [];
+  const visit = (definition: Y.Map<unknown>): void => {
+    all.push(definition);
+    const container = definition.get("definitions");
+    const nested = container instanceof Y.Map ? container.get("subgraphs") : undefined;
+    if (nested instanceof Y.Map) nested.forEach((child) => {
+      if (child instanceof Y.Map) visit(child);
+    });
+  };
+  definitionsMap(doc).forEach(visit);
+  return all;
 }
 
 /**
@@ -859,7 +882,7 @@ function definitionAliases(doc: Y.Doc, defId: string, catalog?: WidgetCatalog): 
   if (!catalog) return aliases; // no catalogue to ask: cannot verify, so not an alias
   if (Object.prototype.hasOwnProperty.call(catalog.types, name)) return aliases; // a node class
   let sameName = 0;
-  defs.forEach((dm) => {
+  allDefinitions(doc).forEach((dm) => {
     if (String(dm.get("name") ?? "") === name) sameName++;
   });
   if (sameName === 1) aliases.add(name);
@@ -893,6 +916,21 @@ function definitionAliases(doc: Y.Doc, defId: string, catalog?: WidgetCatalog): 
 export function countDefinitionInstances(doc: Y.Doc, defId: string, catalog?: WidgetCatalog): number {
   const aliases = definitionAliases(doc, defId, catalog);
   let count = 0;
+  const visitDefinition = (definition: Y.Map<unknown>): void => {
+    const inner = definition.get("nodes");
+    if (inner instanceof Y.Map) {
+      inner.forEach((node: unknown) => {
+        if (node instanceof Y.Map && aliases.has(String(node.get("type") ?? ""))) count++;
+      });
+    }
+    const container = definition.get("definitions");
+    const nested = container instanceof Y.Map ? container.get("subgraphs") : undefined;
+    if (nested instanceof Y.Map) {
+      nested.forEach((child: unknown) => {
+        if (child instanceof Y.Map) visitDefinition(child);
+      });
+    }
+  };
   nodesMap(doc).forEach((node, key) => {
     if (!(node instanceof Y.Map)) {
       throw new TypeError(
@@ -902,12 +940,7 @@ export function countDefinitionInstances(doc: Y.Doc, defId: string, catalog?: Wi
     if (aliases.has(String(node.get("type") ?? ""))) count++;
   });
   definitionsMap(doc).forEach((dm) => {
-    const inner = dm.get("nodes");
-    if (inner instanceof Y.Map) {
-      inner.forEach((node: unknown) => {
-        if (node instanceof Y.Map && aliases.has(String(node.get("type") ?? ""))) count++;
-      });
-    }
+    visitDefinition(dm);
   });
   return count;
 }

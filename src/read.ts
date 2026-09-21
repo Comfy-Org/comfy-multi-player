@@ -61,11 +61,13 @@ import {
   OPAQUE_WIDGETS_KEY,
   ROOT_APPLIED,
   ROOT_LINKS,
+  ROOT_LINK_STATE,
   ROOT_META,
   ROOT_NODES,
   ROOT_STAMPS,
 } from "./doc.js";
 import { assertReadableSchema } from "./schema-version.js";
+import { LINK_STATE_DESCRIPTOR_VERSION } from "./types.js";
 
 /**
  * The reserved per-node key holding a whole `widgets_values` array verbatim for
@@ -103,7 +105,7 @@ function snapshot(value: unknown, depth: number): unknown {
     );
   }
   if (value instanceof Y.Map) {
-    const out: Record<string, unknown> = {};
+    const out = Object.create(null) as Record<string, unknown>;
     value.forEach((v, k) => {
       out[k] = snapshot(v, depth + 1);
     });
@@ -127,7 +129,7 @@ function snapshot(value: unknown, depth: number): unknown {
     return Object.freeze(out);
   }
   if (typeof value === "object" && value !== null) {
-    const out: Record<string, unknown> = {};
+    const out = Object.create(null) as Record<string, unknown>;
     for (const [k, v] of Object.entries(value)) out[k] = snapshot(v, depth + 1);
     return Object.freeze(out);
   }
@@ -342,17 +344,17 @@ export interface GraphSnapshot {
  */
 export function readGraph(doc: Y.Doc): GraphSnapshot {
   assertSnapshotReadable(doc, "readGraph");
-  const nodes: Record<string, NodeSnapshot> = {};
+  const nodes = Object.create(null) as Record<string, NodeSnapshot>;
   rootMap(doc, ROOT_NODES)?.forEach((node, id) => {
     if (!(node instanceof Y.Map)) return;
-    const out: Record<string, unknown> = {};
+    const out = Object.create(null) as Record<string, unknown>;
     for (const key of NODE_SNAPSHOT_KEYS) {
       if (node.has(key)) out[key] = snapshot(node.get(key), 1);
     }
     nodes[id] = Object.freeze(out) as NodeSnapshot;
   });
 
-  const links: Record<string, unknown> = {};
+  const links = Object.create(null) as Record<string, unknown>;
   rootMap(doc, ROOT_LINKS)?.forEach((raw, id) => {
     links[id] = snapshot(raw, 1);
   });
@@ -435,4 +437,63 @@ export function appliedOpIds(doc: Y.Doc): readonly string[] {
 export function readStamps(doc: Y.Doc): Readonly<Record<string, unknown>> {
   assertSnapshotReadable(doc, "readStamps");
   return snapshotRoot(doc, ROOT_STAMPS);
+}
+
+/** Descriptor fields have already been copied into inert snapshot data. */
+function descriptorRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+/** Durable imported and operation-owned link descriptors as deep-frozen plain data. */
+export function readLinkState(doc: Y.Doc): Readonly<Record<string, unknown>> {
+  assertSnapshotReadable(doc, "readLinkState");
+  const state = snapshotRoot(doc, ROOT_LINK_STATE);
+  for (const [id, raw] of Object.entries(state)) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      throw new TypeError(`readLinkState: link ${id} is not a descriptor`);
+    }
+    const descriptor = raw as Record<string, unknown>;
+    const tuple = descriptor["tuple"];
+    const destinationValue = descriptor["destination"];
+    const destination = descriptorRecord(destinationValue);
+    const validId = (value: unknown): boolean =>
+      (typeof value === "string" && value.length > 0) || (typeof value === "number" && Number.isSafeInteger(value));
+    const validSlot = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) >= 0;
+    const slotRecord = descriptorRecord(destination?.["slot"]);
+    const validSlotRecord = slotRecord !== undefined;
+    const authority = descriptor["authority"];
+    const operationAuthority = descriptorRecord(authority);
+    const operationStamp = operationAuthority?.["stamp"];
+    // Match validateEnvelope/stampKey, including the empty fallback actor and
+    // non-empty opaque op IDs. Reading must not reject records our writer emits.
+    const validAuthority = authority === "imported" ||
+      (operationAuthority?.["kind"] === "operation" && Array.isArray(operationStamp) && operationStamp.length === 3 &&
+       Number.isSafeInteger(operationStamp[0]) && (operationStamp[0] as number) >= 0 &&
+       typeof operationStamp[1] === "string" &&
+       typeof operationStamp[2] === "string" && operationStamp[2].length > 0);
+    const requestValue = destination?.["request"];
+    const request = descriptorRecord(requestValue);
+    const inputcountValue = request?.["inputcount"];
+    const inputcount = descriptorRecord(inputcountValue);
+    const validRequest = destination?.["kind"] !== "autogrow" || authority === "imported" ||
+      (request !== undefined && typeof request["name"] === "string" &&
+       typeof request["type"] === "string" &&
+       (request["widget"] === undefined || typeof request["widget"] === "string") &&
+       (request["promoted"] === undefined || typeof request["promoted"] === "boolean") &&
+       (request["inputcount"] === undefined ||
+        (inputcount !== undefined && typeof inputcount["widget"] === "string" && "value" in inputcount)));
+    if (descriptor["version"] !== LINK_STATE_DESCRIPTOR_VERSION || !validAuthority ||
+        !Array.isArray(tuple) || tuple.length !== 6 || String(tuple[0]) !== id ||
+        !validId(tuple[0]) || !validId(tuple[1]) || !validSlot(tuple[2]) ||
+        !validId(tuple[3]) || !validSlot(tuple[4]) || destination === undefined ||
+        !validSlot(destination["to_slot"]) || destination["to_slot"] !== tuple[4] || !validSlotRecord ||
+        (slotRecord !== undefined && String(slotRecord["link"]) !== String(tuple[0])) ||
+        !["concrete", "promoted", "autogrow"].includes(String(destination["kind"])) ||
+        !validRequest ||
+        (destination["kind"] === "promoted" && typeof destination["name"] !== "string")) {
+      throw new TypeError(`readLinkState: link ${id} has an unsupported or malformed descriptor`);
+    }
+  }
+  return state;
 }

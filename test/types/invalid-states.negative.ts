@@ -18,6 +18,7 @@
  * the document; `test/invalid-op-states.test.ts` is the matching runtime
  * audit, including the states the wire still accepts.
  */
+import type * as Y from "yjs";
 import type {
   AddNodeOp,
   ClearOp,
@@ -25,12 +26,15 @@ import type {
   ConnectOp,
   DeleteNodeOp,
   GrowConnectOp,
+  InsertWorkflowOp,
   InteriorSetWidgetOp,
   Op,
+  OpKind,
   ResetDocOp,
   SetWidgetOp,
   TopLevelSetWidgetOp,
   WireOp,
+  applyOps,
 } from "../../src/index.js";
 
 const env = {
@@ -192,9 +196,27 @@ const reset: ResetDocOp = {
 // @ts-expect-error #17: `reset_doc` is deferred; it is a `WireOp`, not an `Op`.
 const resetAsOp: Op = reset;
 
-declare function applyOpsSignature(ops: Op[]): void;
+declare const applyOpsSignature: typeof applyOps;
+declare const doc: Y.Doc;
 // @ts-expect-error #17: the applier cannot be handed an op it always refuses.
-applyOpsSignature([reset]);
+applyOpsSignature(doc, [reset]);
+
+const insertWorkflow: InsertWorkflowOp = {
+  op: "insert_workflow",
+  ...env,
+  workflow: { nodes: [], links: [], definitions: { subgraphs: [] } },
+};
+const insertWorkflowAsOp: Op = insertWorkflow;
+// Positive control: the real public arity plus a valid op must compile, so the
+// reset assertion cannot pass merely because every call has the wrong arity.
+applyOpsSignature(doc, [insertWorkflow]);
+
+// The public vocabulary projection accepts every declared kind and no value
+// outside the wire union. This is an external-consumer check through index.ts.
+const okImplementedKind: OpKind = "add_node";
+const okDeferredKind: OpKind = "reset_doc";
+// @ts-expect-error #21: undeclared operation kinds are not public OpKind values.
+const unknownKind: OpKind = "unknown_op";
 
 // ---------------------------------------------------------------------------
 // Positive controls — these MUST compile, or the gate above is vacuous

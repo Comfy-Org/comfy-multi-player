@@ -11,6 +11,7 @@ import {
   applyOps,
   mint,
   project,
+  stampKey,
   type Op,
   type SetWidgetOp,
   type WidgetCatalog,
@@ -36,7 +37,7 @@ const workflow: WorkflowJSON = {
   links: [],
 } as unknown as WorkflowJSON;
 
-const id = (character: string): string => character.repeat(32);
+const id = (hexCharacter: string): string => hexCharacter.repeat(32);
 
 function setSeed(opId: string, value: number, stamp: unknown): SetWidgetOp {
   return {
@@ -78,13 +79,44 @@ describe("R-92 malformed stamp validation", () => {
     { name: "non-numeric counter", stamp: ["not-a-number", "human:a"] },
     { name: "NaN counter", stamp: [Number.NaN, "human:a"] },
     { name: "infinite counter", stamp: [Number.POSITIVE_INFINITY, "human:a"] },
+    { name: "fractional counter", stamp: [1.5, "human:a"] },
+    { name: "unsafe counter", stamp: [Number.MAX_SAFE_INTEGER + 1, "human:a"] },
+    { name: "negative counter", stamp: [-1, "human:a"] },
     { name: "non-string actor", stamp: [5, 42] },
+    { name: "three-element derived key", stamp: [5, "human:a", id("f")] },
   ];
 
   it.each(malformed)("rejects $name without mutation", ({ stamp }) => {
     const doc = mint(workflow, catalog);
-    expectMalformedWithoutMutation(doc, setSeed(id("m"), 99, stamp));
+    expectMalformedWithoutMutation(doc, setSeed(id("c"), 99, stamp));
     expect(seedValue(doc)).toBe(0);
+  });
+
+  it.each([
+    { name: "fractional", counter: 1.5 },
+    { name: "unsafe", counter: Number.MAX_SAFE_INTEGER + 1 },
+    { name: "negative", counter: -1 },
+  ])("rejects $name fallback counter without mutation", ({ counter }) => {
+    const doc = mint(workflow, catalog);
+    const op = setSeed(id("d"), 99, undefined) as SetWidgetOp & {
+      base_version: number;
+    };
+    op.base_version = counter;
+    expectMalformedWithoutMutation(doc, op);
+    expect(seedValue(doc)).toBe(0);
+  });
+
+  it("rejects a non-string fallback actor without mutation", () => {
+    const doc = mint(workflow, catalog);
+    const op = setSeed(id("e"), 99, undefined);
+    (op as unknown as { actor: unknown }).actor = 42;
+    expectMalformedWithoutMutation(doc, op);
+    expect(seedValue(doc)).toBe(0);
+  });
+
+  it("uses valid envelope data when a three-element derived key is presented", () => {
+    const op = setSeed(id("f"), 99, [5, "human:a", id("f")]);
+    expect(stampKey(op)).toEqual([1, "human:envelope", op.op_id]);
   });
 
   it("converges on the higher valid stamp in both arrival orders", () => {

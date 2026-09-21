@@ -32,7 +32,7 @@ Every PR description must include these three sections — the PR template
 
 ## Local gate sequence
 
-Run all nine commands before requesting review — this is the set CI runs:
+Run these ten commands before requesting review, including both CI test tiers:
 
 ```sh
 npm ci
@@ -44,6 +44,7 @@ npm run check:profile-claims
 npm run check:coderabbit
 npm run verify:corpus
 npm test
+npm run test:exhaustive
 ```
 
 `check:purity` asserts the production dependency roots are exactly `{yjs}` and
@@ -56,6 +57,33 @@ the owning profile and run `npm run gen:coderabbit`, never the YAML directly.
 `verify:corpus` checks that conformance fixtures match their pinned SHAs.
 
 Add a fixture in `fixtures/` with any change to op semantics.
+
+## Permutation test tiers
+
+`npm test` retains representative full-op-pool coverage: 64 frozen-kind pairs ×
+8 states × 2 arrival orders × 2 batch modes = 2,048 executions, rotating the
+actor/stamp classes across pairs, plus 128 fixed-seed length-3-to-6 streams
+(256 executions). Both tests keep the rejection, idempotency, taxonomy, and
+measured-count assertions; coverage guards require every kind/state, actor
+class, stamp class, batch mode, and sampled declared kind to be exercised.
+
+Also run `npm run test:exhaustive` before review. This selects the `exhaustive`
+Vitest tag and preserves the full current domain: 16,384 pair executions
+(the same dimensions × 2 actor classes × 4 stamp classes) and 1,696 fixed-seed
+streams (3,392 executions). The independent `exhaustive op-pool permutations`
+CI job runs on every PR and main push, and its failures fail the workflow.
+Neither command claims exhaustive coverage of arbitrary workflows or streams.
+
+This separation carries the `coderabbitai[bot]` request from
+[the September 2, 2026 frontend review](https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#pullrequestreview-5089967939):
+“Isolate the exhaustive permutation tests in the suite containing the
+900,000 ms timeouts and 200,000-operation matrix by assigning them a dedicated
+job or test tag, while retaining a reduced representative sample in the default
+test run.” The matrix was already reduced before this scheduling change.
+That closed frontend migration PR and its QA records are historical recovery
+evidence, not current standalone-package QA or authorization to migrate,
+publish, or deploy. Historical mutation scores likewise do not measure this
+new default selection; no new mutation score is claimed here.
 
 ## Purity and portability
 

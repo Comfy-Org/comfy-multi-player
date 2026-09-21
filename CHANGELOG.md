@@ -5,6 +5,40 @@ All notable changes to `@comfyorg/comfy-multi-player` are documented in this fil
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package uses semantic versioning.
 
+## Unreleased
+
+## 0.3.0 - 2026-09-19
+
+### Changed
+
+- Breaking: advances the published package from document schema 2 to schema 4.
+  Durable link state lives in `__link_state`, and Lamport reservations now live
+  in `__clock_reservations`, separate from the winning write-target stamps
+  returned by `readStamps()`.
+- Old document layouts are refused without mutation. `migrate()` validates the
+  current layout; it does not upgrade or relabel schemas 1–3. Hosts must
+  re-mint source workflows into a new lineage and settle or discard old pending
+  queues before a coordinated consumer cutover. Publication alone does not
+  authorize that cutover or establish frontend rollout sign-off.
+
+### Added
+
+- Added the standalone `insert_workflow` op for atomic workflow-template
+  insertion. The applier derives every carried node, link, group, and
+  definition ID from the operation ID and graph scope, avoiding allocation
+  against mutable document state.
+- Recovered standalone link, definition, scoped interior-connect, operation
+  inspection, and checked public operation-type surfaces.
+
+### Fixed
+
+- Hardened stamp admission, opaque-widget projection, hostile snapshot keys,
+  definition identities, interior link preservation, and draft-07 event-schema
+  compatibility.
+- Restored standalone package gates and release retry verification. Existing
+  npm versions are reused only when artifact integrity and verified provenance
+  match the tagged source; different bytes must use a new version.
+
 ## 0.2.0 - 2026-08-30
 
 ### Changed

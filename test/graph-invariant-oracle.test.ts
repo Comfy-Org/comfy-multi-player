@@ -1,7 +1,8 @@
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
 import { linksMap, nodesMap } from "../src/doc.js";
-import { mint, type WorkflowJSON } from "../src/index.js";
+import { mint } from "../src/index.js";
+import type { WorkflowJSON } from "../src/index.js";
 import { checkGraphInvariants } from "./graph-invariant-oracle.js";
 
 const catalog = { types: {} };
@@ -45,6 +46,43 @@ describe("checkGraphInvariants test oracle", () => {
     expect(checkGraphInvariants(doc).filter((item) => item.invariant === "I3")).toHaveLength(2);
   });
 
+  it("reports a short link tuple as I3 without changing the doc", () => {
+    const doc = freshDoc();
+    linksMap(doc).set("short", ["short", 1, 0, 2]);
+    const before = Y.encodeStateAsUpdate(doc);
+
+    expect(checkGraphInvariants(doc).filter((item) => item.invariant === "I3")).toEqual([
+      {
+        invariant: "I3",
+        path: 'links["short"]',
+        message: "link entry is not a tuple with node endpoints",
+      },
+    ]);
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+  });
+
+  it("reports negative source and destination slots as I4 without changing the doc", () => {
+    const doc = freshDoc();
+    const links = linksMap(doc);
+    links.delete("10");
+    links.set("negative", ["negative", 1, -1, 2, -2, "X"]);
+    const before = Y.encodeStateAsUpdate(doc);
+
+    expect(checkGraphInvariants(doc).filter((item) => item.invariant === "I4")).toEqual([
+      {
+        invariant: "I4",
+        path: 'links["negative"][2]',
+        message: "source output (1, -1) does not advertise link negative",
+      },
+      {
+        invariant: "I4",
+        path: 'links["negative"][4]',
+        message: "destination input (2, -2) does not carry link negative",
+      },
+    ]);
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+  });
+
   it("reports links-to-slots disagreement", () => {
     const doc = freshDoc();
     const source = nodesMap(doc).get("1")!;
@@ -62,5 +100,36 @@ describe("checkGraphInvariants test oracle", () => {
     linksMap(doc).set("11", [11, 1, 0, 2, 0, "X"]);
 
     expect(checkGraphInvariants(doc).map((item) => item.invariant)).toContain("I5");
+  });
+
+  it("reports code-unit-ordered non-ASCII I5 diagnostics independently of link insertion order", () => {
+    const diagnosticsFor = (keys: string[]) => {
+      const doc = freshDoc();
+      const links = linksMap(doc);
+      links.delete("10");
+      for (const key of keys) links.set(key, [key, 1, 0, 2, 0, "X"]);
+
+      return checkGraphInvariants(doc).filter((item) => item.invariant === "I5");
+    };
+    const expected = [
+      {
+        invariant: "I5",
+        path: 'links["z"]',
+        message: "input register (2, 0) is also claimed by link y",
+      },
+      {
+        invariant: "I5",
+        path: 'links["ä"]',
+        message: "input register (2, 0) is also claimed by link y",
+      },
+      {
+        invariant: "I5",
+        path: 'links["é"]',
+        message: "input register (2, 0) is also claimed by link y",
+      },
+    ];
+
+    expect(diagnosticsFor(["y", "z", "ä", "é"])).toEqual(expected);
+    expect(diagnosticsFor(["é", "ä", "z", "y"])).toEqual(expected);
   });
 });

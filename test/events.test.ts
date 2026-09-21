@@ -14,6 +14,15 @@ import {
 } from "../src/index.js";
 import { loadCatalog, loadLwwVectors } from "./helpers.js";
 
+// Compile-time regression: ordinary callbacks, including one already typed as
+// returning void, must be assignable to the public sink type.
+const pretypedVoidCallback: (event: CmpEvent) => void = (_event) => {};
+const ordinaryCallback = (event: CmpEvent) => event.type;
+const compatibleSinks: import("../src/index.js").CmpEventSink[] = [
+  pretypedVoidCallback,
+  ordinaryCallback,
+];
+
 const catalog: WidgetCatalog = { types: {} };
 const lwwCatalog = loadCatalog();
 const lww = loadLwwVectors();
@@ -62,6 +71,20 @@ const goldenEvents = readFileSync(new URL("../fixtures/cmp-events/v1.jsonl", imp
   .map((line) => JSON.parse(line) as CmpEvent);
 
 describe("caller-owned cmp event sink", () => {
+  it("accepts ordinary and pretyped void callbacks", () => {
+    const event = goldenEvents[0]!;
+    expect(compatibleSinks.map((sink) => sink(event))).toEqual([
+      undefined,
+      event.type,
+    ]);
+  });
+
+  it("emits the void sink return in the public declaration", () => {
+    const declaration = readFileSync(new URL("../dist/events.d.ts", import.meta.url), "utf8");
+    expect(declaration).toMatch(/CmpEventSink = \(event: CmpEvent\) => void;/);
+    expect(declaration).not.toMatch(/CmpEventSink = \(event: CmpEvent\) => undefined;/);
+  });
+
   it("isolates a throwing sink from applier results and document bytes", () => {
     const baselineDoc = mint({ nodes: [], links: [] }, catalog);
     const observedDoc = new Y.Doc();

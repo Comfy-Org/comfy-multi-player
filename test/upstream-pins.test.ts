@@ -10,10 +10,13 @@
  * resolves upstream is a network question, and a test that silently degrades to
  * "assume fine" when the network is absent is worse than no test.
  */
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { systemExecutable } from "./process-helpers.js";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -59,6 +62,299 @@ const REQUIRED_SITES = ["src/index.ts", "src/types.ts", "docs/multiplayer-schema
 const VOCABULARY_PIN = "7e732242d971daf0d2d30f22f997abfacd78986e";
 
 describe("FC-10 — upstream citations are pinned by SHA, not by branch", () => {
+  it.each(["repo", "path", "valid"])("regression: remote verification checks valid pins alongside %s input", (field) => {
+    // Source: https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#discussion_r3914401911
+    const fixture = mkdtempSync(join(tmpdir(), "pins-remote-"));
+    try {
+      mkdirSync(join(fixture, "docs"));
+      mkdirSync(join(fixture, "bin"));
+      const commit = "a".repeat(40);
+      const citedBy = ["citation-1.md", "citation-2.md", "citation-3.md", "citation-4.md"];
+      const basePin = {
+        commit,
+        repo: "https://github.com/example/upstream",
+        path: "README.md",
+        established_by: "resolved from an immutable upstream revision with audit evidence",
+        sections_cited: ["1"],
+        cited_by: citedBy,
+      };
+      writeFileSync(
+        join(fixture, "docs", "upstream-pins.json"),
+        JSON.stringify({
+          pins: {
+            ...(field === "valid" ? {} : { malformed: { ...basePin, [field]: null } }),
+            valid: basePin,
+          },
+        }),
+      );
+      for (const site of citedBy) writeFileSync(join(fixture, site), `Pinned at ${commit}.\n`);
+      for (let index = 0; index < 20; index += 1) writeFileSync(join(fixture, `tracked-${index}.md`), `fixture ${index}\n`);
+
+      const ghLog = join(fixture, "gh.log");
+      const fakeGh = join(fixture, "bin", "gh");
+      writeFileSync(
+        fakeGh,
+        `#!/bin/sh\nprintf '%s\\n' "$*" >> "$GH_TEST_LOG"\n` +
+          `if [ "$1" = "--version" ]; then echo 'gh version test'; exit 0; fi\n` +
+          `case "$2" in\n` +
+          `  rate_limit) echo '{}';;\n` +
+          `  repos/example/upstream/commits/*) echo '{}';;\n` +
+          `  repos/example/upstream/contents/README.md?ref=*) printf '%s\\n' '{"content":"IyAxIFRpdGxlCg==","encoding":"base64"}';;\n` +
+          `  *) echo "unexpected endpoint: $2" >&2; exit 9;;\n` +
+          `esac\n`,
+      );
+      chmodSync(fakeGh, 0o755);
+      expect(spawnSync(systemExecutable("git"), ["init", "--quiet"], { cwd: fixture }).status).toBe(0);
+      expect(spawnSync(systemExecutable("git"), ["add", "."], { cwd: fixture }).status).toBe(0);
+
+      const run = spawnSync(process.execPath, [join(root, "scripts", "check-pins.mjs"), "--verify-remote"], {
+        encoding: "utf8",
+        env: { ...process.env, PINS_ROOT: fixture, PATH: `${join(fixture, "bin")}:${process.env.PATH}`, GH_TEST_LOG: ghLog },
+      });
+      expect(run.status, run.stderr).toBe(field === "valid" ? 0 : 1);
+      if (field === "valid") {
+        expect(run.stdout).toContain("pin check PASSED");
+        expect(run.stderr).toBe("");
+      } else {
+        expect(run.stderr).toContain("pin check FAILED: 1 violation(s)");
+        expect(run.stderr).toContain(`malformed: ${field} must`);
+        expect(run.stderr).not.toContain("TypeError");
+      }
+      expect(readFileSync(ghLog, "utf8").trim().split("\n")).toEqual([
+        "--version",
+        "api rate_limit",
+        `api repos/example/upstream/commits/${commit}`,
+        `api repos/example/upstream/contents/README.md?ref=${commit}`,
+      ]);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      name: "hidden private repository commit 404",
+      commitStatus: 404,
+      metadataStatus: 404,
+      expectedStatus: 2,
+      expectedMessage: "could not establish public repository visibility for example/upstream — HTTP 404",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
+    },
+    {
+      name: "public repository commit 404",
+      commitStatus: 404,
+      metadataStatus: 200,
+      metadataPrivate: false,
+      expectedStatus: 1,
+      expectedMessage: "commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa no longer resolves in example/upstream",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
+    },
+    {
+      name: "public repository path 404",
+      commitStatus: 200,
+      contentsStatus: 404,
+      metadataStatus: 200,
+      metadataPrivate: false,
+      expectedStatus: 1,
+      expectedMessage: "README.md is absent at aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa in example/upstream",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream/contents/README.md?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
+    },
+    {
+      name: "private repository commit 404 despite readable metadata",
+      commitStatus: 404,
+      metadataStatus: 200,
+      metadataPrivate: true,
+      expectedStatus: 2,
+      expectedMessage: "repository metadata for example/upstream identifies a private repository, but metadata visibility does not prove Contents access",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
+    },
+    {
+      name: "private repository path 404 despite readable metadata",
+      commitStatus: 200,
+      contentsStatus: 404,
+      metadataStatus: 200,
+      metadataPrivate: true,
+      expectedStatus: 2,
+      expectedMessage: "repository metadata for example/upstream identifies a private repository, but metadata visibility does not prove Contents access",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream/contents/README.md?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
+    },
+    {
+      name: "commit 422 remains object-scoped",
+      commitStatus: 422,
+      metadataStatus: 200,
+      expectedStatus: 1,
+      expectedMessage: "commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa no longer resolves in example/upstream",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+    },
+    {
+      name: "commit 451 remains object-scoped",
+      commitStatus: 451,
+      metadataStatus: 200,
+      expectedStatus: 1,
+      expectedMessage: "commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa no longer resolves in example/upstream",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+    },
+    {
+      name: "repository metadata rejects authentication",
+      commitStatus: 404,
+      metadataStatus: 403,
+      expectedStatus: 2,
+      expectedMessage: "could not establish public repository visibility for example/upstream — HTTP 403",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
+    },
+    {
+      name: "repository metadata is unavailable",
+      commitStatus: 404,
+      metadataStatus: 500,
+      expectedStatus: 2,
+      expectedMessage: "could not establish public repository visibility for example/upstream — HTTP 500",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
+    },
+    {
+      name: "repository metadata response is malformed",
+      commitStatus: 404,
+      metadataStatus: 200,
+      malformedMetadata: true,
+      expectedStatus: 2,
+      expectedMessage: "repository metadata for example/upstream was malformed, so repository visibility was not established",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
+    },
+    {
+      name: "repository metadata omits visibility",
+      commitStatus: 404,
+      metadataStatus: 200,
+      omitMetadataPrivate: true,
+      expectedStatus: 2,
+      expectedMessage: "repository metadata for example/upstream was malformed, so repository visibility was not established",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
+    },
+    {
+      name: "repository metadata has nonboolean visibility",
+      commitStatus: 404,
+      metadataStatus: 200,
+      metadataPrivate: "false",
+      expectedStatus: 2,
+      expectedMessage: "repository metadata for example/upstream was malformed, so repository visibility was not established",
+      endpoints: ["api rate_limit", "api repos/example/upstream/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "api repos/example/upstream"],
+    },
+  ])("classifies $name without mistaking repository access for object absence", (scenario) => {
+    // Source: https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#discussion_r3940075206
+    const fixture = mkdtempSync(join(tmpdir(), "pins-private-remote-"));
+    try {
+      mkdirSync(join(fixture, "docs"));
+      mkdirSync(join(fixture, "bin"));
+      const commit = "a".repeat(40);
+      const citedBy = ["citation-1.md", "citation-2.md", "citation-3.md", "citation-4.md"];
+      writeFileSync(
+        join(fixture, "docs", "upstream-pins.json"),
+        JSON.stringify({
+          pins: {
+            upstream: {
+              commit,
+              repo: "https://github.com/example/upstream",
+              path: "README.md",
+              established_by: "resolved from an immutable upstream revision with audit evidence",
+              sections_cited: ["1"],
+              cited_by: citedBy,
+            },
+          },
+        }),
+      );
+      for (const site of citedBy) writeFileSync(join(fixture, site), `Pinned at ${commit}.\n`);
+      for (let index = 0; index < 20; index += 1) writeFileSync(join(fixture, `tracked-${index}.md`), `fixture ${index}\n`);
+
+      const ghLog = join(fixture, "gh.log");
+      const fakeGh = join(fixture, "bin", "gh");
+      writeFileSync(
+        fakeGh,
+        `#!/bin/sh\nprintf '%s\\n' "$*" >> "$GH_TEST_LOG"\n` +
+          `if [ "$1" = "--version" ]; then echo 'gh version test'; exit 0; fi\n` +
+          `status=200\n` +
+          `case "$2" in\n` +
+          `  rate_limit) status=200;;\n` +
+          `  repos/example/upstream/commits/*) status="$COMMIT_STATUS";;\n` +
+          `  repos/example/upstream/contents/*) status="$CONTENTS_STATUS";;\n` +
+          `  repos/example/upstream) status="$METADATA_STATUS";;\n` +
+          `  *) echo "unexpected endpoint: $2" >&2; exit 9;;\n` +
+          `esac\n` +
+          `if [ "$status" != 200 ]; then echo "gh: fixture failure (HTTP $status)" >&2; exit 1; fi\n` +
+          `case "$2" in\n` +
+          `  repos/example/upstream/contents/*) printf '%s\\n' '{"content":"IyAxIFRpdGxlCg==","encoding":"base64"}';;\n` +
+          `  repos/example/upstream) if [ "$MALFORMED_METADATA" = true ]; then echo '{}'; elif [ "$OMIT_METADATA_PRIVATE" = true ]; then echo '{"full_name":"example/upstream"}'; else printf '{"full_name":"example/upstream","private":%s}\\n' "$METADATA_PRIVATE"; fi;;\n` +
+          `  *) echo '{}';;\n` +
+          `esac\n`,
+      );
+      chmodSync(fakeGh, 0o755);
+      expect(spawnSync(systemExecutable("git"), ["init", "--quiet"], { cwd: fixture }).status).toBe(0);
+      expect(spawnSync(systemExecutable("git"), ["add", "."], { cwd: fixture }).status).toBe(0);
+
+      const run = spawnSync(process.execPath, [join(root, "scripts", "check-pins.mjs"), "--verify-remote"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PINS_ROOT: fixture,
+          PATH: `${join(fixture, "bin")}:${process.env.PATH}`,
+          GH_TEST_LOG: ghLog,
+          COMMIT_STATUS: String(scenario.commitStatus),
+          CONTENTS_STATUS: String(scenario.contentsStatus ?? 200),
+          METADATA_STATUS: String(scenario.metadataStatus),
+          MALFORMED_METADATA: String(scenario.malformedMetadata ?? false),
+          OMIT_METADATA_PRIVATE: String(scenario.omitMetadataPrivate ?? false),
+          METADATA_PRIVATE: JSON.stringify(scenario.metadataPrivate ?? false),
+        },
+      });
+      expect(run.status, run.stderr).toBe(scenario.expectedStatus);
+      expect(run.stderr).toContain(scenario.expectedMessage);
+      expect(readFileSync(ghLog, "utf8").trim().split("\n")).toEqual(["--version", ...scenario.endpoints]);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("makes the production gate fail on a planted moving upstream citation", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "pins-"));
+    try {
+      mkdirSync(join(fixture, "docs"));
+      const commit = "a".repeat(40);
+      const citedBy = ["citation-1.md", "citation-2.md", "citation-3.md", "citation-4.md"];
+      writeFileSync(
+        join(fixture, "docs", "upstream-pins.json"),
+        JSON.stringify({
+          pins: {
+            vocabulary: {
+              commit,
+              repo: "https://github.com/example/op-vocabulary",
+              path: "README.md",
+              established_by: "resolved from an immutable upstream revision with audit evidence",
+              sections_cited: ["Vocabulary"],
+              cited_by: citedBy,
+            },
+          },
+        }),
+      );
+      for (const site of citedBy) writeFileSync(join(fixture, site), `Pinned at ${commit}.\n`);
+      writeFileSync(
+        join(fixture, citedBy[0]!),
+        `comfy-cli op-vocabulary citation (branch \`moving/main\`) at ${commit}.\n`,
+      );
+      for (let index = 0; index < 20; index += 1) {
+        writeFileSync(join(fixture, `tracked-${index}.md`), `fixture ${index}\n`);
+      }
+      expect(spawnSync(systemExecutable("git"), ["init", "--quiet"], { cwd: fixture }).status).toBe(0);
+      expect(spawnSync(systemExecutable("git"), ["add", "."], { cwd: fixture }).status).toBe(0);
+
+      const run = spawnSync(process.execPath, [join(root, "scripts", "check-pins.mjs")], {
+        encoding: "utf8",
+        env: { ...process.env, PINS_ROOT: fixture },
+      });
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain("upstream citation uses a moving reference");
+      expect(run.stderr).toContain("citation-1.md:1");
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("registers at least the vocabulary, its v1.2 amendment, and the minting module", () => {
     // "At least", as the title says. This asserted exact set equality, which
     // made it a change detector: registering a NEW cross-repo pin — the thing

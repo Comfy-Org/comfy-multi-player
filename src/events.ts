@@ -28,7 +28,7 @@ export interface CmpEvent {
 }
 
 /** A synchronous, best-effort observer owned by the caller. */
-export type CmpEventSink = (event: CmpEvent) => undefined;
+export type CmpEventSink = (event: CmpEvent) => void;
 
 /** Optional caller-owned context for a single package entry-point call. */
 export interface CmpCallContext {

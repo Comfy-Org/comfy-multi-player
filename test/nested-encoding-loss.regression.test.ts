@@ -157,27 +157,30 @@ describe("KA-1: `encodingLosses` agrees with a real encode → decode", () => {
     const disagreements: string[] = [];
     let flagged = 0;
     let clean = 0;
+    function checkSample(pname: string, place: (v: unknown) => unknown, sname: string, make: () => unknown): void {
+      let placed: unknown;
+      try {
+        // The value AS IT WILL BE STORED, per the detector's contract and
+        // the storability gate's: cloning is what normalizes a class instance
+        // or a prototype-less object into a plain, faithfully encodable one.
+        // A value the clone REFUSES never reaches either question.
+        placed = structuredClone(place(make()));
+      } catch {
+        return;
+      }
+      // A value yjs REFUSES is the storability gate's business, not this one.
+      if (!isStorableMapValue(placed)) return;
+      const lossy = !identical(placed, roundTrip(placed));
+      const reported = encodingLosses(placed).length > 0;
+      if (reported !== lossy) {
+        disagreements.push(`${sname} @ ${pname}: round trip lossy=${String(lossy)}, reported=${String(reported)}`);
+      }
+      if (lossy) flagged++;
+      else clean++;
+    }
     for (const [pname, place] of PLACEMENTS) {
       for (const [sname, make] of SAMPLES) {
-        let placed: unknown;
-        try {
-          // The value AS IT WILL BE STORED, per the detector's contract and
-          // the storability gate's: cloning is what normalizes a class instance
-          // or a prototype-less object into a plain, faithfully encodable one.
-          // A value the clone REFUSES never reaches either question.
-          placed = structuredClone(place(make()));
-        } catch {
-          continue;
-        }
-        // A value yjs REFUSES is the storability gate's business, not this one.
-        if (!isStorableMapValue(placed)) continue;
-        const lossy = !identical(placed, roundTrip(placed));
-        const reported = encodingLosses(placed).length > 0;
-        if (reported !== lossy) {
-          disagreements.push(`${sname} @ ${pname}: round trip lossy=${String(lossy)}, reported=${String(reported)}`);
-        }
-        if (lossy) flagged++;
-        else clean++;
+        checkSample(pname, place, sname, make);
       }
     }
     expect(disagreements).toEqual([]);
@@ -255,6 +258,10 @@ describe("KA-1: the gap is depth-independent and the same in both containers", (
 });
 
 describe("KA-1: two replicas disagree about document contents, end to end", () => {
+  const readImage = (doc: Y.Doc) =>
+    ((doc.getMap("nodes").get("300") as Y.Map<unknown>).get("widgets") as Y.Map<unknown>).get(
+      "image",
+    ) as { a: unknown };
   it("host → follower (raw update): no error, byte-identical, different contents", () => {
     const [a, b] = forkedPair();
     const result = applyOps(
@@ -315,12 +322,8 @@ describe("KA-1: two replicas disagree about document contents, end to end", () =
       ),
     ).toBeUndefined();
 
-    const read = (doc: Y.Doc) =>
-      ((doc.getMap("nodes").get("300") as Y.Map<unknown>).get("widgets") as Y.Map<unknown>).get(
-        "image",
-      ) as { a: unknown };
-    expect(read(a).a).toBeInstanceOf(Map);
-    expect(read(b).a).toEqual({});
+    expect(readImage(a).a).toBeInstanceOf(Map);
+    expect(readImage(b).a).toEqual({});
   });
 
   it("a NESTED Date makes the disagreement visible in the PROJECTION, not only in memory", () => {
@@ -355,12 +358,8 @@ describe("KA-1: two replicas disagree about document contents, end to end", () =
     ).toBeUndefined();
     const reloaded = new Y.Doc();
     Y.applyUpdate(reloaded, Y.encodeStateAsUpdate(a));
-    const read = (doc: Y.Doc) =>
-      ((doc.getMap("nodes").get("300") as Y.Map<unknown>).get("widgets") as Y.Map<unknown>).get(
-        "image",
-      ) as { a: unknown };
-    expect(read(a).a).toBeInstanceOf(Map);
-    expect(read(reloaded).a).not.toBeInstanceOf(Map);
+    expect(readImage(a).a).toBeInstanceOf(Map);
+    expect(readImage(reloaded).a).not.toBeInstanceOf(Map);
   });
 });
 

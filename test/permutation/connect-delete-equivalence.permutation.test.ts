@@ -27,7 +27,9 @@ import {
 import { canonicalize, loadCatalog } from "../helpers.js";
 
 const catalog = loadCatalog();
-const ACTORS = ["agent:pbt:0", "agent:pbt:1", "human:pbt:0", "human:pbt:1"] as const;
+// Three representatives retain same-kind and cross-kind actor ordering while
+// leaving room for both incumbent states under the 20,000-execution ceiling.
+const ACTORS = ["agent:pbt:0", "agent:pbt:1", "human:pbt:0"] as const;
 const VERSION_PAIRS = [[0, 0], [0, 1], [1, 0], [1, 1], [0, 9], [9, 0], [4, 4], [4, 5]] as const;
 const ENDPOINT_PRESENCE = [
   { source: true, destination: true },
@@ -41,10 +43,19 @@ const SLOT_PAIRS = [
   { from: 5, to: 0 },
   { from: 5, to: 5 },
 ] as const;
+// 2 axes × 4 presence classes × 4 slot classes × 2 incumbent states ×
+// 3×2 ordered distinct actors × 8 version classes × 2 batch modes × 2 arrivals.
 const EXPECTED_EXECUTIONS = 12_288;
 
 type DeleteAxis = "source" | "destination";
 type BatchMode = "together" | "split";
+
+interface GraphCase {
+  axis: DeleteAxis;
+  presence: (typeof ENDPOINT_PRESENCE)[number];
+  slots: (typeof SLOT_PAIRS)[number];
+  incumbent: boolean;
+}
 
 interface LogicalState {
   projection: WorkflowJSON;
@@ -152,6 +163,29 @@ function comparable(state: LogicalState): unknown {
   return state.projection;
 }
 
+function connectOutcome(state: LogicalState, connectId: string): string {
+  return state.outcomes.find((outcome) => outcome.opId === connectId)?.outcome ?? "batch-aborted";
+}
+
+function* graphCases(): Generator<GraphCase> {
+  for (const axis of ["source", "destination"] as const) {
+    for (const presence of ENDPOINT_PRESENCE) {
+      for (const slots of SLOT_PAIRS) {
+        for (const incumbent of [false, true] as const) yield { axis, presence, slots, incumbent };
+      }
+    }
+  }
+}
+
+function* stampCases() {
+  for (const actorA of ACTORS) {
+    for (const actorB of ACTORS) {
+      if (actorA === actorB) continue;
+      for (const versions of VERSION_PAIRS) yield { actors: [actorA, actorB] as const, versions };
+    }
+  }
+}
+
 describe("bounded exhaustive connect x delete equivalence", () => {
   it("classifies only Amendment A6 state-dependent slot races as divergent", () => {
     let executions = 0;
@@ -161,46 +195,44 @@ describe("bounded exhaustive connect x delete equivalence", () => {
     let equivalentPairs = 0;
     const unexpected: string[] = [];
 
-    for (const axis of ["source", "destination"] as const) {
-      for (const presence of ENDPOINT_PRESENCE) {
-        for (const slots of SLOT_PAIRS) {
-          const incumbent = true;
-          for (const actorA of ACTORS) {
-            for (const actorB of ACTORS) {
-              if (actorA === actorB) continue;
-              for (const versions of VERSION_PAIRS) {
-                const pair = operations(serial, [actorA, actorB], versions, slots, axis);
-                serial += 2;
-                for (const mode of ["together", "split"] as const) {
-                  const forward = run(base(presence, incumbent), pair, mode);
-                  const reverse = run(base(presence, incumbent), [pair[1], pair[0]], mode);
-                  executions += 2;
-                  const repro = JSON.stringify({ axis, presence, slots, incumbent, actors: [actorA, actorB], versions, mode });
-                  const divergent = JSON.stringify(comparable(forward)) !== JSON.stringify(comparable(reverse));
-                  const connectId = pair[0].op_id;
-                  const connectOutcome = (state: LogicalState): string =>
-                    state.outcomes.find((outcome) => outcome.opId === connectId)?.outcome ?? "batch-aborted";
-                  const forwardConnect = connectOutcome(forward);
-                  const reverseConnect = connectOutcome(reverse);
-                  const bothPresent = presence.source && presence.destination;
-                  const permittedA6Tuple = axis === "source"
-                    ? bothPresent && slots.from === 5 && slots.to === 0
-                    : mode === "together" && presence.destination &&
-                      (slots.to === 5 || bothPresent && slots.from === 5);
-                  const a6 = divergent && permittedA6Tuple &&
-                    (forwardConnect === "rejected") !== (reverseConnect === "rejected");
-                  const permittedAbortTuple = mode === "together" && axis === "source" &&
-                    bothPresent && slots.to === 5;
-                  const abortBoundary = divergent && permittedAbortTuple && !a6 &&
-                    forwardConnect === "rejected" && reverseConnect === "rejected";
-                  if (a6) a6DivergentPairs++;
-                  else if (abortBoundary) abortBoundaryPairs++;
-                  else if (divergent) unexpected.push(`${repro} outcomes=${JSON.stringify([forward.outcomes, reverse.outcomes])}`);
-                  else equivalentPairs++;
-                }
-              }
-            }
-          }
+    function checkArrivalPair(
+      graph: GraphCase,
+      pair: readonly [ConnectOp, DeleteNodeOp],
+      mode: BatchMode,
+      repro: string,
+    ): void {
+      const { axis, presence, slots, incumbent } = graph;
+      const forward = run(base(presence, incumbent), pair, mode);
+      const reverse = run(base(presence, incumbent), [pair[1], pair[0]], mode);
+      executions += 2;
+      const divergent = JSON.stringify(comparable(forward)) !== JSON.stringify(comparable(reverse));
+      const connectId = pair[0].op_id;
+      const forwardConnect = connectOutcome(forward, connectId);
+      const reverseConnect = connectOutcome(reverse, connectId);
+      const bothPresent = presence.source && presence.destination;
+      const permittedA6Tuple = axis === "source"
+        ? bothPresent && slots.from === 5 && slots.to === 0
+        : mode === "together" && presence.destination &&
+          (slots.to === 5 || bothPresent && slots.from === 5);
+      const a6 = divergent && permittedA6Tuple &&
+        (forwardConnect === "rejected") !== (reverseConnect === "rejected");
+      const permittedAbortTuple = mode === "together" && axis === "source" &&
+        bothPresent && slots.to === 5;
+      const abortBoundary = divergent && permittedAbortTuple && !a6 &&
+        forwardConnect === "rejected" && reverseConnect === "rejected";
+      if (a6) a6DivergentPairs++;
+      else if (abortBoundary) abortBoundaryPairs++;
+      else if (divergent) unexpected.push(`${repro} outcomes=${JSON.stringify([forward.outcomes, reverse.outcomes])}`);
+      else equivalentPairs++;
+    }
+
+    for (const graph of graphCases()) {
+      for (const { actors, versions } of stampCases()) {
+        const pair = operations(serial, actors, versions, graph.slots, graph.axis);
+        serial += 2;
+        for (const mode of ["together", "split"] as const) {
+          const repro = JSON.stringify({ ...graph, actors, versions, mode });
+          checkArrivalPair(graph, pair, mode, repro);
         }
       }
     }
@@ -208,10 +240,17 @@ describe("bounded exhaustive connect x delete equivalence", () => {
     expect(executions).toBe(EXPECTED_EXECUTIONS);
     expect(unexpected, "unexpected divergence tuples").toEqual([]);
     expect(a6DivergentPairs + abortBoundaryPairs + equivalentPairs).toBe(EXPECTED_EXECUTIONS / 2);
+    // Per ordered-actor/version pair: five destination/together slot-race
+    // classes plus one source/together class diverge for either incumbent
+    // state. Source/split additionally diverges only with an incumbent link:
+    // with no incumbent, deleting the source leaves the same empty input.
+    // Thus (6 empty + 7 occupied) × 6 actor pairs × 8 version pairs = 624.
+    // The two source/together bad-destination-slot classes abort in both
+    // incumbent states: 2 × 2 × 6 × 8 = 192. All other pairs are equivalent.
     expect({ a6DivergentPairs, abortBoundaryPairs, equivalentPairs }).toEqual({
-      a6DivergentPairs: 672,
+      a6DivergentPairs: 624,
       abortBoundaryPairs: 192,
-      equivalentPairs: 5_280,
+      equivalentPairs: 5_328,
     });
   }, 120_000);
 });

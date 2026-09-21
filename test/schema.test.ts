@@ -9,11 +9,11 @@ import {
 import { OPAQUE_WIDGETS_KEY, SCHEMA_VERSION, linksMap, nodesMap } from "../src/index.js";
 
 describe("schema", () => {
-  it("pins SCHEMA_VERSION at 2", () => {
-    expect(SCHEMA_VERSION).toBe(2);
+  it("pins SCHEMA_VERSION at 4", () => {
+    expect(SCHEMA_VERSION).toBe(4);
   });
 
-  it("initDoc creates the v1 layout: nodes/links/definitions/meta + bookkeeping", () => {
+  it("initDoc creates the schema v4 layout with lazy clock reservations", () => {
     const doc = new Y.Doc();
     initDoc(doc, "object_info@2026-08-01");
     expect(nodesMap(doc)).toBeInstanceOf(Y.Map);
@@ -21,6 +21,8 @@ describe("schema", () => {
     expect(definitionsMap(doc)).toBeInstanceOf(Y.Map);
     expect(doc.getMap("__applied")).toBeInstanceOf(Y.Map);
     expect(doc.getMap("__stamps")).toBeInstanceOf(Y.Map);
+    expect(doc.getMap("__link_state")).toBeInstanceOf(Y.Map);
+    expect(doc.share.has("__clock_reservations")).toBe(false);
     const meta = metaMap(doc);
     expect(meta.get("schema_version")).toBe(SCHEMA_VERSION);
     expect(meta.get("catalog_version")).toBe("object_info@2026-08-01");
