@@ -135,7 +135,7 @@ describe("Get Template materialization of Magnific Skin Enhancer (BE-9176 / BE-1
     );
   });
 
-  it("set_widget can address the nested sub-setting too, so the agent's manual node-by-node fallback can set faithful mode's skin_detail", () => {
+  it("rejects uncatalogued nested settings without making the workflow unreadable", () => {
     // Build from the mode that DOES mint at its default (creative), then dial
     // the node into faithful mode's nested sub-setting the way the agent's
     // fallback (Apply ops / Set widget) attempted.
@@ -148,15 +148,32 @@ describe("Get Template materialization of Magnific Skin Enhancer (BE-9176 / BE-1
       widget: "mode.skin_detail",
       value: 80,
     };
-    const res = applyOps(doc, [setMode, setSkinDetail], catalog);
-    const rejected = rejectedOutcome(res);
-    // Fixed: "mode.skin_detail" is now accepted as a plausible dynamic-combo
-    // sub-field write, since its prefix "mode" IS a catalogued widget of this
-    // class (`applier.ts`'s `isPlausibleDynamicComboSubfield`).
-    expect(rejected).toBeUndefined();
-    const node = doc.getMap("nodes").get("3") as Y.Map<unknown>;
-    const widgets = node.get("widgets") as Y.Map<unknown>;
-    expect(widgets.get("mode")).toBe("faithful");
-    expect(widgets.get("mode.skin_detail")).toBe(80);
+    expect(rejectedOutcome(applyOps(doc, [setMode], catalog))).toBeUndefined();
+    const before = Y.encodeStateAsUpdate(doc);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = applyOps(doc, [setSkinDetail], catalog);
+      // An acknowledged Y.Map write is insufficient: the host must still be
+      // able to project the whole document after this attempted edit.
+      expect(project(doc, catalog).nodes[0].widgets_values).toEqual([0, 2, "faithful"]);
+      expect(rejectedOutcome(res)?.reason.code).toBe("unknown_widget");
+      expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+      expect(doc.getMap("__applied").has(setSkinDetail.op_id)).toBe(false);
+    }
+  });
+
+  it("accepts a dotted name explicitly present in the pinned order", () => {
+    const faithfulCatalog: WidgetCatalog = {
+      types: {
+        MagnificImageSkinEnhancerNode: {
+          widget_order: ["sharpen", "smart_grain", "mode", "mode.skin_detail"],
+        },
+      },
+    };
+    const doc = mint(magnificWorkflow([3, 7, "faithful", 50]), faithfulCatalog);
+    const op: SetWidgetOp = {
+      op: "set_widget", ...envelope(), node_id: 3, widget: "mode.skin_detail", value: 80,
+    };
+    expect(rejectedOutcome(applyOps(doc, [op], faithfulCatalog))).toBeUndefined();
+    expect(project(doc, faithfulCatalog).nodes[0].widgets_values).toEqual([3, 7, "faithful", 80]);
   });
 });

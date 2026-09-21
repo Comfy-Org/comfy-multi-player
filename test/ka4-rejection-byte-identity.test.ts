@@ -265,6 +265,21 @@ const CASES: Row[] = [
   },
   {
     kind: "set_widget",
+    why: "dotted name with a catalogued prefix is not itself catalogued",
+    code: "unknown_widget",
+    build: () => ({ op: "set_widget", ...env(), node_id: 4, widget: "seed.typo", value: 9 }) as unknown as Op,
+  },
+  {
+    kind: "set_widget",
+    why: "interior dotted name with a catalogued prefix is not itself catalogued",
+    code: "unknown_widget",
+    build: () => ({
+      op: "set_widget", ...env(), node_id: 6, widget: "text.typo", value: 9,
+      path: ["6", "27"], inner_widget: "text.typo",
+    }) as unknown as Op,
+  },
+  {
+    kind: "set_widget",
     why: "name-addressed write against an opaquely-stored node (§1.2)",
     code: "opaque_widgets",
     build: () => ({ op: "set_widget", ...env(), node_id: 5, widget: "text", value: 1 }) as unknown as Op,
