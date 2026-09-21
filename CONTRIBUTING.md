@@ -99,6 +99,38 @@ sign-off — the browser is a co-equal host of this document. Contract changes
 are amendments appended to the schema document with reasoning, never silent
 edits to a decided section.
 
+## Cutting a release
+
+Releases are cut from a **version-bump-only PR**: `package.json`,
+`package-lock.json`, and a `CHANGELOG.md` entry, nothing else. Apply the
+**`release` label** to that PR before merging it. The label is the deliberate
+publish decision — see the 2026-09-21 amendment in
+[`docs/decisions/ADR-006-publish-to-npm-pin-exact-versions.md`](docs/decisions/ADR-006-publish-to-npm-pin-exact-versions.md).
+
+When a labelled PR merges, `.github/workflows/auto-tag-release.yml` creates
+`v<version>` at the merge commit and starts `release.yml` at that tag, which
+runs the full gate suite and publishes to npm with provenance. There is no
+manual `git tag` / `git push` step any more.
+
+Merging **without** the label publishes nothing, which is the intended default
+for every other change. To release such a merge afterwards, tag it by hand:
+
+```sh
+git tag "v$(node -p "require('./package.json').version")" <merge-sha>
+git push origin "v$(node -p "require('./package.json').version")"
+```
+
+A tag pushed by a human still triggers `release.yml` on its own. If a tag
+already exists but the release never ran, start it without re-tagging:
+
+```sh
+gh workflow run release.yml --ref v<version>
+```
+
+Dispatch `release.yml` at the **tag**, never at a branch: the run's ref is
+checked against `package.json` and is recorded in the published npm
+provenance, so a branch dispatch fails the first gate by design.
+
 ## Where to send things that are not pull requests
 
 - **Contract and API questions** — read
