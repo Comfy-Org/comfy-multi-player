@@ -4,6 +4,14 @@ on:
   push:
     tags:
       - "v*"
+  # Same run, started deliberately rather than by a tag push — used by
+  # auto-tag-release.yml, whose GITHUB_TOKEN-created tag cannot raise `push`.
+  # DISPATCH THIS AT THE RELEASE TAG, NEVER AT A BRANCH:
+  #   gh workflow run release.yml --ref v1.2.3
+  # The gate below and scripts/release-retry.mjs both require the run's ref to
+  # be refs/tags/v<package version>, and npm stamps that ref into the SLSA
+  # provenance this release verifies. Dispatching on main fails at the gate.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -33,8 +41,12 @@ jobs:
 
       - name: Require tag to match package version
         env:
+          RELEASE_REF: ${{ github.ref }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          # Holds for a tag push and for a dispatch at the tag alike; rejects a
+          # dispatch aimed at a branch before any gate or publish work happens.
+          test "$RELEASE_REF" = "refs/tags/$RELEASE_TAG"
           package_version="$(node --input-type=module -e "import packageJson from './package.json' with { type: 'json' }; console.log(packageJson.version)")"
           test "$RELEASE_TAG" = "v$package_version"
 

@@ -54,3 +54,33 @@ where they rely on identical applier behavior (ADR-001).
   browser and host on different applier versions and violate FC-3.
 - **Vendor a prebuilt copy into each consumer:** rejected because it creates a
   second source of truth that can drift from the published package.
+
+## Amendment (2026-09-21): the `release` label is the deliberate act
+
+"Publishing a new version is an explicit maintainer action with its own
+cadence, separate from merging repository changes" stands. This amendment
+changes *where* that action is taken, not *whether* it is taken.
+
+Previously the separation was carried by two git commands a maintainer ran by
+hand after merging a version-bump PR (`git tag v<version>` and `git push`).
+Those commands were not themselves a decision: the decision had already been
+made when the maintainer reviewed and approved the version bump. They were
+toil after the fact, and forgetting them left `main` claiming a version that
+was never published (as `0.3.1` did).
+
+The deliberate act now lives on the pull request:
+
+- A maintainer applies the `release` label to a version-bump PR and approves
+  it. Both are required, both are explicit, and both are recorded on the PR.
+- On merge, `.github/workflows/auto-tag-release.yml` creates `v<version>` at
+  the merge commit and dispatches `release.yml` at that tag. It refuses to act
+  if the PR did not actually change `package.json`'s version, and it never
+  moves or replaces an existing tag.
+- Every other merge to `main` publishes nothing. Auto-tagging on any merge to
+  `main` was considered and rejected for exactly the reason this ADR gives:
+  merging is not publishing.
+
+This narrows the manual step, it does not remove the decision. A maintainer
+who does not label a PR gets the old behaviour — merge publishes nothing, and
+the release is cut by hand. Consumers still pin exact published versions;
+nothing about the lockstep requirement in KA-1 / FC-3 changes.

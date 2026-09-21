@@ -15,6 +15,13 @@ immutable npm version when consumers use npm, and prove a clean install resolves
 a moving branch or an unpublished version. An explicitly approved Git dependency must use a full
 commit SHA.
 
+The producer release is cut by merging a version-bump PR that carries the `release` label:
+merging it tags `v<version>` and runs the publish workflow automatically. Merging anything
+without that label releases nothing. See "Cutting a release" in `CONTRIBUTING.md` for the
+mechanics and the manual fallback. The automation replaces the hand-run tag push only; the
+gates, provenance, and the rest of this handoff are unchanged, and the coordinator still owns
+confirming the published version before any consumer pins it.
+
 Both consumers must resolve the same accepted package version. Cloud compatibility comes first so
 the frontend never emits or requires a contract the deployed doc-host cannot handle. Deployment is
 not proven by a green build: the handoff needs the running cloud revision, resolved package version,
