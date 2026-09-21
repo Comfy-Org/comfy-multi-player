@@ -23,6 +23,23 @@ function normalizedId(id: unknown): string {
   return typeof id === "string" ? id : String(id);
 }
 
+/**
+ * Litegraph's synthetic subgraph IO node ids. A subgraph definition's interior
+ * link reaches the definition's own promoted inputs (`-10`, the input node) and
+ * exposed outputs (`-20`, the output node) through these sentinels, which are
+ * deliberately NOT members of the definition's `nodes` array — see the z-image
+ * turbo template in `test/definition-links-roundtrip.test.ts`. Treating them as
+ * missing endpoints dropped every promoted-widget link an inserted definition
+ * carried.
+ */
+const SUBGRAPH_INPUT_NODE_ID = "-10";
+const SUBGRAPH_OUTPUT_NODE_ID = "-20";
+
+function isSubgraphIoNodeId(id: unknown): boolean {
+  const key = normalizedId(id);
+  return key === SUBGRAPH_INPUT_NODE_ID || key === SUBGRAPH_OUTPUT_NODE_ID;
+}
+
 function linkId(link: unknown): unknown {
   if (Array.isArray(link)) return link[0];
   if (typeof link === "object" && link !== null) return (link as { id?: unknown }).id;
@@ -46,12 +63,24 @@ function remapInputs(inputs: unknown, linkIds: Map<string, string>, droppedLinkI
   }
 }
 
-function remapOutputs(outputs: unknown, linkIds: Map<string, string>, droppedLinkIds: Set<string>): void {
-  if (!Array.isArray(outputs)) return;
-  for (const output of outputs) {
-    if (typeof output !== "object" || output === null || !Array.isArray((output as { links?: unknown }).links)) continue;
-    const record = output as { links: unknown[] };
-    record.links = record.links
+/**
+ * Rewrite one array-of-link-ids field carried by each entry of `records`:
+ * `links` on a node's output slots, `linkIds` on a definition's own promoted
+ * input / exposed output declarations. A dropped id is removed from the array
+ * (the array form of what `remapInputs` does by nulling a scalar `.link`); an
+ * id that is neither dropped nor remapped passes through untouched.
+ */
+function remapLinkIdArray(
+  records: unknown,
+  field: string,
+  linkIds: Map<string, string>,
+  droppedLinkIds: Set<string>,
+): void {
+  if (!Array.isArray(records)) return;
+  for (const entry of records) {
+    if (typeof entry !== "object" || entry === null || !Array.isArray((entry as Record<string, unknown>)[field])) continue;
+    const record = entry as Record<string, unknown>;
+    record[field] = (record[field] as unknown[])
       .filter((id) => !droppedLinkIds.has(normalizedId(id)))
       .map((id) => linkIds.get(normalizedId(id)) ?? id);
   }
@@ -63,6 +92,7 @@ function remapGraph(
   scope: string,
   definitionIds: Map<string, string>,
   dropDanglingLinks: boolean,
+  isDefinitionInterior = false,
 ): void {
   const nodes = graph["nodes"] as WorkflowNode[];
   const nodeIds = new Map<string, string>();
@@ -70,8 +100,10 @@ function remapGraph(
   // Numeric and string aliases normalized by validation name the same node.
   for (const node of nodes) nodeIds.set(normalizedId(node.id), derivedId(opId, scope, "node", node.id));
   const droppedLinkIds = new Set<string>();
+  const hasNode = (id: unknown): boolean =>
+    nodeIds.has(normalizedId(id)) || (isDefinitionInterior && isSubgraphIoNodeId(id));
   const links = ((graph["links"] as unknown[] | undefined) ?? []).filter((link) => {
-    const dropped = dropDanglingLinks && linkHasMissingEndpoint(link, (id) => nodeIds.has(normalizedId(id)));
+    const dropped = dropDanglingLinks && linkHasMissingEndpoint(link, hasNode);
     if (dropped) droppedLinkIds.add(normalizedId(linkId(link)));
     return !dropped;
   });
@@ -84,8 +116,13 @@ function remapGraph(
     node.id = nodeIds.get(normalizedId(node.id))!;
     if (definitionIds.has(node.type)) node.type = definitionIds.get(node.type)!;
     remapInputs(node.inputs, linkIds, droppedLinkIds);
-    remapOutputs(node.outputs, linkIds, droppedLinkIds);
+    remapLinkIdArray(node.outputs, "links", linkIds, droppedLinkIds);
   }
+  // A subgraph definition's OWN promoted-input / exposed-output declarations
+  // name their interior links in `linkIds`. Leaving them at the pre-remap ids
+  // resolved against nothing, so every declared input read back as unpromoted.
+  remapLinkIdArray(graph["inputs"], "linkIds", linkIds, droppedLinkIds);
+  remapLinkIdArray(graph["outputs"], "linkIds", linkIds, droppedLinkIds);
   graph["links"] = links.map((link) => {
     if (Array.isArray(link)) {
       link[0] = linkIds.get(normalizedId(link[0])) ?? link[0];
@@ -135,7 +172,7 @@ export function remapInsertedWorkflowIds(wf: WorkflowJSON, opId: string): Workfl
       const original = String(definition["id"]);
       definition["id"] = definitionIds.get(original)!;
       const definitionScope = `${scope}/definition:${encodeURIComponent(JSON.stringify(original))}`;
-      remapGraph(definition, opId, definitionScope, definitionIdsByScope.get(definitionScope)!, true);
+      remapGraph(definition, opId, definitionScope, definitionIdsByScope.get(definitionScope)!, true, true);
       const nested = (definition["definitions"] as { subgraphs?: Array<Record<string, unknown>> } | undefined)?.subgraphs ?? [];
       rewrite(nested, definitionScope);
     }
