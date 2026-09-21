@@ -187,7 +187,7 @@ describe("delete-wins (silent no-ops that consume the op_id)", () => {
     const doc = mint(lww.base_workflow, catalog);
     const del: DeleteNodeOp = { op: "delete_node", ...envelope("alice", 1), node_id: 42, removed_links: [] };
     expect(rejectedOutcome(applyOps(doc, [del], catalog))).toBeUndefined();
-    expect(project(doc, catalog).nodes.length).toBe(2);
+    expect(project(doc, catalog).nodes).toHaveLength(2);
   });
 });
 
@@ -350,7 +350,7 @@ describe("inputcount two-register grow (freeze §8.4)", () => {
       const node = project(doc, multiCatalog).nodes.find((n) => n.id === 1)!;
       expect(node.widgets_values, order.map((o) => o.op).join("→")).toEqual([7]);
       // Both orders still grow the slot — only the count register is contested.
-      expect((node.inputs as unknown[]).length).toBe(3);
+      expect(node.inputs as unknown[]).toHaveLength(3);
     }
   });
 });

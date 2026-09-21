@@ -381,7 +381,7 @@ describe("clock shadow-comparison acceptance matrix", () => {
     expect(matrix.summary.session_cases).toBe(5);
     expect(matrix.session_corpus.ops_total).toBe(243);
     expect(matrix.session_corpus.cases.map((entry) => entry.id).sort()).toEqual(["session-edit-heavy", "session-frontend-only-notes", "session-large-build", "session-promoted-host", "session-subgraph"]);
-    expect(matrix.cases.filter((row) => row.family.startsWith("generated-family")).length).toBe(400);
+    expect(matrix.cases.filter((row) => row.family.startsWith("generated-family"))).toHaveLength(400);
     expect(new Set(matrix.cases.filter((row) => row.family.startsWith("generated-family")).map((row) => row.family))).toEqual(new Set(["generated-family-1", "generated-family-2", "generated-family-3", "generated-family-4"]));
     for (const name of ["Agent adds node A, human observes it, then connects B to A", "Dependent producer edit-1 then edit-2 before shared revision advances", "Agent edits, reconnects after restart, observes the doc, and continues monotonically", "Stale-base human edit races after agent changed related state", "Human and agent independently change the same widget", "Human changes the agent value after seeing it", "Delete-versus-edit race on a related node", "Reconnect races on the same input register", "DQ-11 incarnation transition occurs mid-stream"]) expect(matrix.cases.some((row) => row.name === name)).toBe(true);
     expect(matrix.cases.find((row) => row.id === "agent-add-human-connect")?.vector_relations.ordered_pairs).toBe(1);

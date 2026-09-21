@@ -203,7 +203,7 @@ describe("connect grow path (KA-4 — a rejected op leaves the doc untouched)", 
     // back, so validation has to precede the first mutation.
     expect(bytes(doc).equals(before)).toBe(true);
     const sink = project(doc, growCatalog).nodes.find((n) => n.id === 2)!;
-    expect((sink.inputs as unknown[]).length).toBe(1);
+    expect(sink.inputs as unknown[]).toHaveLength(1);
   });
 
   it("rejects from_slot exactly equal to the output count (>= is the boundary, not >)", () => {
