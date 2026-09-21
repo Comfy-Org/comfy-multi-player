@@ -1319,6 +1319,38 @@ function clearObsoleteWidgetStamps(stamps: Y.Map<unknown>, nodeKey: string): voi
 // ---------------------------------------------------------------------------
 
 /**
+ * Whether `widget` is a plausible DYNAMIC-COMBO sub-field of a name that IS in
+ * the pinned `widget_order` — e.g. `"mode.skin_detail"` when `"mode"` is a
+ * known widget of the node's class (BE-9176).
+ *
+ * The pinned `WidgetCatalog` this package is handed expands a
+ * `COMFY_DYNAMICCOMBO_V3` selector at its FIRST declared key only (see
+ * `overflowWidgetName` in `doc.ts`), so it can never literally name a
+ * sub-field that only a DIFFERENT selection appends — a strict
+ * `widget_order.includes` check rejects every legitimate write to one as
+ * `unknown_widget`, which is exactly the failure a Get-Template-then-edit
+ * fallback hits for a Magnific-style node.
+ *
+ * There is no live `object_info` at this call site to confirm the sub-field
+ * really exists for the node's CURRENT selection (that would need the same
+ * value-aware expansion the pinned catalog does not carry), so this is a
+ * plausibility check, not a validation: the dotted PREFIX must be a real,
+ * catalogued widget of this class — the one part the pinned catalog CAN
+ * confirm — and the write is then let through on trust rather than refused
+ * outright. A stray `.` with no such prefix (`".foo"`, a trailing `.`, or a
+ * prefix the catalog does not know) is not plausible and still rejects.
+ *
+ * Deliberate, narrow deviation from the "reject rather than guess" posture
+ * `validateWidgetName`'s other two rejections hold — see
+ * `docs/decisions/EXCEPTIONS.md` (KA-12) for the recorded scope and sunset
+ * condition.
+ */
+function isPlausibleDynamicComboSubfield(entry: WidgetCatalog["types"][string], widget: string): boolean {
+  const dot = widget.indexOf(".");
+  return dot > 0 && dot < widget.length - 1 && entry.widget_order.includes(widget.slice(0, dot));
+}
+
+/**
  * Reject a name-keyed widget write the pinned catalog cannot describe
  * (comfy-cli `_widget_index` raises). Two rejections, and they are the SAME
  * pair `add_node` applies via `rejectUnprojectableWidgets` — the two op kinds
@@ -1330,7 +1362,9 @@ function clearObsoleteWidgetStamps(stamps: Y.Map<unknown>, nodeKey: string): voi
  *   turn back into positional values, so the write makes the WHOLE document
  *   unprojectable on every later read. A class stored opaquely never reaches
  *   here — `rejectIfOpaqueWidgets` runs first and owns that case (§1.2).
- * - name absent from the class's `widget_order` → `unknown_widget`.
+ * - name absent from the class's `widget_order`, AND not a plausible
+ *   dynamic-combo sub-field of a name that IS ({@link isPlausibleDynamicComboSubfield},
+ *   BE-9176) → `unknown_widget`.
  *
  * Skipped entirely when there is NO catalog: the host cannot then tell an
  * unknown class from a known one, which is the same "reject rather than guess"
@@ -1349,7 +1383,7 @@ function validateWidgetName(
       `set_widget(${nodeType}): named widget write to a class absent from the pinned catalog cannot be projected (schema §1.2 — projection is catalog-dependent by design)`,
     );
   }
-  if (!entry.widget_order.includes(widget)) {
+  if (!entry.widget_order.includes(widget) && !isPlausibleDynamicComboSubfield(entry, widget)) {
     throw new OpRejectedError(
       "unknown_widget",
       `widget '${widget}' not found on ${nodeType}; available: ${entry.widget_order.join(", ") || "(none — all inputs are links)"}`,

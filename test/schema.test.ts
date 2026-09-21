@@ -104,12 +104,21 @@ describe("schema", () => {
     expect((node.get(OPAQUE_WIDGETS_KEY) as string[])[0]).toMatch(/^A sticky note/);
   });
 
-  it("createNodeMap keeps failing loudly when widget_order is present but too SHORT", () => {
-    // A catalog MISMATCH is not an unknown class: swallowing it would mis-key
-    // real widget values. The opaque path is guarded to absent order only.
-    expect(() =>
-      createNodeMap({ id: 1, type: "KSampler", widgets_values: [123, 20] }, ["seed"]),
-    ).toThrow(/names only 1/);
+  it("createNodeMap names the overrun positionally when widget_order is present but too SHORT (BE-9176)", () => {
+    // A catalog MISMATCH is not an unknown class, and is not silently
+    // swallowed either: `widgets_values` overrunning the pinned `widget_order`
+    // (e.g. a COMFY_DYNAMICCOMBO_V3 selection the value-blind pinned catalog
+    // was not built from) no longer loses the node — the overrun entry is
+    // named positionally instead. The opaque path remains guarded to absent
+    // order only.
+    const doc = new Y.Doc();
+    initDoc(doc);
+    nodesMap(doc).set("1", createNodeMap({ id: 1, type: "KSampler", widgets_values: [123, 20] }, ["seed"]));
+    const node = nodesMap(doc).get("1")!;
+    const widgets = node.get("widgets") as Y.Map<unknown>;
+    expect(widgets.get("seed")).toBe(123);
+    expect(widgets.get("_extra_1")).toBe(20);
+    expect(node.get(OPAQUE_WIDGETS_KEY)).toBeUndefined();
   });
 
   it("createNodeMap rejects a node carrying the reserved opaque key", () => {
