@@ -2,8 +2,6 @@
  * Review-only catalog codec. Not exported, shipped, or wired into the applier.
  * The first commit used real flat-catalog mint as the failing reference adapter.
  */
-import * as Y from "yjs";
-import { applyOps, mint } from "../../src/index.js";
 
 export interface WidgetField {
   readonly name: string;
@@ -46,27 +44,23 @@ export function decodeWidgets(layout: readonly WidgetField[], values: readonly u
 
 export type ResetValue = { readonly kind: "set"; readonly value: unknown } | { readonly kind: "clear" };
 
-/** RED reference: measure the existing single-target selector op, which has no reset payload. */
+/** Pure intent planning, with no receiver state, stamps, defaults, or document writes. */
 export function planSelectorReset(
   layout: readonly WidgetField[], selector: string, selection: string,
-  _carried: ReadonlyMap<string, unknown>,
+  carried: ReadonlyMap<string, unknown>,
 ): Map<string, ResetValue> {
-  const names = [...indexFields(layout).keys()];
-  const catalog = { types: { Prototype: { widget_order: names } } };
-  const doc = mint({
-    nodes: [{ id: 1, type: "Prototype", widgets_values: names.map(() => null) }],
-    links: [],
-  }, catalog);
-  try {
-    applyOps(doc, [{
-      op: "set_widget", op_id: "a".repeat(32), actor: "prototype", base_version: 1,
-      stamp: [1, "prototype"], node_id: 1, widget: selector, value: selection,
-    }], catalog);
-    const node = doc.getMap<Y.Map<unknown>>("nodes").get("1")!;
-    const widgets = node.get("widgets") as Y.Map<unknown>;
-    return new Map([...widgets].filter(([, value]) => value !== null)
-      .map(([name, value]) => [name, { kind: "set", value }]));
-  } finally {
-    doc.destroy();
-  }
+  const field = indexFields(layout).get(selector);
+  if (field?.branches === undefined) throw new Error(`Not a selector: ${selector}`);
+  const reset = new Map<string, ResetValue>();
+  for (const name of indexFields([field]).keys()) reset.set(name, { kind: "clear" });
+  let consumed = 0;
+  walkSelected([field], (name) => {
+    if (name !== selector && !carried.has(name)) throw new Error(`Missing carried value for ${name}`);
+    const value = name === selector ? selection : carried.get(name);
+    if (name !== selector) consumed++;
+    reset.set(name, { kind: "set", value });
+    return value;
+  });
+  if (consumed !== carried.size) throw new Error("Unexpected carried fields");
+  return reset;
 }

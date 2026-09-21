@@ -46,7 +46,8 @@ against the real applier before adoption.
 ## Boundaries of this PR
 
 The executable prototype lives under `test/prototypes/`, outside `src`, the package build and
-the exported API. It is a codec and intent planner, not a second applier. No consumer selects
+the exported API. It is a decoder and intent planner, not a second applier. There is no encoder
+or round-trip proof in this prototype. No consumer selects
 it, no Yjs schema changes, and no published operation accepts a new payload. Existing safety
 assertions and product behavior remain unchanged. This is not a fix for cloud PR 10081 yet.
 
@@ -72,7 +73,10 @@ identity, and FC-8 operation-carried values. No exception or release approval is
 
 The first test commit uses real `mint` with a first-option flat catalog as its reference adapter.
 That is evidence about the existing reader contract, not a test of the CLI producer itself.
-The implementation commit will replace the adapter without changing the decoder assertions.
+Hosted CI recorded seven failing decoder assertions with the creative control passing. The
+decoder implementation made all eight decoder cases pass without changing their assertions.
+The next reference adapter used real `applyOps(set_widget)` to expose nine failing reset
+assertions; the reset planner replaces it without changing those assertions.
 All execution is hosted while the desktop resource hold remains active. CI receipts belong in
 the PR body; an intentionally failing draft is not a merge-ready result.
 
@@ -80,7 +84,7 @@ the PR body; an intentionally failing draft is not a merge-ready result.
 
 - **Catalog:** metadata mapping stable widget names to serialized positions.
 - **Selector:** a field whose value determines which nested fields are serialized.
-- **Codec:** converts positional values to named values and back.
+- **Decoder:** converts positional values to named values.
 - **Reset intent:** carried writes and clears for one future semantic operation.
 - **Stamp:** creator-carried ordering key used by the existing conflict resolver.
 - **KA / FC:** keep-alive and foreclose invariant identifiers in `INVARIANTS.md`.
