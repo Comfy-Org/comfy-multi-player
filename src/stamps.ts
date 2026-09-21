@@ -106,6 +106,10 @@ export function writeTarget(op: WireOp): unknown[] {
     case "add_node":
     case "delete_node":
       return ["node", String(op.node_id)];
+    case "set_node_field":
+      // One register per (node lifetime, field), so two fields of one node
+      // never contend and a re-add starts a fresh ledger for both.
+      return ["node_field", String(op.node_id), incarnation, op.field];
     case "connect":
       if (op.grow != null) {
         // A promoted subgraph input (schema Amendment A15) is one register per

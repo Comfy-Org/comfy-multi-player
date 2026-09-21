@@ -53,6 +53,8 @@ function touchedNodes(op: WireOp): string[] {
       return [String(op.from_node), String(op.to_node)];
     case "disconnect":
       return [String(op.to_node)];
+    case "set_node_field":
+      return [String(op.node_id)];
     case "insert_workflow":
       return op.workflow.nodes.map((node) => String(node.id));
     case "clear":

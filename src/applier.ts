@@ -137,6 +137,7 @@ import {
   type Op,
   type OperationLinkDestination,
   type OperationLinkState,
+  type SetNodeFieldOp,
   type SetWidgetOp,
   type StampKey,
   type SubgraphDefinition,
@@ -144,7 +145,7 @@ import {
   type WireOp,
 } from "./types.js";
 import { addInteriorLinkOrder, removeInteriorLinkOrder } from "./interior-link-order.js";
-import { NODE_INCARNATION_KEY } from "./types.js";
+import { NODE_INCARNATION_KEY, WRITABLE_NODE_FIELDS } from "./types.js";
 
 /**
  * Apply a batch of stamped ops to the doc, one transaction per op.
@@ -553,6 +554,8 @@ function dispatch(doc: Y.Doc, op: Op, catalog?: WidgetCatalog): SuccessfulOutcom
       return applyAddNode(doc, op, catalog);
     case "set_widget":
       return applySetWidget(doc, op, catalog);
+    case "set_node_field":
+      return applySetNodeField(doc, op);
     case "connect":
       return applyConnect(doc, op, catalog);
     case "disconnect":
@@ -2822,6 +2825,62 @@ function scrubNodeLinkRefs(
  * when the node actually goes away, because a node that survives the gate
  * keeps its own wiring.
  */
+// ---------------------------------------------------------------------------
+// set_node_field
+// ---------------------------------------------------------------------------
+
+/**
+ * VALIDATE BEFORE MUTATE: the field allowlist, the node id and the value's
+ * encodability are all op-only checks and all precede the first write, so a
+ * rejected op leaves the document byte-identical.
+ */
+function applySetNodeField(doc: Y.Doc, op: SetNodeFieldOp): SuccessfulOutcome {
+  if (op.node_id === undefined) {
+    throw new OpRejectedError("malformed_op", "set_node_field: missing node_id");
+  }
+  if (!(WRITABLE_NODE_FIELDS as readonly string[]).includes(op.field)) {
+    throw new OpRejectedError(
+      "malformed_op",
+      `set_node_field: '${String(op.field)}' is not a writable field; expected one of ${WRITABLE_NODE_FIELDS.join(", ")}`,
+    );
+  }
+  const refusal = op.value === null ? null : mapValueRefusal(op.value);
+  if (refusal !== null) {
+    throw new OpRejectedError("malformed_op", `set_node_field: value: ${refusal}`);
+  }
+
+  const node = nodesMap(doc).get(String(op.node_id));
+  // Delete-wins: the target is gone, so the write is a silent no-op that
+  // still consumes its op_id.
+  if (!(node instanceof Y.Map)) return "no-op";
+
+  const stamps = stampsMap(doc);
+  const targetKey = stampTargetKey(op);
+  const prior = stamps.get(targetKey) as StampKey | undefined;
+  const stamp = stampKey(op);
+  if (prior != null && compareStampKeys(stamp, prior) <= 0) return "lww-dropped";
+
+  const [head, leaf] = op.field.split(".");
+  if (leaf === undefined) {
+    writeNodeField(node, head!, op.value);
+  } else {
+    // `createNodeMap` stores `flags` as a nested Y.Map, but a node minted
+    // without flags has no such key at all.
+    const nested = node.get(head!);
+    const flags = nested instanceof Y.Map ? nested : new Y.Map<unknown>();
+    if (!(nested instanceof Y.Map)) mset(node, head!, flags);
+    writeNodeField(flags, leaf, op.value);
+  }
+  mset(stamps, targetKey, stamp);
+  return "applied";
+}
+
+/** `null` clears the key so the field round-trips as absent in workflow JSON. */
+function writeNodeField(target: Y.Map<unknown>, key: string, value: unknown): void {
+  if (value === null) mdel(target, key);
+  else mset(target, key, value);
+}
+
 function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp): SuccessfulOutcome {
   if (op.node_id === undefined) {
     throw new OpRejectedError("malformed_op", "delete_node: missing node_id");
