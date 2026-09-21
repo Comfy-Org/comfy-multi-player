@@ -3,7 +3,7 @@ import { applyOps, mint, project, type SetWidgetOp } from "../src/index.js";
 import { loadCatalog, loadLwwVectors } from "./helpers.js";
 
 /**
- * Characterizes op_id-reuse order-dependence (todo `OPID-REUSE-ORDER-DEPENDENT`,
+ * Characterizes op_id-reuse order-dependence (tracking item `OPID-REUSE-ORDER-DEPENDENT`,
  * follow-up to CMP #33 / `reports/pr-review/gauntlet-75.md`).
  *
  * The `op_id_reuse` gate (`src/applier.ts:152-186`) records a payload digest on

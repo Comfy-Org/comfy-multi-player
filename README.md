@@ -109,9 +109,28 @@ names in the catalog.
 
 ### `applyOps(doc, ops, catalog?, context?): ApplyResult`
 
-Applies a batch, one Yjs transaction per op, in the given order. Never throws
-for a rejected op — every outcome comes back in the result. See
+Applies a batch, one Yjs transaction per op, in the given order. For inert
+decoded operations on a valid current-schema document, operation rejections
+come back in the result. See
 [outcomes](#what-applyops-returns) below.
+
+**Input trust boundary (KA-3 / KA-4 / FC-3).** Hosts must bound untrusted wire
+bytes before parsing, decode JSON text with `JSON.parse` without a reviver,
+and validate the batch shape before calling `applyOps`. The package then
+validates operation envelopes and bounds their depth, breadth and approximate
+cost before applying them. These are payload bounds, not an execution sandbox
+or a bound on the host's parsing/allocation cost.
+
+In-process callers must supply trusted objects: getters, Proxies, custom
+iterators and callbacks can execute arbitrary code, throw, change values
+between reads, or never return. The no-mutation-on-rejection contract covers
+package writes, not mutations made by caller code that already holds the
+document. `structuredClone` is not a sanitizer for arbitrary objects: it
+rejects Proxies but reads getters. `JSON.stringify` also invokes getters and
+`toJSON`; stringifying an untrusted object is not equivalent to receiving JSON
+text. See the [structured-clone specification](https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal).
+`test/op-bounds.test.ts` exercises the decoded-data boundary, refusal without
+document mutation, and retry with the same operation identity.
 
 `catalog` is optional but effectively required for a real host: without it, an
 `add_node` carrying positional widget values is rejected `catalog_required`,
@@ -171,9 +190,13 @@ the accept path.
 ### `migrate(doc, fromVersion): void`
 
 Document-layout version validation for the private-alpha current format.
-`SCHEMA_VERSION` is `3`: the call validates and no-ops only at v3, and throws
+`SCHEMA_VERSION` is `4`: the call validates and no-ops only at v4, and throws
 `SchemaVersionError` for every older or newer layout without relabelling it.
 Old layouts must be re-minted at their source; there is no compatibility reader.
+Schema v4 separates Lamport reservations into `__clock_reservations`;
+`readStamps()` contains only winning write-target stamps. Clock admissions
+require a current-schema caller document and recover their floor from both
+ledgers, including after snapshot restart (ADR-021, Amendment CLK-3).
 
 `migrate()` is **no longer the only fail-closed read gate** — it was, and
 nothing forced a caller through it, which is the fail-open gap #38 closed by
@@ -648,11 +671,17 @@ way.
 Published to npm as [`@comfyorg/comfy-multi-player`](https://www.npmjs.com/package/@comfyorg/comfy-multi-player):
 
 ```bash
-npm install @comfyorg/comfy-multi-player
+npm install --save-exact @comfyorg/comfy-multi-player@0.3.0
 ```
 
-The server pins an **exact** published version. The frontend consumes the
-workspace source from the same commit that produces that release. Conflict
+Use this exact version after the 0.3.0 release is published; unreleased main
+changes are not included in earlier npm versions. Version 0.3.0 requires schema
+4, while 0.2.1 used schema 2. Old layouts are refused, not migrated in place.
+Coordinate version upgrades and new-lineage cutover across consumers as
+described in [`docs/release-handoff.md`](docs/release-handoff.md).
+
+The server and frontend must pin the same **exact** published version. Package
+development stays in the standalone repository; consumers do not vendor its source. Conflict
 resolution is a cross-process agreement about which write wins; two peers
 running different versions of these rules can disagree about the outcome.
 
@@ -665,21 +694,22 @@ superseded) remains documented for historical context.
 ## Develop
 
 ```bash
-pnpm install
-pnpm run build         # tsc → dist/
-pnpm test              # vitest: schema, purity, replay, lww, convergence, roundtrip, applier
-pnpm run check:purity  # dependency-tree + bare-Node import gate
-pnpm run check:imports # module-graph gate: no cycles, src imports yjs only, no Node builtins
-pnpm run check:pins    # cross-repo citations are pinned by SHA, not a moving ref
-pnpm run verify:corpus # conformance fixtures match their pinned SHAs
-pnpm run check:profile-claims # .agents/checks prose still matches the code it restates
-pnpm run check:coderabbit     # .coderabbit.yaml still matches the profiles that generate it
+npm ci
+npm run build         # tsc → dist/
+npm test              # vitest: schema, purity, replay, lww, convergence, roundtrip, applier
+npm run check:purity  # dependency-tree + bare-Node import gate
+npm run check:imports # module-graph gate: no cycles, src imports yjs only, no Node builtins
+npm run check:pins    # cross-repo citations are pinned by SHA, not a moving ref
+npm run verify:corpus # conformance fixtures match their pinned SHAs
+npm run check:profile-claims # .agents/checks prose still matches the code it restates
+npm run check:coderabbit     # .coderabbit.yaml still matches the profiles that generate it
 ```
 
-The canonical source lives at
-[`packages/comfy-multi-player`](https://github.com/Comfy-Org/ComfyUI_frontend/tree/main/packages/comfy-multi-player)
-in the ComfyUI frontend workspace. Run these commands from that package directory,
-or use `pnpm --filter @comfyorg/comfy-multi-player <command>` from the workspace root.
+The canonical writable source is
+[`Comfy-Org/comfy-multi-player`](https://github.com/Comfy-Org/comfy-multi-player).
+Run these commands from this repository's root. Target package code, tests, docs,
+and release tooling at standalone `main`. Frontend adapters belong on frontend
+`main`; the deferred frontend migration is not a development base.
 
 `fixtures/` holds the replay corpus: recorded op sessions with their starting
 and final workflows, six conflict-resolution vectors, and the pinned catalog.

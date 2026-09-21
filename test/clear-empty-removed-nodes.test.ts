@@ -7,7 +7,7 @@ import { loadCatalog } from "./helpers.js";
 const catalog = loadCatalog();
 
 function threeNodeWorkflow(withGroups: boolean): WorkflowJSON {
-  const workflow: WorkflowJSON = {
+  return {
     nodes: [
       {
         id: 1, type: "LoadImage", inputs: [],
@@ -27,22 +27,19 @@ function threeNodeWorkflow(withGroups: boolean): WorkflowJSON {
     last_node_id: 3,
     last_link_id: 11,
     extra: {},
+    ...(withGroups ? {
+      groups: [
+        {
+          id: 1,
+          title: "nodes 1-2",
+          bounding: [0, 0, 640, 320],
+          color: "#3f789e",
+          font_size: 24,
+          flags: {},
+        },
+      ],
+    } : {}),
   };
-  if (withGroups) {
-    workflow.groups = [
-      {
-        id: 1,
-        title: "nodes 1-2",
-        bounding: [0, 0, 640, 320],
-        color: "#3f789e",
-        font_size: 24,
-        flags: {},
-      },
-    ];
-  } else {
-    delete workflow.groups;
-  }
-  return workflow;
 }
 
 function clearEmpty(baseVersion: number): ClearOp {

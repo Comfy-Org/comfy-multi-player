@@ -23,10 +23,11 @@
  *    other than the one the doc pins still throws loudly (KA-12 / schema §3
  *    pin 4); silently dropping nodes there would hide contract drift.
  */
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { appliedMap, createNodeMap, initDoc } from "../src/doc.js";
-import { applyOps, mint, nodesMap, project, type Op, type WorkflowJSON } from "../src/index.js";
+import { applyOps, mint, nodesMap, project } from "../src/index.js";
+import type { Op, WorkflowJSON } from "../src/index.js";
 import { loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
@@ -37,6 +38,7 @@ function bytes(doc: Y.Doc): Buffer {
 }
 
 let opSeq = 0;
+beforeEach(() => { opSeq = 0; });
 /** A well-formed stamped envelope; the tests vary only the payload under test. */
 function op(fields: Record<string, unknown>): Op {
   opSeq += 1;

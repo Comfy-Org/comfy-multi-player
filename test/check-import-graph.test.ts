@@ -26,7 +26,7 @@ const script = join(repoRoot, "scripts", "check-import-graph.mjs");
 function runAgainst(root: string, minModules?: number) {
   const env: NodeJS.ProcessEnv = { ...process.env, IMPORT_GRAPH_ROOT: root };
   if (minModules !== undefined) env.IMPORT_GRAPH_MIN_MODULES = String(minModules);
-  return spawnSync("node", [script], { encoding: "utf8", env });
+  return spawnSync(process.execPath, [script], { encoding: "utf8", env });
 }
 
 describe("check-import-graph gate", () => {

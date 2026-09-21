@@ -95,11 +95,11 @@ export function checkGraphInvariants(doc: Y.Doc): GraphInvariantViolation[] {
   // that endpoint, which keeps one missing node from producing duplicate noise.
   const inputClaims = new Map<string, string>();
   const linkEntries = [...links.entries()].sort(([a], [b]) => compareCodeUnits(a, b));
-  for (const [linkMapKey, rawTuple] of linkEntries) {
+  function checkLink(linkMapKey: string, rawTuple: unknown): void {
     const path = `links[${JSON.stringify(linkMapKey)}]`;
     if (!Array.isArray(rawTuple) || rawTuple.length < 5) {
       violation(violations, "I3", path, "link entry is not a tuple with node endpoints");
-      continue;
+      return;
     }
 
     const tuple = rawTuple as unknown[];
@@ -137,7 +137,7 @@ export function checkGraphInvariants(doc: Y.Doc): GraphInvariantViolation[] {
       inputClaims.set(claimKey, linkMapKey);
     }
 
-    if (destinationExists) {
+    function checkDestination(): void {
       const destination = nodes.get(toNodeKey);
       const inputs = destination instanceof Y.Map ? destination.get("inputs") : undefined;
       const toSlot = tuple[4];
@@ -162,7 +162,7 @@ export function checkGraphInvariants(doc: Y.Doc): GraphInvariantViolation[] {
       }
     }
 
-    if (sourceExists) {
+    function checkSource(): void {
       const source = nodes.get(fromNodeKey);
       const outputs = source instanceof Y.Map ? source.get("outputs") : undefined;
       const fromSlot = tuple[2];
@@ -180,8 +180,11 @@ export function checkGraphInvariants(doc: Y.Doc): GraphInvariantViolation[] {
         );
       }
     }
+    if (destinationExists) checkDestination();
+    if (sourceExists) checkSource();
   }
 
+  for (const [linkMapKey, rawTuple] of linkEntries) checkLink(linkMapKey, rawTuple);
   return violations.sort((a, b) => {
     const invariant = INVARIANT_ORDER[a.invariant] - INVARIANT_ORDER[b.invariant];
     if (invariant !== 0) return invariant;

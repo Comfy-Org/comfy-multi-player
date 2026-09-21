@@ -33,7 +33,7 @@ import {
   type WorkflowNode,
 } from "../src/index.js";
 import { noOpIds, rejectedOutcome } from "./apply-result-helpers.js";
-import { canonicalize, loadCatalog, loadLwwVectors, loadSession, sessionFiles } from "./helpers.js";
+import { loadCatalog, loadLwwVectors, loadSession, sessionFiles } from "./helpers.js";
 
 const catalog = loadCatalog();
 const lww = loadLwwVectors();

@@ -151,6 +151,12 @@ import { NODE_INCARNATION_KEY } from "./types.js";
  * Idempotent per op_id; convergent under reordering via the
  * `[base_version, actor, op_id]` stamp order (schema §3).
  *
+ * Untrusted producers supply inert decoded wire data; in-process objects and
+ * callbacks must be trusted. Hosts own wire-size limits and JSON decoding
+ * without a reviver. Payload limits do not sandbox getters, Proxy traps or
+ * iterators, and rejection guarantees do not cover caller-code mutations.
+ * See README's input trust boundary and src/limits.ts.
+ *
  * `catalog` (the pinned object_info projection) is needed to decompose an
  * `add_node` payload's positional `widgets_values` into the name-keyed
  * widgets map, for autogrow collision renames, and to validate widget names;
@@ -185,7 +191,34 @@ export function applyOps(doc: Y.Doc, ops: Op[], catalog?: WidgetCatalog, context
     return result;
   }
 
-  for (let index = 0; index < ops.length; index++) {
+  function rejectRemainder(err: unknown, op: Op, index: number): void {
+    const op_id = opIdentity(op);
+    const code = err instanceof OpRejectedError ? err.code : "apply_failed";
+    const message = err instanceof Error ? err.message : String(err);
+    outcomes.push({ op_id, outcome: "rejected", reason: { code, message } });
+    for (const remainder of ops.slice(index + 1)) {
+      outcomes.push({
+        op_id: opIdentity(remainder),
+        outcome: "rejected",
+        reason: { code: "batch_aborted", message: `not processed because op at index ${index} was rejected` },
+      });
+    }
+    if (context?.eventSink !== undefined) {
+      const errorClass = err instanceof Error ? "Error" : "NonError";
+      emitCmpEvent(context.eventSink, {
+        schema_version: CMP_EVENT_SCHEMA_VERSION,
+        type: err instanceof OpRejectedError ? "op_rejected" : "applier_error",
+        source: "applyOps",
+        code,
+        message,
+        error_name: err instanceof OpRejectedError ? "OpRejectedError" : errorClass,
+        op_id,
+        batch_index: index,
+      });
+    }
+  }
+
+  function applyOne(index: number): boolean {
     const op = ops[index]!;
     try {
       validateEnvelope(op);
@@ -205,7 +238,7 @@ export function applyOps(doc: Y.Doc, ops: Op[], catalog?: WidgetCatalog, context
         // is a true no-op (byte-identical encodeStateAsUpdate).
         outcomes.push({ op_id: op.op_id, outcome: "no-op" });
         duplicateIds.add(op.op_id);
-        continue;
+        return true;
       }
       let outcome: Exclude<ApplyOutcome["outcome"], "rejected"> = "applied";
       doc.transact(() => {
@@ -226,31 +259,14 @@ export function applyOps(doc: Y.Doc, ops: Op[], catalog?: WidgetCatalog, context
         });
       }
     } catch (err) {
-      const op_id = opIdentity(op);
-      const code = err instanceof OpRejectedError ? err.code : "apply_failed";
-      const message = err instanceof Error ? err.message : String(err);
-      outcomes.push({ op_id, outcome: "rejected", reason: { code, message } });
-      for (const remainder of ops.slice(index + 1)) {
-        outcomes.push({
-          op_id: opIdentity(remainder),
-          outcome: "rejected",
-          reason: { code: "batch_aborted", message: `not processed because op at index ${index} was rejected` },
-        });
-      }
-      if (context?.eventSink !== undefined) {
-        emitCmpEvent(context.eventSink, {
-          schema_version: CMP_EVENT_SCHEMA_VERSION,
-          type: err instanceof OpRejectedError ? "op_rejected" : "applier_error",
-          source: "applyOps",
-          code,
-          message,
-          error_name: err instanceof OpRejectedError ? "OpRejectedError" : err instanceof Error ? "Error" : "NonError",
-          op_id,
-          batch_index: index,
-        });
-      }
-      break; // abort-remainder (vocabulary §4)
+      rejectRemainder(err, op, index);
+      return false;
     }
+    return true;
+  }
+
+  for (let index = 0; index < ops.length; index++) {
+    if (!applyOne(index)) break; // abort-remainder (vocabulary §4)
   }
 
   return makeResult({ outcomes, ops_seen: bookkeeping.size }, ops, duplicateIds);
@@ -282,30 +298,14 @@ function opIdentity(op: unknown): string {
     : "";
 }
 
-/**
- * Stable, key-order-independent JSON for an op: object keys sorted by code
- * point at every depth, array order preserved, whole envelope included.
- *
- * NOT stored — see {@link opDigest}. Exposed to tests as the definition of
- * what the digest is taken over.
- */
-function canonicalJson(value: unknown): string {
+function rejectBigIntPayload(value: unknown): void {
   // BigInt classification takes precedence over the generic depth/cost gates.
   // Keep this walk iterative and bounded so even a hostile envelope cannot
   // turn the diagnostic into unbounded work.
   const bigintStack: Array<{ value: unknown; path: string }> = [{ value, path: "$" }];
   const bigintVisited = new Set<object>();
   let bigintVisits = 0;
-  while (bigintStack.length > 0 && bigintVisits++ <= MAX_OP_COST) {
-    const { value, path } = bigintStack.pop()!;
-    if (typeof value === "bigint") {
-      throw new OpRejectedError(
-        "malformed_op",
-        `op payload at ${path} is a BigInt and cannot be encoded as JSON`,
-      );
-    }
-    if (typeof value !== "object" || value === null || bigintVisited.has(value)) continue;
-    bigintVisited.add(value);
+  function queueChildren(value: object, path: string): void {
     if (Array.isArray(value)) {
       const firstIndex = Math.max(0, value.length - (MAX_OP_COST - bigintVisits));
       for (let index = value.length - 1; index >= firstIndex; index--) {
@@ -324,7 +324,29 @@ function canonicalJson(value: unknown): string {
       }
     }
   }
+  while (bigintStack.length > 0 && bigintVisits++ <= MAX_OP_COST) {
+    const { value, path } = bigintStack.pop()!;
+    if (typeof value === "bigint") {
+      throw new OpRejectedError(
+        "malformed_op",
+        `op payload at ${path} is a BigInt and cannot be encoded as JSON`,
+      );
+    }
+    if (typeof value !== "object" || value === null || bigintVisited.has(value)) continue;
+    bigintVisited.add(value);
+    queueChildren(value, path);
+  }
+}
 
+/**
+ * Stable, key-order-independent JSON for an op: object keys sorted by code
+ * point at every depth, array order preserved, whole envelope included.
+ *
+ * NOT stored — see {@link opDigest}. Exposed to tests as the definition of
+ * what the digest is taken over.
+ */
+function canonicalJson(value: unknown): string {
+  rejectBigIntPayload(value);
   // Amendment A11 extends A8's whole-envelope, pre-idempotency gate with a
   // breadth/size budget. Its iterative depth check keeps A8's
   // `payload_too_deep` vocabulary while avoiding hostile recursion.
@@ -586,12 +608,7 @@ function applyDefineSubgraph(
     if (existingDigest === digest) return "no-op";
     if (digest > existingDigest) {
       assertDefinitionIdsAvailable(doc, op.subgraph_definition, op.subgraph_id);
-      let replacement: Y.Map<unknown>;
-      try {
-        replacement = mintDefinition(op.subgraph_definition, catalog);
-      } catch (error) {
-        throw new OpRejectedError("malformed_op", `define_subgraph(${op.subgraph_id}): ${error instanceof Error ? error.message : String(error)}`);
-      }
+      const replacement = mintSubmittedDefinition(op, catalog);
       const widgetEdits = definitionWidgetEdits(doc, existing);
       mset(definitions, op.subgraph_id, replacement);
       restoreDefinitionWidgetEdits(doc, replacement, widgetEdits);
@@ -608,18 +625,21 @@ function applyDefineSubgraph(
     );
   }
   assertDefinitionIdsAvailable(doc, op.subgraph_definition);
-  let definition: Y.Map<unknown>;
+  const definition = mintSubmittedDefinition(op, catalog);
+  mset(definitions, op.subgraph_id, definition);
+  setDefinitionDigest(doc, op.subgraph_id, digest);
+  return "applied";
+}
+
+function mintSubmittedDefinition(op: DefineSubgraphOp, catalog: WidgetCatalog): Y.Map<unknown> {
   try {
-    definition = mintDefinition(op.subgraph_definition, catalog);
+    return mintDefinition(op.subgraph_definition, catalog);
   } catch (error) {
     throw new OpRejectedError(
       "malformed_op",
       `define_subgraph(${op.subgraph_id}): ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  mset(definitions, op.subgraph_id, definition);
-  setDefinitionDigest(doc, op.subgraph_id, digest);
-  return "applied";
 }
 
 function definitionDigest(definition: SubgraphDefinition | Y.Map<unknown>, catalog: WidgetCatalog): string {
@@ -853,7 +873,9 @@ function assertUniqueNormalizedIds(
 ): void {
   const ids = new Set<string>();
   values.forEach((value, index) => {
-    const id = Array.isArray(value) ? value[0] : isPlainRecord(value) ? value.id : undefined;
+    let id: unknown;
+    if (Array.isArray(value)) id = value[0];
+    else if (isPlainRecord(value)) id = value.id;
     if (id === undefined || id === null) {
       if (required) throw new OpRejectedError("malformed_op", `${operation}: missing id at ${path}[${index}]`);
       return;
@@ -907,7 +929,7 @@ function validateSerializableValue(value: unknown, path: string): void {
 
 function numericId(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && /^[0-9]+$/.test(value)) return parseInt(value, 10);
+  if (typeof value === "string" && /^\d+$/.test(value)) return parseInt(value, 10);
   return undefined;
 }
 
@@ -960,12 +982,12 @@ function validateDefinitionInputs(subgraphs: unknown[], path = "workflow.definit
   });
 }
 
-function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetCatalog): SuccessfulOutcome {
+function prepareInsertedWorkflow(op: InsertWorkflowOp): Record<string, unknown> {
   const workflow = scrubPrivateKeys(op.workflow) as unknown;
   if (typeof workflow !== "object" || workflow === null || Array.isArray(workflow)) {
     throw new OpRejectedError("malformed_op", "insert_workflow: workflow must be an object");
   }
-  let wf = workflow as Record<string, unknown>;
+  const wf = workflow as Record<string, unknown>;
   if (!Array.isArray(wf["nodes"]) || (wf["links"] !== undefined && !Array.isArray(wf["links"]))) {
     throw new OpRejectedError("malformed_op", "insert_workflow: nodes and links must be arrays");
   }
@@ -982,7 +1004,11 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
   }
   validateRawGraphIds(wf["nodes"] as unknown[], (wf["links"] as unknown[] | undefined) ?? [], "workflow");
   validateDefinitionInputs((subgraphs as unknown[] | undefined) ?? []);
-  wf = remapInsertedWorkflowIds(wf as unknown as import("./types.js").WorkflowJSON, op.op_id) as unknown as Record<string, unknown>;
+  return remapInsertedWorkflowIds(wf as unknown as import("./types.js").WorkflowJSON, op.op_id) as unknown as Record<string, unknown>;
+}
+
+function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetCatalog): SuccessfulOutcome {
+  const wf = prepareInsertedWorkflow(op);
   const remappedDefinitions = wf["definitions"] as { subgraphs?: unknown[] } | undefined;
   const remappedSubgraphs = remappedDefinitions?.subgraphs ?? [];
 
@@ -991,7 +1017,7 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
   const stamps = stampsMap(doc);
   const stamp = stampKey(op);
   const seenNodes = new Set<string>();
-  for (const candidate of wf["nodes"] as unknown[]) {
+  function acceptsNode(candidate: unknown): boolean {
     if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
       throw new OpRejectedError("invalid_node_payload", "insert_workflow: every node must be an object");
     }
@@ -1009,13 +1035,17 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
       if (incumbent === undefined) {
         throw new OpRejectedError("node_id_collision", `insert_workflow: node id '${key}' collides`);
       }
-      if (compareStampKeys(stamp, incumbent) <= 0) return "lww-dropped";
+      if (compareStampKeys(stamp, incumbent) <= 0) return false;
     }
     seenNodes.add(key);
+    return true;
+  }
+  for (const candidate of wf["nodes"] as unknown[]) {
+    if (!acceptsNode(candidate)) return "lww-dropped";
   }
   const seenLinks = new Set<string>();
   const linkWrites: unknown[][] = [];
-  for (const candidate of (wf["links"] as unknown[] | undefined) ?? []) {
+  function acceptsLink(candidate: unknown): boolean {
     if (!Array.isArray(candidate) || candidate[0] === undefined || candidate[1] === undefined || candidate[3] === undefined) {
       throw new OpRejectedError("malformed_op", "insert_workflow: every link must be a tuple with an id and two endpoints");
     }
@@ -1028,13 +1058,17 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
       if (incumbent === undefined) {
         throw new OpRejectedError("link_id_collision", `insert_workflow: link id '${key}' collides`);
       }
-      if (compareStampKeys(stamp, incumbent) <= 0) return "lww-dropped";
+      if (compareStampKeys(stamp, incumbent) <= 0) return false;
     }
     seenLinks.add(key);
     if (linkHasMissingEndpoint(candidate, (id) => nodes.has(String(id)) || seenNodes.has(String(id)))) {
-      continue;
+      return true;
     }
     linkWrites.push(candidate);
+    return true;
+  }
+  for (const candidate of (wf["links"] as unknown[] | undefined) ?? []) {
+    if (!acceptsLink(candidate)) return "lww-dropped";
   }
 
   const targetKey = stampTargetKey(op);
@@ -1048,7 +1082,7 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
   const defs = definitionsMap(doc);
   const submittedDefinitionIds = new Set<string>();
   const definitionWrites: Array<[string, Y.Map<unknown>, string]> = [];
-  for (const candidate of remappedSubgraphs) {
+  function prepareDefinition(candidate: unknown): void {
     if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
       throw new OpRejectedError("malformed_op", "insert_workflow: every subgraph definition must be an object");
     }
@@ -1060,9 +1094,10 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
     const digest = definitionDigest(sg as unknown as SubgraphDefinition, cat);
     definitionWrites.push([id, mintDefinition(sg, cat), digest]);
   }
+  for (const candidate of remappedSubgraphs) prepareDefinition(candidate);
 
   const nodeWrites: Array<[string, unknown, Y.Map<unknown>]> = [];
-  for (const candidate of wf["nodes"] as import("./types.js").WorkflowNode[]) {
+  function prepareNode(candidate: import("./types.js").WorkflowNode): void {
     const node = structuredClone(candidate);
     const wv = node.widgets_values;
     const entry = catalogEntry(catalog, node.type);
@@ -1076,9 +1111,10 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
       throw new OpRejectedError("invalid_node_payload", `insert_workflow(${node.type}): ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+  for (const candidate of wf["nodes"] as import("./types.js").WorkflowNode[]) prepareNode(candidate);
 
   const importedLinkStates = new Map<string, ReturnType<typeof importedLinkState>>();
-  for (const link of linkWrites) {
+  function prepareLinkState(link: unknown[]): void {
     const key = String(link[0]);
     try {
       importedLinkStates.set(key, importedLinkState(link, wf as unknown as import("./types.js").WorkflowJSON));
@@ -1086,28 +1122,44 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
       throw new OpRejectedError("malformed_op", `insert_workflow: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+  for (const link of linkWrites) prepareLinkState(link);
 
-  for (const [id, definition, digest] of definitionWrites) {
-    mset(defs, id, definition);
-    setDefinitionDigest(doc, id, digest);
+  function commitPreparedWrites(): void {
+    for (const [id, definition, digest] of definitionWrites) {
+      mset(defs, id, definition);
+      setDefinitionDigest(doc, id, digest);
+    }
+    for (const link of linkWrites) {
+      const key = String((link as unknown[])[0]);
+      mset(links, key, cloneForMap(link, "insert_workflow: link"));
+      const state = importedLinkStates.get(key) ?? null;
+      if (state !== null) mset(linkStateMap(doc), key, cloneForMap(state, `insert_workflow: link state ${key}`));
+      mset(stamps, JSON.stringify(["insert_workflow_link", key]), stamp);
+    }
+    for (const [key, id, nodeMap] of nodeWrites) {
+      clearObsoleteWidgetStamps(stamps, key);
+      mset(nodeMap, NODE_INCARNATION_KEY, `${op.op_id}:${key}`);
+      mset(nodes, key, nodeMap);
+      mset(stamps, JSON.stringify(["insert_workflow_node", key]), stamp);
+      mset(stamps, targetKey, stamp);
+      reconcileNodeLinkRefs(doc, id, nodeMap);
+    }
+    if (nodeWrites.length === 0) mset(stamps, targetKey, stamp);
   }
-  for (const link of linkWrites) {
-    const key = String((link as unknown[])[0]);
-    mset(links, key, cloneForMap(link, "insert_workflow: link"));
-    const state = importedLinkStates.get(key) ?? null;
-    if (state !== null) mset(linkStateMap(doc), key, cloneForMap(state, `insert_workflow: link state ${key}`));
-    mset(stamps, JSON.stringify(["insert_workflow_link", key]), stamp);
-  }
-  for (const [key, id, nodeMap] of nodeWrites) {
-    clearObsoleteWidgetStamps(stamps, key);
-    mset(nodeMap, NODE_INCARNATION_KEY, `${op.op_id}:${key}`);
-    mset(nodes, key, nodeMap);
-    mset(stamps, JSON.stringify(["insert_workflow_node", key]), stamp);
-    mset(stamps, targetKey, stamp);
-    reconcileNodeLinkRefs(doc, id, nodeMap);
-  }
-  if (nodeWrites.length === 0) mset(stamps, targetKey, stamp);
 
+  commitPreparedWrites();
+  updateInsertedWorkflowMeta(doc, wf, nodeWrites, linkWrites);
+  return nodeWrites.length > 0 || linkWrites.length > 0 || definitionWrites.length > 0 || ((wf["groups"] as unknown[] | undefined)?.length ?? 0) > 0
+    ? "applied"
+    : "no-op";
+}
+
+function updateInsertedWorkflowMeta(
+  doc: Y.Doc,
+  wf: Record<string, unknown>,
+  nodeWrites: Array<[string, unknown, Y.Map<unknown>]>,
+  linkWrites: unknown[][],
+): void {
   const meta = metaMap(doc);
   if (Array.isArray(wf["groups"])) {
     const currentGroups = Array.isArray(meta.get("groups")) ? meta.get("groups") as unknown[] : [];
@@ -1121,9 +1173,6 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
   const currentLink = numericId(meta.get("last_link_id")) ?? 0;
   const maxLink = Math.max(currentLink, ...linkWrites.map((link) => numericId(link[0]) ?? currentLink));
   if (maxLink > currentLink) mset(meta, "last_link_id", maxLink);
-  return nodeWrites.length > 0 || linkWrites.length > 0 || definitionWrites.length > 0 || ((wf["groups"] as unknown[] | undefined)?.length ?? 0) > 0
-    ? "applied"
-    : "no-op";
 }
 
 // ---------------------------------------------------------------------------
@@ -1282,6 +1331,8 @@ function clearObsoleteWidgetStamps(stamps: Y.Map<unknown>, nodeKey: string): voi
  *   unprojectable on every later read. A class stored opaquely never reaches
  *   here — `rejectIfOpaqueWidgets` runs first and owns that case (§1.2).
  * - name absent from the class's `widget_order` → `unknown_widget`.
+ *   A known dotted prefix is insufficient: projection needs the exact name's
+ *   position, including for dynamic-combo sub-widgets.
  *
  * Skipped entirely when there is NO catalog: the host cannot then tell an
  * unknown class from a known one, which is the same "reject rather than guess"
@@ -1579,7 +1630,7 @@ function applyPromotedHostWrite(
   }
 }
 
-function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): SuccessfulOutcome {
+function validateWidgetOp(op: SetWidgetOp) {
   const interior: InteriorSetWidgetOp | null = isInteriorWrite(op) ? op : null;
   if (interior !== null && typeof interior.inner_widget !== "string") {
     throw new OpRejectedError("malformed_op", "set_widget: interior write without inner_widget");
@@ -1598,7 +1649,11 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
   if (promoted !== null && interior !== null) {
     throw new OpRejectedError("malformed_op", "set_widget: a promoted host write carries no interior path");
   }
+  return { interior, promoted };
+}
 
+function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): SuccessfulOutcome {
+  const { interior, promoted } = validateWidgetOp(op);
   // Interior paths have several legal spellings (definition id and instance
   // id), but all of them can resolve to the same node. Resolve first
   // so that node owns one register rather than letting each raw alias claim a
@@ -1629,8 +1684,7 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
     return applyPromotedHostWrite(doc, op, promoted, stamps, targetKey, key, catalog);
   }
 
-  if (interior !== null) {
-    const target = interiorResolution!.node;
+  function applyInteriorWidget(target: Y.Map<unknown>, interior: InteriorSetWidgetOp): SuccessfulOutcome {
     if (nodeIncarnation(target) !== (op.node_incarnation ?? LEGACY_NODE_INCARNATION)) return "no-op";
     const nodeType = String(target.get("type") ?? "");
     const widget = interior.inner_widget;
@@ -1663,6 +1717,7 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
     return "applied";
   }
 
+  if (interior !== null) return applyInteriorWidget(interiorResolution!.node, interior);
   const node = nodesMap(doc).get(String(op.node_id));
   if (!node) return "no-op"; // target concurrently deleted → no-op (delete wins)
   if (nodeIncarnation(node) !== (op.node_incarnation ?? LEGACY_NODE_INCARNATION)) return "no-op";
@@ -1712,16 +1767,14 @@ function resolveInteriorNode(
   allowRetainedRoute = true,
 ): InteriorResolution | null {
   const head = nodesMap(doc).get(path[0]!);
-  if (!head) {
+  function resolveMissingHead(): InteriorResolution | null {
     const directDefinition = resolveDefinition(doc, path[0]!);
     const retainedDefinitionId = allowRetainedRoute
       ? stampsMap(doc).get(interiorRouteKey(path[0]!, incarnation))
       : undefined;
-    const definition = directDefinition && String(directDefinition.get("id")) === path[0]
-      ? directDefinition
-      : typeof retainedDefinitionId === "string"
-        ? resolveDefinition(doc, retainedDefinitionId)
-        : null;
+    let definition: Y.Map<unknown> | null = null;
+    if (directDefinition && String(directDefinition.get("id")) === path[0]) definition = directDefinition;
+    else if (typeof retainedDefinitionId === "string") definition = resolveDefinition(doc, retainedDefinitionId);
     if (!definition) return null;
     const definitionId = String(definition.get("id"));
     // A retained route represents the deleted routing instance for authority
@@ -1747,6 +1800,7 @@ function resolveInteriorNode(
     if (path.length === 2) return { node: inner, canonicalPath };
     return resolveInteriorDescendants(doc, inner, path.slice(2), canonicalPath, catalog);
   }
+  if (!head) return resolveMissingHead();
   const definition = resolveDefinition(doc, String(head.get("type") ?? ""));
   const canonicalPath = definition === null
     ? [path[0]!]
@@ -1922,15 +1976,7 @@ function requireOpOnlyValid(op: ConnectOp): void {
     throw new OpRejectedError("malformed_op", "connect: link_type must be a string");
   }
 
-  if (op.grow?.inputcount != null) {
-    if (typeof op.grow.inputcount.widget !== "string") {
-      throw new OpRejectedError("malformed_op", "connect: grow.inputcount needs a widget name");
-    }
-    assertWritableValue(op.grow.inputcount.value, "connect: grow.inputcount");
-  }
-  if (op.grow != null && (typeof op.grow.name !== "string" || typeof op.grow.type !== "string")) {
-    throw new OpRejectedError("malformed_op", "connect: grow payload needs name and type");
-  }
+  validateGrowPayload(op);
   // `stampKey` is op-only — `Number(stamp[0])`, `String(stamp[1])`, no document
   // read — but the concrete branch used to evaluate it BELOW `if (!dst) return`,
   // so a `base_version` that throws on conversion (a `Symbol`, or an object with
@@ -1955,6 +2001,18 @@ function requireOpOnlyValid(op: ConnectOp): void {
         `connect: input slot ${String(op.to_slot)} not found on node ${String(op.to_node)}`,
       );
     }
+  }
+}
+
+function validateGrowPayload(op: ConnectOp): void {
+  if (op.grow?.inputcount != null) {
+    if (typeof op.grow.inputcount.widget !== "string") {
+      throw new OpRejectedError("malformed_op", "connect: grow.inputcount needs a widget name");
+    }
+    assertWritableValue(op.grow.inputcount.value, "connect: grow.inputcount");
+  }
+  if (op.grow != null && (typeof op.grow.name !== "string" || typeof op.grow.type !== "string")) {
+    throw new OpRejectedError("malformed_op", "connect: grow payload needs name and type");
   }
 }
 
@@ -2001,7 +2059,7 @@ function resolveInteriorConnectScope(
     path.shift();
   }
 
-  for (const segment of path) {
+  function descend(host: Y.Map<unknown>, segment: string): Y.Map<unknown> {
     const ownerType = String(host.get("type") ?? "");
     const owner = resolveDefinition(doc, ownerType);
     if (!owner) {
@@ -2020,9 +2078,10 @@ function resolveInteriorConnectScope(
         `interior node ${segment} not found in subgraph ${ownerId}`,
       );
     }
-    host = inner;
+    return inner;
   }
 
+  for (const segment of path) host = descend(host, segment);
   const hostType = String(host.get("type") ?? "");
   const definition = resolveDefinition(doc, hostType);
   if (!definition) {
@@ -2100,9 +2159,24 @@ function applyInteriorConnect(doc: Y.Doc, op: ConnectOp, scope: InteriorConnectS
       type: op.link_type,
     });
   }
-  const linkOrder = scope.definition.get("link_order");
+  recordInteriorLinkOrder(scope.definition, stamps, linkKey, key);
+  mset(input, "link", op.link_id);
+  const output = sourceOutputs.get(op.from_slot) as Y.Map<unknown>;
+  let outputLinks = output.get("links");
+  if (!(outputLinks instanceof Y.Array)) {
+    outputLinks = new Y.Array<unknown>();
+    mset(output, "links", outputLinks);
+  }
+  if (!(outputLinks as Y.Array<unknown>).toArray().includes(op.link_id)) {
+    apush(outputLinks as Y.Array<unknown>, op.link_id);
+  }
+  return "applied";
+}
+
+function recordInteriorLinkOrder(definition: Y.Map<unknown>, stamps: Y.Map<unknown>, linkKey: string, key: StampKey): void {
+  const linkOrder = definition.get("link_order");
   const orderedIds: unknown[] = Array.isArray(linkOrder) ? [...linkOrder] : [];
-  const definitionId = String(scope.definition.get("id") ?? "");
+  const definitionId = String(definition.get("id") ?? "");
   const orderStampKey = (candidate: string) =>
     JSON.stringify(["interior_link_order", definitionId, candidate]);
   const additions: Record<string, StampKey> = Object.create(null) as Record<string, StampKey>;
@@ -2117,19 +2191,8 @@ function applyInteriorConnect(doc: Y.Doc, op: ConnectOp, scope: InteriorConnectS
     mset(stamps, orderStampKey(linkKey), key);
   }
   if (nextOrder.some((candidate, index) => candidate !== orderedIds[index]) || nextOrder.length !== orderedIds.length) {
-    mset(scope.definition, "link_order", nextOrder);
+    mset(definition, "link_order", nextOrder);
   }
-  mset(input, "link", op.link_id);
-  const output = sourceOutputs.get(op.from_slot) as Y.Map<unknown>;
-  let outputLinks = output.get("links");
-  if (!(outputLinks instanceof Y.Array)) {
-    outputLinks = new Y.Array<unknown>();
-    mset(output, "links", outputLinks);
-  }
-  if (!(outputLinks as Y.Array<unknown>).toArray().includes(op.link_id)) {
-    apush(outputLinks as Y.Array<unknown>, op.link_id);
-  }
-  return "applied";
 }
 
 function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): SuccessfulOutcome {
@@ -2183,29 +2246,35 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
   const src = nodes.get(String(op.from_node));
   const sourceOutputs = src ? requireOutputSlot(src, op) : null;
 
-  let toIdx: number;
-  // Issue #17: this is the discriminant of the `ConnectOp` union. The type now
-  // says a `grow` op has no numeric `to_slot` and a concrete op has no `grow`;
-  // this branch is where a wire op that says otherwise is disposed of — and it
-  // is disposed of exactly as before, `grow` winning and `to_slot` unread.
-  if (op.grow != null && op.grow.promoted === true) {
-    if (!claimLinkIdentity(doc, op)) return "lww-dropped";
-    // A promoted subgraph input (Amendment A15) is ONE register named by the
-    // definition, so it is gated and claimed like a concrete input — before the
-    // source is consulted, for the same reason the concrete branch does it.
-    const claimed = claimPromotedInput(doc, dst, op);
-    if (claimed === null) return "lww-dropped";
-    toIdx = claimed;
-  } else if (op.grow != null) {
-    // Autogrow is NOT a shared register: every grow mints its own slot keyed by
-    // `grow_id`, so two concurrent grows onto one base both survive and there
-    // is nothing to gate (vocabulary §1.2 / amendment v1.2's carve-out).
-    if (!claimLinkIdentity(doc, op)) return "lww-dropped";
-    if (!src) return "no-op"; // source concurrently deleted → no-op (delete wins)
-    toIdx = growInputSlot(doc, dst, op, catalog);
-  } else {
+  function claimDestination(dst: Y.Map<unknown>): number | "lww-dropped" | "no-op" {
+    // Issue #17: this is the discriminant of the `ConnectOp` union. The type now
+    // says a `grow` op has no numeric `to_slot` and a concrete op has no `grow`;
+    // this branch is where a wire op that says otherwise is disposed of — and it
+    // is disposed of exactly as before, `grow` winning and `to_slot` unread.
+    if (op.grow != null && op.grow.promoted === true) {
+      if (!claimLinkIdentity(doc, op)) return "lww-dropped";
+      // A promoted subgraph input (Amendment A15) is ONE register named by the
+      // definition, so it is gated and claimed like a concrete input — before the
+      // source is consulted, for the same reason the concrete branch does it.
+      const claimed = claimPromotedInput(doc, dst, op);
+      if (claimed === null) return "lww-dropped";
+      return claimed;
+    }
+    if (op.grow != null) {
+      // Autogrow is NOT a shared register: every grow mints its own slot keyed by
+      // `grow_id`, so two concurrent grows onto one base both survive and there
+      // is nothing to gate (vocabulary §1.2 / amendment v1.2's carve-out).
+      if (!claimLinkIdentity(doc, op)) return "lww-dropped";
+      if (!src) return "no-op"; // source concurrently deleted → no-op (delete wins)
+      return growInputSlot(doc, dst, op, catalog);
+    }
     // `to_slot`'s type was settled by `requireOpOnlyValid`.
-    toIdx = op.to_slot as number;
+    const toIdx = op.to_slot as number;
+    if (!claimConcreteInput(dst, toIdx)) return "lww-dropped";
+    return toIdx;
+  }
+
+  function claimConcreteInput(dst: Y.Map<unknown>, toIdx: number): boolean {
     const ins = dst.get("inputs");
     // STATE-DEPENDENT half only: the op-only domain (integer, non-negative) was
     // settled by `requireOpOnlyValid` above, before any document read.
@@ -2220,7 +2289,7 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
       throw new OpRejectedError("input_slot_missing", `connect: input slot ${toIdx} is not a slot record`);
     }
 
-    if (!claimLinkIdentity(doc, op)) return "lww-dropped";
+    if (!claimLinkIdentity(doc, op)) return false;
 
     // ---- The concrete-input LWW register (op-vocabulary-v1.md amendment v1.2)
     //
@@ -2235,7 +2304,7 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
     const targetKey = stampTargetKey(op);
     const prior = stamps.get(targetKey) as StampKey | undefined;
     const key = stampKey(op);
-    if (prior != null && compareStampKeys(key, prior) <= 0) return "lww-dropped";
+    if (prior != null && compareStampKeys(key, prior) <= 0) return false;
 
     // Claiming the register is UNCONDITIONAL once the gate passes — the prior
     // occupant is retired even if this op then turns out to be a delete-wins
@@ -2254,13 +2323,18 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
     mset(stamps, targetKey, key);
     const prev = slot.get("link");
     if (prev != null && prev !== op.link_id) removeLink(doc, prev);
+    return true;
   }
 
+  const toIdx = claimDestination(dst);
+  if (typeof toIdx !== "number") return toIdx;
   // Source concurrently deleted → the winning connect leaves the input EMPTY
   // (delete wins over the link, not over the register claim).
   if (!src || !sourceOutputs) return "no-op";
-  const outs = sourceOutputs;
+  return installConnect(doc, op, dst, sourceOutputs, toIdx);
+}
 
+function installConnect(doc: Y.Doc, op: ConnectOp, dst: Y.Map<unknown>, outs: Y.Array<unknown>, toIdx: number): SuccessfulOutcome {
   const links = linksMap(doc);
   const linkKey = String(op.link_id);
   if (!links.has(linkKey)) {
@@ -2544,9 +2618,9 @@ function normalizeGrowFamily(
   const names: string[] = [];
   for (const { request } of records) {
     const [requested, widget, isInputcount] = request;
-    const name = isInputcount
-      ? nextInputcountName(inputs, requested, occupied)
-      : nextAutogrowName(inputs, requested, widget ? null : (templates?.[family] ?? null), occupied);
+    let name: string;
+    if (isInputcount) name = nextInputcountName(inputs, requested, occupied);
+    else name = nextAutogrowName(inputs, requested, widget ? null : (templates?.[family] ?? null), occupied);
     names.push(name);
     occupied.add(name);
   }
@@ -2666,7 +2740,7 @@ function nextInputcountName(
   const sep = requested.lastIndexOf("_");
   const elem = sep >= 0 ? requested.slice(0, sep) : "";
   const nStr = sep >= 0 ? requested.slice(sep + 1) : requested;
-  let n = /^[0-9]+$/.test(nStr) ? parseInt(nStr, 10) : 1;
+  let n = /^\d+$/.test(nStr) ? parseInt(nStr, 10) : 1;
   let name = `${elem}_${n}`;
   while (taken.has(name)) {
     n++;
@@ -2773,7 +2847,7 @@ function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp): SuccessfulOutcome {
   const stamp = stampKey(op);
   const presenceWon = prior == null || compareStampKeys(stamp, prior) > 0;
   const nodeWasPresent = nodes.has(key);
-  if (presenceWon) {
+  function deletePresence(): void {
     const node = nodes.get(key);
     if (node instanceof Y.Map) {
       const definition = resolveDefinition(doc, String(node.get("type") ?? ""));
@@ -2788,12 +2862,12 @@ function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp): SuccessfulOutcome {
     mset(stamps, targetKey, stamp);
     if (nodes.has(key)) mdel(nodes, key); // absent target → no-op-with-cleanup (delete wins)
   }
+  if (presenceWon) deletePresence();
 
   const links = linksMap(doc);
   const removed = new Set<unknown>(removedLinks);
   const removedIds = new Set([...removed].map(String));
   const toDelete: Array<{ key: string; retire: boolean }> = [];
-  let retiredStranded = false;
   links.forEach((ln: unknown, k: string) => {
     const tuple = ln as unknown[];
     if (removed.has(tuple[0])) {
@@ -2809,6 +2883,15 @@ function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp): SuccessfulOutcome {
   }
   // An earlier endpoint deletion can already have removed the live tuple. The
   // explicit target list still retires that stranded intent.
+  const retiredStranded = retireStrandedLinks(doc, removedIds);
+
+  scrubDanglingLinkRefs(doc);
+  if (!presenceWon && toDelete.length === 0 && !retiredStranded) return "lww-dropped";
+  return nodeWasPresent || toDelete.length > 0 || retiredStranded ? "applied" : "no-op";
+}
+
+function retireStrandedLinks(doc: Y.Doc, removedIds: Set<string>): boolean {
+  let retiredStranded = false;
   for (const [linkKey, raw] of linkStateMap(doc).entries()) {
     if (typeof raw !== "object" || raw === null) continue;
     const tuple = (raw as OperationLinkState | ImportedLinkState).tuple;
@@ -2817,10 +2900,7 @@ function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp): SuccessfulOutcome {
       retiredStranded = true;
     }
   }
-
-  scrubDanglingLinkRefs(doc);
-  if (!presenceWon && toDelete.length === 0 && !retiredStranded) return "lww-dropped";
-  return nodeWasPresent || toDelete.length > 0 || retiredStranded ? "applied" : "no-op";
+  return retiredStranded;
 }
 
 /**
@@ -2845,23 +2925,8 @@ function restoreDurableLinks(doc: Y.Doc, nodeId: unknown): void {
 
     const outs = src.get("outputs");
     if (!(outs instanceof Y.Array) || !(outs.get(tuple[2]) instanceof Y.Map)) return;
-    let ins = dst.get("inputs");
-    if (!(ins instanceof Y.Array)) {
-      ins = new Y.Array<unknown>();
-      mset(dst, "inputs", ins);
-    }
-    const inputArray = ins as Y.Array<unknown>;
-    const destination = state.destination;
-    if (!destination || typeof destination.to_slot !== "number") return;
-    while (inputArray.length <= destination.to_slot) {
-      const slotIndex = inputArray.length;
-      if (slotIndex !== destination.to_slot) return;
-      const slot = new Y.Map<unknown>();
-      for (const [key, value] of Object.entries(destination.slot)) slot.set(key, structuredClone(value));
-      inputArray.insert(slotIndex, [slot]);
-    }
-    const slot = inputArray.get(destination.to_slot);
-    if (!(slot instanceof Y.Map)) return;
+    const slot = restoreDestinationInput(dst, state);
+    if (slot === null) return;
     const incumbent = slot.get("link");
     if (incumbent != null && String(incumbent) !== String(tuple[0])) return;
 
@@ -2878,6 +2943,26 @@ function restoreDurableLinks(doc: Y.Doc, nodeId: unknown): void {
       apush(outLinks as Y.Array<unknown>, tuple[0]);
     }
   });
+}
+
+function restoreDestinationInput(dst: Y.Map<unknown>, state: OperationLinkState): Y.Map<unknown> | null {
+  let ins = dst.get("inputs");
+  if (!(ins instanceof Y.Array)) {
+    ins = new Y.Array<unknown>();
+    mset(dst, "inputs", ins);
+  }
+  const inputArray = ins as Y.Array<unknown>;
+  const destination = state.destination;
+  if (!destination || typeof destination.to_slot !== "number") return null;
+  while (inputArray.length <= destination.to_slot) {
+    const slotIndex = inputArray.length;
+    if (slotIndex !== destination.to_slot) return null;
+    const slot = new Y.Map<unknown>();
+    for (const [key, value] of Object.entries(destination.slot)) slot.set(key, structuredClone(value));
+    inputArray.insert(slotIndex, [slot]);
+  }
+  const slot = inputArray.get(destination.to_slot);
+  return slot instanceof Y.Map ? slot : null;
 }
 
 /**
@@ -3087,5 +3172,6 @@ function applyClear(doc: Y.Doc, op: Extract<Op, { op: "clear" }>): SuccessfulOut
     mset(meta, "groups", []);
     applied = true;
   }
-  return applied ? "applied" : dropped ? "lww-dropped" : "no-op";
+  if (applied) return "applied";
+  return dropped ? "lww-dropped" : "no-op";
 }

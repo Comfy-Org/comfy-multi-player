@@ -120,12 +120,30 @@ function winner(a: ConnectOp, b: ConnectOp): ConnectOp {
   return left[2] > right[2] ? a : b;
 }
 
+function assertNodeLinkOwnership(node: WorkflowNode, owner: ConnectOp, repro: string): void {
+  for (const [slot, input] of ((node.inputs ?? []) as Array<{ link?: unknown }>).entries()) {
+    const ownsInput = node.id === owner.to_node && slot === owner.to_slot;
+    expect(input.link == null ? null : String(input.link), repro).toBe(ownsInput ? "700" : null);
+  }
+  for (const [slot, output] of ((node.outputs ?? []) as Array<{ links?: unknown[] }>).entries()) {
+    const ownsOutput = node.id === owner.from_node && slot === owner.from_slot;
+    expect((output.links ?? []).map(String), repro).toEqual(ownsOutput ? ["700"] : []);
+  }
+}
+
+function assertExactLinkOwnership(wf: WorkflowJSON, owner: ConnectOp, repro: string): void {
+  // Counting two live refs alone would also accept refs on the wrong ports.
+  // Every non-owner port must be empty, including the displaced writer's.
+  for (const node of wf.nodes) assertNodeLinkOwnership(node, owner, repro);
+}
+
 function assertCoherentGraph(wf: WorkflowJSON, owner: ConnectOp, repro: string): void {
   expect(tuple(wf).slice(1, 6), repro).toEqual([owner.from_node, owner.from_slot, owner.to_node, owner.to_slot, owner.link_type]);
   const tupleIds = (wf.links as unknown[][]).map((link) => String(link[0]));
   expect(new Set(tupleIds).size, repro).toBe(tupleIds.length);
   const live = new Set(tupleIds);
   const refs: string[] = [];
+  assertExactLinkOwnership(wf, owner, repro);
   for (const node of wf.nodes) {
     for (const input of (node.inputs ?? []) as Array<{ link?: unknown }>) if (input.link != null) {
       refs.push(String(input.link));
@@ -137,6 +155,17 @@ function assertCoherentGraph(wf: WorkflowJSON, owner: ConnectOp, repro: string):
     }
   }
   expect(refs, repro).toEqual(["700", "700"]);
+}
+
+function* identityCases() {
+  for (const linkIds of LINK_ID_PAIRS) {
+    for (const actorA of ACTORS) {
+      for (const actorB of ACTORS) {
+        if (actorA === actorB) continue;
+        for (const versions of VERSION_PAIRS) yield { linkIds, actors: [actorA, actorB] as const, versions };
+      }
+    }
+  }
 }
 
 describe("bounded exhaustive normalized link_id collisions", () => {
@@ -162,24 +191,17 @@ describe("bounded exhaustive normalized link_id collisions", () => {
   it("covers every declared permutation with stamped complete-tuple ownership", () => {
     let executions = 0;
     let serial = 1;
-    for (const linkIds of LINK_ID_PAIRS) {
-      for (const actorA of ACTORS) {
-        for (const actorB of ACTORS) {
-          if (actorA === actorB) continue;
-          for (const versions of VERSION_PAIRS) {
-            for (const endpoints of ENDPOINT_PAIRS) {
-              const a = connect(serial++, actorA, versions[0], linkIds[0], endpoints[0]);
-              const b = connect(serial++, actorB, versions[1], linkIds[1], endpoints[1]);
-              for (const order of [[a, b], [b, a]] as const) {
-                for (const batched of [true, false]) {
-                  const repro = JSON.stringify({ linkIds, actors: [actorA, actorB], versions, endpoints, order: order.map((op) => op.op_id), batched });
-                  const wf = run(order, batched);
-                  expect(String(tuple(wf)[0]), repro).toBe("700");
-                  assertCoherentGraph(wf, winner(a, b), repro);
-                  executions++;
-                }
-              }
-            }
+    for (const { linkIds, actors, versions } of identityCases()) {
+      for (const endpoints of ENDPOINT_PAIRS) {
+        const a = connect(serial++, actors[0], versions[0], linkIds[0], endpoints[0]);
+        const b = connect(serial++, actors[1], versions[1], linkIds[1], endpoints[1]);
+        for (const order of [[a, b], [b, a]] as const) {
+          for (const batched of [true, false]) {
+            const repro = JSON.stringify({ linkIds, actors, versions, endpoints, order: order.map((op) => op.op_id), batched });
+            const wf = run(order, batched);
+            expect(String(tuple(wf)[0]), repro).toBe("700");
+            assertCoherentGraph(wf, winner(a, b), repro);
+            executions++;
           }
         }
       }

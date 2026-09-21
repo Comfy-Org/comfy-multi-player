@@ -621,8 +621,11 @@ describe("the correction stops at the boundary of the pending decision", () => {
     ["a Map nested at depth 3", { a: { b: { c: new Map() } } }],
     ["a Map nested in an array", [new Map()]],
     ["a Date nested at depth 1", { a: new Date(0) }],
+    // eslint-disable-next-line sonarjs/no-primitive-wrappers -- Boxed values are the lossy-but-accepted regression inputs, not accidental primitive coercions.
     ["a boxed Number at depth 0", new Number(1)],
+    // eslint-disable-next-line sonarjs/no-primitive-wrappers -- Preserve the distinct boxed string encoding-loss case.
     ["a boxed String at depth 0", new String("ab")],
+    // eslint-disable-next-line sonarjs/no-primitive-wrappers -- Preserve the distinct boxed boolean encoding-loss case.
     ["a boxed Boolean at depth 0", new Boolean(true)],
   ];
 
@@ -728,8 +731,11 @@ const SHALLOW_SAMPLES: Array<[string, () => unknown]> = [
   ["BigInt 2^63", () => 2n ** 63n],
   ["BigInt 2^70", () => 2n ** 70n],
   ["BigInt -2^63-1", () => -(2n ** 63n) - 1n],
+  // eslint-disable-next-line sonarjs/no-primitive-wrappers -- The encoder matrix must distinguish a boxed number from its primitive value.
   ["boxed Number", () => new Number(1)],
+  // eslint-disable-next-line sonarjs/no-primitive-wrappers -- The encoder matrix must retain boxed string identity.
   ["boxed String", () => new String("ab")],
+  // eslint-disable-next-line sonarjs/no-primitive-wrappers -- The encoder matrix must retain boxed boolean identity.
   ["boxed Boolean", () => new Boolean(true)],
   ["class instance", () => new Instance()],
   ["null-prototype object", () => Object.assign(Object.create(null), { a: 1 })],

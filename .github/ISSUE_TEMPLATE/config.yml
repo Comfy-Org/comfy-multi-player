@@ -1,8 +1,5 @@
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
-  - name: Active package issues and questions
-    url: https://github.com/Comfy-Org/ComfyUI_frontend/issues/new/choose
-    about: Active development has moved to ComfyUI_frontend/packages/comfy-multi-player. Open all new work there.
   - name: Security report
-    url: https://github.com/Comfy-Org/ComfyUI_frontend/security/advisories/new
-    about: Report security vulnerabilities privately in the canonical ComfyUI_frontend repository.
+    url: mailto:support@comfy.org
+    about: Report package vulnerabilities privately to Comfy support. Include the package name and affected version; do not open a public issue.

@@ -1,5 +1,5 @@
 /**
- * Doc layout helpers (schema v2 — docs/multiplayer-schema.md §1) and the
+ * Doc layout helpers (schema v4 — docs/multiplayer-schema.md §1) and the
  * node ⇄ Y conversion used by mint and the applier.
  *
  *   doc
@@ -17,7 +17,9 @@
  *   ├── Y.Map '__applied'   — op_id → sha256 of the canonical op payload
  *   │                         (idempotency + op_id-reuse detection, §4
  *   │                         amendment A8; a legacy `1` is a pre-A8 record)
- *   └── Y.Map '__stamps'    — write-target key → [base_version, actor, op_id] (§4)
+ *   ├── Y.Map '__stamps'    — write-target key → [base_version, actor, op_id] (§4)
+ *   ├── Y.Map '__link_state' — normalized link id → durable descriptor (§1.5)
+ *   └── Y.Map '__clock_reservations' — producer identity → reserved counter tuple (§1.6)
  */
 
 import * as Y from "yjs";
@@ -64,12 +66,58 @@ export const OPAQUE_WIDGETS_KEY = "__widgets_opaque";
  * positional array whose class has no `widget_order` in the pinned catalog.
  *
  * Deliberately narrow. A `widget_order` that is present but SHORTER than
- * `widgets_values` is a genuine catalog/workflow mismatch and keeps failing
- * loudly (see `widgetsToYMap`) — this path is only for classes the catalog
- * does not describe at all.
+ * `widgets_values` is a *different* case (BE-9176 — see `overflowWidgetName`
+ * below and `widgetsToYMap`): the class IS catalogued, but the pinned
+ * `widget_order` under-describes a `COMFY_DYNAMICCOMBO_V3` selection other
+ * than the one the catalog was built from, not an unknown class. This path is
+ * only for a class the catalog does not describe at all.
  */
 export function isOpaqueWidgets(wv: unknown, widgetOrder: readonly string[] | undefined): boolean {
   return widgetOrder === undefined && Array.isArray(wv) && wv.length > 0;
+}
+
+/**
+ * Positional placeholder name for a `widgets_values` entry beyond the pinned
+ * catalog's `widget_order` length (BE-9176).
+ *
+ * The `WidgetCatalog` this package is handed expands a `COMFY_DYNAMICCOMBO_V3`
+ * dynamic combo at its FIRST declared key only — catalog acquisition
+ * (comfy-cli `Graph.widget_order_default`) has no node and no selected value,
+ * so it cannot know which sub-widgets a *different* selection appends. A real
+ * node's `widgets_values` for another selection is therefore longer than the
+ * pinned order, and refusing to mint it — which `widgetsToYMap` used to do —
+ * loses the whole node over a catalog/value mismatch neither writer caused.
+ *
+ * `createNodeMap` names any entry past `widget_order.length` positionally
+ * instead of throwing: honest about what it does not know (this is NOT the
+ * sub-widget's real name — this package has no way to learn that from a
+ * value-blind catalog), stable across repeated mints of the same
+ * `widgets_values`, and shaped so it can never collide with a real catalog
+ * name that a `WidgetCatalog` would actually publish. `project()`'s
+ * `widgetsToPositional` reads the same shape back to its original index
+ * (schema §7 rule 2), so the round trip `mint()`'s own docstring promises
+ * still holds for this case.
+ *
+ * A placeholder name is not name-addressable in any meaningful sense (nothing
+ * about `_extra_3` tells a caller which sub-widget it is) — see
+ * `validateWidgetName`'s dotted-name allowance in `applier.ts` for the
+ * caller-supplied-name half of this same gap. Recorded as a deliberate,
+ * catalog-boundary workaround in `docs/decisions/EXCEPTIONS.md` pending a
+ * value-aware catalog from comfy-cli.
+ */
+export function overflowWidgetName(index: number): string {
+  return `_extra_${String(index)}`;
+}
+
+const OVERFLOW_WIDGET_NAME_RE = /^_extra_(0|[1-9]\d*)$/;
+
+/**
+ * Parse an {@link overflowWidgetName}-shaped key back to its absolute
+ * `widgets_values` index, or `null` when `name` is not shaped like one.
+ */
+export function parseOverflowWidgetName(name: string): number | null {
+  const match = OVERFLOW_WIDGET_NAME_RE.exec(name);
+  return match ? Number(match[1]!) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +207,8 @@ export const ROOT_META = "meta";
 export const ROOT_APPLIED = "__applied";
 export const ROOT_STAMPS = "__stamps";
 export const ROOT_LINK_STATE = "__link_state";
+/** Created lazily by a successful clock admission, never exported from the entrypoint. */
+export const ROOT_CLOCK_RESERVATIONS = "__clock_reservations";
 
 /** Root map holding one Y.Map per node, keyed by String(node id). */
 export function nodesMap(doc: Y.Doc): Y.Map<Y.Map<unknown>> {
@@ -521,6 +571,14 @@ export function referenceCyclePath(value: unknown): string | null {
     Array.isArray(obj)
       ? { obj, path, keys: [], next: 0, isArray: true }
       : { obj, path, keys: Object.keys(obj), next: 0, isArray: false };
+  const nextChild = (frame: Frame): [unknown, string] => {
+    const index = frame.next++;
+    if (frame.isArray) {
+      return [(frame.obj as unknown[])[index], `${frame.path}[${String(index)}]`];
+    }
+    const key = frame.keys[index]!;
+    return [(frame.obj as Record<string, unknown>)[key], `${frame.path}.${key}`];
+  };
 
   const onPath = new Set<object>([value]);
   const stack: Frame[] = [frameFor(value, "")];
@@ -532,17 +590,7 @@ export function referenceCyclePath(value: unknown): string | null {
       stack.pop();
       continue;
     }
-    const index = frame.next++;
-    let child: unknown;
-    let childPath: string;
-    if (frame.isArray) {
-      child = (frame.obj as unknown[])[index];
-      childPath = `${frame.path}[${String(index)}]`;
-    } else {
-      const key = frame.keys[index]!;
-      child = (frame.obj as Record<string, unknown>)[key];
-      childPath = `${frame.path}.${key}`;
-    }
+    const [child, childPath] = nextChild(frame);
     if (typeof child !== "object" || child === null) continue;
     if (child instanceof Uint8Array) continue;
     if (onPath.has(child)) return childPath;
@@ -715,24 +763,21 @@ function slotToYMap(slot: unknown, what: string): Y.Map<unknown> | unknown {
  *
  * A non-empty positional array for a class with NO `widget_order` never
  * reaches here — `createNodeMap` routes it to opaque storage
- * ({@link OPAQUE_WIDGETS_KEY}). A `widget_order` that is present but too
- * SHORT still throws: that is a catalog/workflow mismatch, not an unknown
- * class, and silently swallowing it would mis-key real widget values.
+ * ({@link OPAQUE_WIDGETS_KEY}). A `widget_order` that IS present but too
+ * SHORT (BE-9176: a dynamic-combo selection other than the one the pinned,
+ * value-blind catalog was built from) no longer throws — the overrun entries
+ * are named positionally via {@link overflowWidgetName} rather than the whole
+ * node being lost. This is not silently swallowing a mismatch: every value is
+ * kept, under a name that cannot be confused with a real catalog entry.
  */
-function widgetsToYMap(
-  node: WorkflowNode,
-  wv: unknown,
-  widgetOrder: readonly string[] | undefined,
-): Y.Map<unknown> {
+function widgetsToYMap(wv: unknown, widgetOrder: readonly string[] | undefined): Y.Map<unknown> {
   const widgets = new Y.Map<unknown>();
   if (Array.isArray(wv)) {
     const order = widgetOrder ?? [];
-    if (wv.length > order.length) {
-      throw new TypeError(
-        `createNodeMap(${node.type}): widgets_values has ${wv.length} entries but widget_order names only ${order.length}`,
-      );
-    }
-    wv.forEach((v, i) => widgets.set(order[i]!, cloneForMap(v, `widgets_values[${String(i)}]`)));
+    wv.forEach((v, i) => {
+      const name = order[i] ?? overflowWidgetName(i);
+      widgets.set(name, cloneForMap(v, `widgets_values[${String(i)}]`));
+    });
   } else if (isPlainObject(wv)) {
     for (const [k, v] of Object.entries(wv)) widgets.set(k, cloneForMap(v, `widgets_values.${k}`));
   }
@@ -781,7 +826,7 @@ export function createNodeMap(node: WorkflowNode, widgetOrder?: readonly string[
           m.set(OPAQUE_WIDGETS_KEY, cloneForMap(v, "widgets_values"));
           break;
         case "named":
-          m.set("widgets", widgetsToYMap(node, v, widgetOrder));
+          m.set("widgets", widgetsToYMap(v, widgetOrder));
           break;
         default:
           assertNever(storage, "createNodeMap: widget-storage strategy");

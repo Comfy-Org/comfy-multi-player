@@ -121,9 +121,10 @@ describe("two-doc convergence through the single-applier discipline", () => {
     const windows = reorderableWindows(ops);
     const reorderable = windows.filter((w) => w.length > 1);
     const permuted = (variant: "reverse" | "rotate"): Op[] =>
-      windows.flatMap((w) =>
-        w.length === 1 ? w : variant === "reverse" ? [...w].reverse() : [...w.slice(1), w[0]!],
-      );
+      windows.flatMap((w) => {
+        if (w.length === 1) return w;
+        return variant === "reverse" ? [...w].reverse() : [...w.slice(1), w[0]!];
+      });
 
     it(`${file}: interleaved orders converge to byte-equal projections (${reorderable.length} windows, ${reorderable.reduce((n, w) => n + w.length, 0)} reordered ops)`, () => {
       expect(reorderable.length, "corpus must actually exercise reordering").toBeGreaterThan(0);

@@ -25,6 +25,7 @@ const vectors = loadLwwVectors();
 
 describe("compareStampKeys (freeze doc §8.1)", () => {
   it("picks the recorded winner for all six vectors", () => {
+    expect(vectors.vectors).toHaveLength(6);
     for (const v of vectors.vectors) {
       const [a, b] = v.ops as [SetWidgetOp, SetWidgetOp];
       const cmp = compareStampKeys(stampKey(a), stampKey(b));

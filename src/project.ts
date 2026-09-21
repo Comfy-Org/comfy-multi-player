@@ -10,7 +10,12 @@
  *      missing interior names project as null (Python pads with None), and
  *      the array length is 1 + the highest widget index present. A node stored
  *      opaquely (`__widgets_opaque` — a class the catalog does not know, e.g.
- *      the frontend-only `Note`/`MarkdownNote`) emits its array verbatim;
+ *      the frontend-only `Note`/`MarkdownNote`) emits its array verbatim. An
+ *      entry `mint()` named past `widget_order`'s length (BE-9176: a
+ *      dynamic-combo selection the value-blind pinned catalog cannot
+ *      describe, `doc.ts`'s `overflowWidgetName`) projects back to its
+ *      original positional index rather than throwing, so `mint()`'s round
+ *      trip promise holds for this case too;
  *   3. numbers serialize as JS numbers;
  *   4. `outputs[].links: null` preserved verbatim; an empty Y.Array → `[]`;
  *   5. meta passthrough keys project unmodified (schema §6). Doc-internal
@@ -30,6 +35,8 @@ import {
   linksMap,
   metaMap,
   nodesMap,
+  overflowWidgetName,
+  parseOverflowWidgetName,
   widgetStorageOf,
 } from "./doc.js";
 import { assertNever } from "./exhaustive.js";
@@ -42,7 +49,8 @@ function idCompare(a: unknown, b: unknown): number {
   if (typeof a === "number" && typeof b === "number") return a - b;
   const sa = String(a);
   const sb = String(b);
-  return sa < sb ? -1 : sa > sb ? 1 : 0;
+  if (sa < sb) return -1;
+  return sa > sb ? 1 : 0;
 }
 
 /** Source-output references are link identities, whose canonical order is numeric. */
@@ -78,6 +86,24 @@ function projectOutputSlot(slot: unknown): unknown {
   return record;
 }
 
+/**
+ * Resolve a stored widget name back to its positional index: either its
+ * literal spot in the pinned `widget_order`, or — for an entry `mint()`
+ * stored past that order's length (BE-9176: a dynamic-combo selection the
+ * value-blind pinned catalog cannot name) — the index recovered from its
+ * {@link overflowWidgetName} shape. A placeholder name is only trusted for
+ * the actual overflow region (`>= order.length`): an index inside the pinned
+ * order is always resolved by the real catalog name at that position, never
+ * by a coincidentally-shaped one, so a genuine `widget_order` mismatch there
+ * still throws exactly as before. Returns `-1` when neither resolves.
+ */
+function positionalIndexOf(order: readonly string[], name: string): number {
+  const known = order.indexOf(name);
+  if (known >= 0) return known;
+  const overflow = parseOverflowWidgetName(name);
+  return overflow !== null && overflow >= order.length ? overflow : -1;
+}
+
 /** Name-keyed widgets map → positional widgets_values (§7 rule 2). */
 function widgetsToPositional(
   nodeType: string,
@@ -94,7 +120,7 @@ function widgetsToPositional(
   const order = entry.widget_order;
   let max = -1;
   widgets.forEach((_v, name) => {
-    const i = order.indexOf(name);
+    const i = positionalIndexOf(order, name);
     if (i < 0) {
       throw new TypeError(`project: widget '${name}' is not in widget_order for ${nodeType}`);
     }
@@ -102,7 +128,7 @@ function widgetsToPositional(
   });
   const out: unknown[] = [];
   for (let i = 0; i <= max; i++) {
-    const name = order[i]!;
+    const name = order[i] ?? overflowWidgetName(i);
     out.push(widgets.has(name) ? structuredClone(widgets.get(name)) : null);
   }
   return out;

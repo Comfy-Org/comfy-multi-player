@@ -265,6 +265,21 @@ const CASES: Row[] = [
   },
   {
     kind: "set_widget",
+    why: "dotted name with a catalogued prefix is not itself catalogued",
+    code: "unknown_widget",
+    build: () => ({ op: "set_widget", ...env(), node_id: 4, widget: "seed.typo", value: 9 }) as unknown as Op,
+  },
+  {
+    kind: "set_widget",
+    why: "interior dotted name with a catalogued prefix is not itself catalogued",
+    code: "unknown_widget",
+    build: () => ({
+      op: "set_widget", ...env(), node_id: 6, widget: "text.typo", value: 9,
+      path: ["6", "27"], inner_widget: "text.typo",
+    }) as unknown as Op,
+  },
+  {
+    kind: "set_widget",
     why: "name-addressed write against an opaquely-stored node (§1.2)",
     code: "opaque_widgets",
     build: () => ({ op: "set_widget", ...env(), node_id: 5, widget: "text", value: 1 }) as unknown as Op,
@@ -685,7 +700,7 @@ describe("KA-4: the rejection codes that need their own fixture", () => {
     const before = bytes(doc);
     const beforeProjection = project(doc, cat ?? catalog);
 
-    const res = applyOps(doc, [op], cat as WidgetCatalog);
+    const res = applyOps(doc, [op], cat);
 
     expect(res.outcomes.find((outcome) => outcome.outcome === "rejected")?.reason.code).toBe(code);
     expect(bytes(doc).equals(before), "encodeStateAsUpdate must be byte-identical").toBe(true);
@@ -732,6 +747,43 @@ const ALL_REJECTION_CODES = [
 // their byte-identity rows live in the focused issue-#12 regression suite.
 const OP_ID_REJECTION_CODES = ["op_id_reuse", "payload_too_deep"] as const;
 
+/**
+ * The census below is a STATIC read of the authored `src/applier.ts` text, not a
+ * behavioural test, so it is only meaningful when the file on disk is the file
+ * this repository wrote.
+ *
+ * Under Stryker that is not true. Stryker copies the project into a sandbox and
+ * rewrites every file in the `mutate` glob — which includes `src/applier.ts` —
+ * before the initial dry run, so each authored
+ *
+ *     new OpRejectedError("unknown_node")
+ *
+ * becomes `new OpRejectedError(stryMutAct_9fa48("67") ? … : …)`. The census
+ * regex then matches nothing: 68 codes in the authored file, 0 in the sandbox
+ * copy. That emptied the census, tripped its own non-empty assertion, failed
+ * the dry run and took the whole scheduled Mutation testing workflow red
+ * (cifix-16989).
+ *
+ * Detect the instrumentation and skip, rather than loosening the regex to
+ * tolerate it. Loosening would be worse than the red: a census that fails for
+ * every mutant reports every mutant as killed, so it would inflate the mutation
+ * score — the exact class of measurement corruption `stryker.config.mjs` pins
+ * `timeoutMS`, `concurrency` and `coverageAnalysis` to avoid. Skipping costs no
+ * kill power either, because a static text scan can never distinguish one
+ * applier mutant from another.
+ *
+ * `npm test` is unaffected. That is where this guard runs, and where a newly
+ * added rejection code is still caught.
+ */
+const APPLIER_SRC = readFileSync(new URL("../src/applier.ts", import.meta.url), "utf8");
+
+/** Stryker's instrumenter emits `stryMutAct_<hash>` switch calls into every mutated file. */
+const isStrykerInstrumented = (src: string): boolean => src.includes("stryMutAct_");
+
+/** Rejection codes named by a literal `new OpRejectedError("…")` in authored source. */
+const rejectionCodeCensus = (src: string): Set<string> =>
+  new Set(Array.from(src.matchAll(/new OpRejectedError\(\s*"([a-z_]+)"/g), (m) => m[1] as string));
+
 describe("KA-4 sweep completeness", () => {
   it("has a row for every rejection code the applier can reach", () => {
     const covered = new Set<string>([...CASES.map((c) => c.code), ...FIXTURE_CASES.map(([, make]) => make().code)]);
@@ -740,17 +792,43 @@ describe("KA-4 sweep completeness", () => {
     }
   });
 
-  it("names every code the applier actually throws, so a new one cannot be added silently", () => {
-    const src = readFileSync(new URL("../src/applier.ts", import.meta.url), "utf8");
-    const thrown = new Set(Array.from(src.matchAll(/new OpRejectedError\(\s*"([a-z_]+)"/g), (m) => m[1] as string));
-    const known = new Set<string>([
-      ...ALL_REJECTION_CODES,
-      ...OP_ID_REJECTION_CODES,
-      "apply_failed",
-    ]);
-    for (const code of thrown) {
-      expect(known.has(code), `src/applier.ts throws '${code}', which this sweep does not know about`).toBe(true);
-    }
+  it.skipIf(isStrykerInstrumented(APPLIER_SRC))(
+    "names every code the applier actually throws, so a new one cannot be added silently",
+    () => {
+      const thrown = rejectionCodeCensus(APPLIER_SRC);
+      expect(thrown.size, "the applier rejection-code census must not be empty").toBeGreaterThan(0);
+      const known = new Set<string>([
+        ...ALL_REJECTION_CODES,
+        ...OP_ID_REJECTION_CODES,
+        "apply_failed",
+      ]);
+      for (const code of thrown) {
+        expect(known.has(code), `src/applier.ts throws '${code}', which this sweep does not know about`).toBe(true);
+      }
+    },
+  );
+});
+
+describe("KA-4 census skip predicate (cifix-16989 regression)", () => {
+  // The exact shapes Stryker produced for `src/applier.ts`, taken from the
+  // sandbox copy of run 35418675352.
+  const authored = 'throw new OpRejectedError("unknown_node", op);';
+  const instrumented = 'throw new OpRejectedError(stryMutAct_9fa48("67") ? "" : "unknown_node", op);';
+
+  it("recognises instrumented source and leaves authored source alone", () => {
+    expect(isStrykerInstrumented(authored)).toBe(false);
+    expect(isStrykerInstrumented(instrumented)).toBe(true);
+  });
+
+  it("reproduces the empty census that took the workflow red, so the skip is load-bearing", () => {
+    expect(rejectionCodeCensus(authored)).toEqual(new Set(["unknown_node"]));
+    // Without the skip this emptiness reaches `toBeGreaterThan(0)` and fails the dry run.
+    expect(rejectionCodeCensus(instrumented).size).toBe(0);
+  });
+
+  it("still censuses the authored applier in an uninstrumented run", () => {
+    if (isStrykerInstrumented(APPLIER_SRC)) return;
+    expect(rejectionCodeCensus(APPLIER_SRC).size).toBeGreaterThan(0);
   });
 });
 

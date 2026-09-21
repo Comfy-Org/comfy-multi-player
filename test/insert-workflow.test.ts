@@ -89,6 +89,13 @@ function insertOp(workflow: unknown, overrides: Partial<Op> = {}): Op {
   return { ...env(), op: "insert_workflow", workflow, ...overrides } as unknown as Op;
 }
 
+function replaySnapshot(seed: Uint8Array, ops: Op[]): WorkflowJSON {
+  const doc = new Y.Doc();
+  Y.applyUpdate(doc, seed);
+  for (const op of ops) applyOps(doc, [op], catalog);
+  return project(doc, catalog);
+}
+
 const bytes = (doc: Y.Doc): Buffer => Buffer.from(Y.encodeStateAsUpdate(doc));
 
 function ids(wf: WorkflowJSON): unknown[] {
@@ -536,12 +543,7 @@ describe("insert_workflow: happy path", () => {
 
   it("makes colliding concurrent inserts converge in either legal arrival order", () => {
     const seed = Y.encodeStateAsUpdate(mint(baseWorkflow(), catalog));
-    const run = (ops: Op[]): WorkflowJSON => {
-      const doc = new Y.Doc();
-      Y.applyUpdate(doc, seed);
-      for (const op of ops) applyOps(doc, [op], catalog);
-      return project(doc, catalog);
-    };
+    const run = (ops: Op[]) => replaySnapshot(seed, ops);
     const lower = insertOp(
       { nodes: [{ id: 100, type: "Src", title: "lower" }, { id: 101, type: "Sink" }], links: [[200, 100, 0, 101, 0, "lower"]] },
       { op_id: "a".repeat(32), stamp: [2, "a"] },
@@ -567,12 +569,7 @@ describe("insert_workflow: happy path", () => {
     const remove = {
       ...env(), op: "delete_node", node_id: 1, removed_links: [], stamp: [2, "b"],
     } as unknown as Op;
-    const run = (ops: Op[]): WorkflowJSON => {
-      const doc = new Y.Doc();
-      Y.applyUpdate(doc, seed);
-      for (const op of ops) applyOps(doc, [op], catalog);
-      return project(doc, catalog);
-    };
+    const run = (ops: Op[]) => replaySnapshot(seed, ops);
 
     const deleteThenInsert = run([remove, insert]);
     const insertThenDelete = run([insert, remove]);

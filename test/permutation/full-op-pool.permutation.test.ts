@@ -2,11 +2,13 @@
  * Full declared-op-vocabulary permutation matrix (perm-4).
  *
  * The vocabulary is read from FROZEN_OPS and DEFERRED_OPS rather than copied
- * into the matrix. Pair coverage is exhaustive across kind pairs and eight
+ * into the matrix. The exhaustive tier covers kind pairs and eight
  * salient document preconditions, with named representative actor/stamp
  * equivalence classes, both arrival orders, and both batch boundaries.
  * Longer streams are fixed-seed fast-check samples with shrinking
- * left enabled.
+ * left enabled. The default tier rotates actor/stamp classes across all
+ * 64 kind pairs × 8 states (2,048 executions), plus 128 seeded streams (256 executions).
+ * Every frozen kind still meets every state, both orders, and both batch modes.
  *
  * Amendment A6 / docs/decisions/EXCEPTIONS.md and schema §2.5 item 2 are the
  * deliberate state-dependent convergence exceptions. Section 4
@@ -51,11 +53,10 @@ const PRECONDITIONS = [
   "interior-or-inputcount",
   "promoted-or-autogrow",
 ] as const;
-// The bounded exhaustive subset remains below the normal-suite case budget;
-// additional kind combinations are covered by deterministic sampling below.
+// Keep the full pre-separation domain in the dedicated exhaustive CI job:
+// 64 kind pairs × 8 states × 2 actor pairs × 4 stamp pairs × 2 orders × 2 batches.
 const PAIR_EXECUTIONS = 16_384;
 const SAMPLED_RUNS = 1_696;
-const SAMPLED_EXECUTIONS = SAMPLED_RUNS * 2;
 const SAMPLE_SEED = 0x4f70504;
 
 type Kind = (typeof KINDS)[number];
@@ -154,6 +155,51 @@ function makeOp(
 ): WireOp {
   const env = envelope(serial, actor, version);
   const value = side === 0 ? serial : -serial;
+  function makeConnection(): WireOp {
+    const common = {
+      ...env,
+      op: "connect" as const,
+      link_id: 100 + side,
+      from_node: 10,
+      from_slot: precondition === "from-slot-out-of-range" ? 5 : 0,
+      to_node: 20,
+      link_type: "VALUE",
+    };
+    if (precondition === "interior-or-inputcount") {
+      return { ...common, grow: { name: `value_${side + 1}`, type: "VALUE", inputcount: { widget: "count", value } } };
+    }
+    if (precondition === "promoted-or-autogrow") {
+      if (side === 0) {
+        return { ...common, to_node: 57, link_type: "INT", grow: { name: "width", type: "INT", promoted: true } };
+      }
+      return { ...common, grow: { name: `values.value${side}`, type: "VALUE" } };
+    }
+    return { ...common, to_slot: precondition === "to-slot-out-of-range" ? 5 : 0 };
+  }
+  function makeWidgetWrite(): WireOp {
+    if (precondition === "interior-or-inputcount") {
+      return {
+        ...env,
+        op: "set_widget",
+        node_id: "57/13",
+        widget: "missing",
+        value,
+        path: ["57", "13"],
+        inner_widget: "missing",
+      };
+    }
+    if (precondition === "promoted-or-autogrow") {
+      return {
+        ...env,
+        op: "set_widget",
+        node_id: 57,
+        widget: "width",
+        value,
+        promoted: { value_index: 0, instance_path: ["57"], host_widgets_values: [value] },
+      };
+    }
+    return { ...env, op: "set_widget", node_id: 20, widget: "count", value };
+  }
   switch (kind) {
     case "add_node":
       return {
@@ -165,27 +211,7 @@ function makeOp(
         pos: [value, value],
         node: node(40, "Aux", [], [], [value]),
       };
-    case "connect": {
-      const common = {
-        ...env,
-        op: "connect" as const,
-        link_id: 100 + side,
-        from_node: 10,
-        from_slot: precondition === "from-slot-out-of-range" ? 5 : 0,
-        to_node: 20,
-        link_type: "VALUE",
-      };
-      if (precondition === "interior-or-inputcount") {
-        return { ...common, grow: { name: `value_${side + 1}`, type: "VALUE", inputcount: { widget: "count", value } } };
-      }
-      if (precondition === "promoted-or-autogrow") {
-        if (side === 0) {
-          return { ...common, to_node: 57, link_type: "INT", grow: { name: "width", type: "INT", promoted: true } };
-        }
-        return { ...common, grow: { name: `values.value${side}`, type: "VALUE" } };
-      }
-      return { ...common, to_slot: precondition === "to-slot-out-of-range" ? 5 : 0 };
-    }
+    case "connect": return makeConnection();
     case "disconnect":
       return {
         ...env,
@@ -194,29 +220,7 @@ function makeOp(
         to_node: precondition === "destination-missing" ? 999 : 20,
         to_slot: precondition === "to-slot-out-of-range" ? 5 : 0,
       };
-    case "set_widget":
-      if (precondition === "interior-or-inputcount") {
-        return {
-          ...env,
-          op: "set_widget",
-          node_id: "57/13",
-          widget: "missing",
-          value,
-          path: ["57", "13"],
-          inner_widget: "missing",
-        };
-      }
-      if (precondition === "promoted-or-autogrow") {
-        return {
-          ...env,
-          op: "set_widget",
-          node_id: 57,
-          widget: "width",
-          value,
-          promoted: { value_index: 0, instance_path: ["57"], host_widgets_values: [value] },
-        };
-      }
-      return { ...env, op: "set_widget", node_id: 20, widget: "count", value };
+    case "set_widget": return makeWidgetWrite();
     case "delete_node":
       return { ...env, op: "delete_node", node_id: side === 0 ? 10 : 20, removed_links: [80, 100, 101] };
     case "clear":
@@ -250,7 +254,7 @@ function run(
   const doc = mint(workflow, catalog);
   const groups = mode === "together" ? [[...ops]] : ops.map((op) => [op]);
   const outcomes: RunState["outcomes"] = [];
-  for (const group of groups) {
+  function applyGroup(group: WireOp[]): void {
     const before = Y.encodeStateAsUpdate(doc);
     const result = applyOps(doc, group as Op[], catalog);
     outcomes.push(...result.outcomes.map((outcome) => ({
@@ -261,8 +265,9 @@ function run(
     if (mode === "split" && result.outcomes[0]?.outcome === "rejected") {
       expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
     }
-    if (mode === "together" && result.outcomes.some((outcome) => outcome.outcome === "rejected")) {
-      assertRejectedOpDoesNotMutate(before, group);
+    const rejectedIndex = result.outcomes.findIndex((outcome) => outcome.outcome === "rejected");
+    if (mode === "together" && rejectedIndex !== -1) {
+      assertRejectedOpDoesNotMutate(doc, before, group, rejectedIndex);
     }
     for (const op of group) {
       const outcome = result.outcomes.find((candidate) => candidate.op_id === op.op_id);
@@ -273,6 +278,7 @@ function run(
       idempotencyVerified.add(op.op);
     }
   }
+  for (const group of groups) applyGroup(group);
   const appliedIds = new Set(doc.getMap("__applied").keys());
   for (const outcome of outcomes) {
     if (outcome.outcome === "rejected") expect(appliedIds.has(outcome.opId)).toBe(false);
@@ -280,7 +286,17 @@ function run(
   return { projection: canonicalize(project(doc, catalog)), outcomes, appliedIds };
 }
 
-function assertRejectedOpDoesNotMutate(encodedDoc: Uint8Array, group: readonly WireOp[]): void {
+function assertRejectedOpDoesNotMutate(
+  actual: Y.Doc, encodedDoc: Uint8Array, group: readonly WireOp[], rejectedIndex: number,
+): void {
+  const prefix = new Y.Doc();
+  Y.applyUpdate(prefix, encodedDoc);
+  // Recreate the same writer's structs for an exact byte comparison, not a
+  // second independently edited replica intended for merging.
+  prefix.clientID = actual.clientID;
+  if (rejectedIndex > 0) applyOps(prefix, group.slice(0, rejectedIndex) as Op[], catalog);
+  expect(Y.encodeStateAsUpdate(actual)).toEqual(Y.encodeStateAsUpdate(prefix));
+
   const oracle = new Y.Doc();
   Y.applyUpdate(oracle, encodedDoc);
   for (const op of group) {
@@ -299,12 +315,12 @@ function stable(value: unknown): string {
 
 function normalizeR69(workflow: WorkflowJSON): WorkflowJSON {
   const copy = structuredClone(workflow);
-  for (const candidate of copy.nodes) {
+  function normalizeNode(candidate: WorkflowNode): void {
     for (const output of (candidate.outputs ?? []) as Array<{ links?: unknown[] }>) {
       if (Array.isArray(output.links)) output.links.sort((a, b) => String(a).localeCompare(String(b)));
     }
     const inputs = (candidate.inputs ?? []) as Array<{ link?: unknown; grow_id?: unknown }>;
-    if (!inputs.some((input) => input.grow_id != null)) continue;
+    if (!inputs.some((input) => input.grow_id != null)) return;
     const fixed = inputs.filter((input) => input.grow_id == null);
     const grown = inputs
       .filter((input) => input.grow_id != null)
@@ -318,6 +334,7 @@ function normalizeR69(workflow: WorkflowJSON): WorkflowJSON {
       if (link) link[4] = index;
     }
   }
+  for (const candidate of copy.nodes) normalizeNode(candidate);
   return copy;
 }
 
@@ -452,11 +469,43 @@ function kindPairs(): Array<readonly [Kind, Kind]> {
   return EXHAUSTIVE_KINDS.flatMap((left) => EXHAUSTIVE_KINDS.map((right) => [left, right] as const));
 }
 
-describe("full op-pool permutation equivalence", () => {
-  it("covers every declared op-kind pair across representative state, stamp, actor, order, and batch dimensions", () => {
+function* stampPairs(tier: string, pairIndex: number) {
+  for (const [actorIndex, actors] of ACTOR_PAIRS.entries()) {
+    for (const [versionIndex, versions] of VERSION_PAIRS.entries()) {
+      // Rotate actor/stamp classes across pairs instead of taking their
+      // Cartesian product in the default run. Keep every kind × state.
+      if (tier === "representative" && (
+        actorIndex !== pairIndex % ACTOR_PAIRS.length ||
+        versionIndex !== Math.floor(pairIndex / ACTOR_PAIRS.length) % VERSION_PAIRS.length
+      )) continue;
+      yield { actors, versions };
+    }
+  }
+}
+
+function* pairCases(tier: string) {
+  for (const [pairIndex, kinds] of kindPairs().entries()) {
+    for (const precondition of PRECONDITIONS) {
+      for (const { actors, versions } of stampPairs(tier, pairIndex)) {
+        yield { kinds, precondition, actors, versions };
+      }
+    }
+  }
+}
+
+describe.each([
+  { tier: "representative", tags: [], timeout: 15_000, expectedPairs: 2_048, sampledRuns: 128 },
+  { tier: "exhaustive", tags: ["exhaustive"], timeout: 900_000, expectedPairs: PAIR_EXECUTIONS, sampledRuns: SAMPLED_RUNS },
+])("full op-pool permutation equivalence ($tier)", ({ tier, tags, timeout, expectedPairs, sampledRuns }) => {
+  it("covers every declared op-kind pair across representative state, stamp, actor, order, and batch dimensions", { tags, timeout }, () => {
     let executions = 0;
     let serial = 1;
     const idempotencyVerified = new Set<Kind>();
+    const kindStates = new Set<string>();
+    const coveredPairs = new Set<string>();
+    const coveredActors = new Set<string>();
+    const coveredVersions = new Set<string>();
+    const coveredModes = new Set<BatchMode>();
     const taxonomy: Taxonomy = {
       equivalent: 0, a6: 0, stateDependent: 0, abortBoundary: 0,
       unexpectedR69: 0, unexpectedInputcountLinkReuse: 0,
@@ -465,33 +514,37 @@ describe("full op-pool permutation equivalence", () => {
     let firstR69: string | undefined;
     let firstRemovedLinkAlias: string | undefined;
 
-    for (const kinds of kindPairs()) {
-      for (const precondition of PRECONDITIONS) {
-        for (const actors of ACTOR_PAIRS) {
-          for (const versions of VERSION_PAIRS) {
-            const pair = kinds.map((kind, side) => makeOp(kind, precondition, side as 0 | 1, serial++, actors[side]!, versions[side]!));
-            for (const mode of ["together", "split"] as const) {
-              const forward = run(base(precondition), pair, mode, idempotencyVerified);
-              const reverse = run(base(precondition), [pair[1]!, pair[0]!], mode, idempotencyVerified);
-              executions += 2;
-              const category = classify(forward, reverse, pair, precondition, mode);
-              taxonomy[category]++;
-              if (category === "unexpectedR69" && firstR69 === undefined) {
-                firstR69 = stable({ kinds, precondition, actors, versions, mode, ops: pair });
-              }
-              if (category === "unexpectedRemovedLinkAlias" && firstRemovedLinkAlias === undefined) {
-                firstRemovedLinkAlias = stable({ kinds, precondition, actors, versions, mode, ops: pair });
-              }
-            }
-          }
+    for (const { kinds, precondition, actors, versions } of pairCases(tier)) {
+      const pair = kinds.map((kind, side) => makeOp(kind, precondition, side as 0 | 1, serial++, actors[side]!, versions[side]!));
+      for (const mode of ["together", "split"] as const) {
+        const forward = run(base(precondition), pair, mode, idempotencyVerified);
+        const reverse = run(base(precondition), [pair[1]!, pair[0]!], mode, idempotencyVerified);
+        executions += 2;
+        for (const kind of kinds) kindStates.add(`${kind}:${precondition}`);
+        coveredPairs.add(stable(kinds));
+        coveredActors.add(stable(actors));
+        coveredVersions.add(stable(versions));
+        coveredModes.add(mode);
+        const category = classify(forward, reverse, pair, precondition, mode);
+        taxonomy[category]++;
+        if (category === "unexpectedR69" && firstR69 === undefined) {
+          firstR69 = stable({ kinds, precondition, actors, versions, mode, ops: pair });
+        }
+        if (category === "unexpectedRemovedLinkAlias" && firstRemovedLinkAlias === undefined) {
+          firstRemovedLinkAlias = stable({ kinds, precondition, actors, versions, mode, ops: pair });
         }
       }
     }
 
     expect(KINDS).toEqual([...FROZEN_OPS, ...DEFERRED_OPS]);
     expect(kindPairs()).toHaveLength(EXHAUSTIVE_KINDS.length ** 2);
-    expect(executions).toBe(PAIR_EXECUTIONS);
-    expect(Object.values(taxonomy).reduce((sum, count) => sum + count, 0)).toBe(PAIR_EXECUTIONS / 2);
+    expect(executions).toBe(expectedPairs);
+    expect(Object.values(taxonomy).reduce((sum, count) => sum + count, 0)).toBe(expectedPairs / 2);
+    expect(kindStates).toEqual(new Set(FROZEN_OPS.flatMap((kind) => PRECONDITIONS.map((state) => `${kind}:${state}`))));
+    expect(coveredPairs).toEqual(new Set(kindPairs().map(stable)));
+    expect(coveredActors).toEqual(new Set(ACTOR_PAIRS.map(stable)));
+    expect(coveredVersions).toEqual(new Set(VERSION_PAIRS.map(stable)));
+    expect(coveredModes).toEqual(new Set(["together", "split"]));
     // Deferred reset_doc never consumes its op_id; every frozen kind does and
     // has one byte-identical immediate duplicate check in run().
     expect(idempotencyVerified).toEqual(new Set(FROZEN_OPS));
@@ -499,10 +552,10 @@ describe("full op-pool permutation equivalence", () => {
     // not count-pinned: fixing it must not require weakening this test.
     expect(taxonomy.a6).toBeGreaterThan(0);
     expect(taxonomy.abortBoundary).toBeGreaterThan(0);
-    console.info("perm-4 pair taxonomy", { executions, taxonomy, firstR69, firstRemovedLinkAlias });
-  }, 900_000);
+    console.info("perm-4 pair taxonomy", { tier, executions, taxonomy, firstR69, firstRemovedLinkAlias });
+  });
 
-  it("samples reproducible length-3-to-6 full-vocabulary streams with shrinking enabled", () => {
+  it("samples reproducible length-3-to-6 full-vocabulary streams with shrinking enabled", { tags, timeout }, () => {
     let runs = 0;
     let executions = 0;
     const idempotencyVerified = new Set<Kind>();
@@ -549,16 +602,16 @@ describe("full op-pool permutation equivalence", () => {
       if (category === "unexpectedRemovedLinkAlias" && firstRemovedLinkAlias === undefined) {
         firstRemovedLinkAlias = stable({ seed: SAMPLE_SEED, scenario, ops, permuted: permuted.map((op) => op.op_id) });
       }
-    }), { seed: SAMPLE_SEED, numRuns: SAMPLED_RUNS });
+    }), { seed: SAMPLE_SEED, numRuns: sampledRuns });
 
-    expect(runs).toBe(SAMPLED_RUNS);
-    expect(executions).toBe(SAMPLED_EXECUTIONS);
+    expect(runs).toBe(sampledRuns);
+    expect(executions).toBe(sampledRuns * 2);
     expect(idempotencyVerified).toEqual(new Set(FROZEN_OPS));
     for (const [kind, count] of Object.entries(hits)) expect(count, `${kind} was not sampled`).toBeGreaterThan(0);
-    expect(Object.values(taxonomy).reduce((sum, count) => sum + count, 0)).toBe(SAMPLED_RUNS);
+    expect(Object.values(taxonomy).reduce((sum, count) => sum + count, 0)).toBe(sampledRuns);
     console.info("perm-4 sampled taxonomy", {
-      seed: SAMPLE_SEED, runs, executions, hits, taxonomy,
+      tier, seed: SAMPLE_SEED, runs, executions, hits, taxonomy,
       firstR69, firstInputcountLinkReuse, firstRemovedLinkAlias,
     });
-  }, 900_000);
+  });
 });
