@@ -1,7 +1,7 @@
 /**
  * Extension of incarnation-stamps.test.ts and rejection-retry-parity.test.ts.
  * 2 removals × 2 batch boundaries × 4 stale-write positions = 16 histories.
- * Each compares all six logical root maps, probes a common continuation, and
+ * Each compares all eight logical root maps, probes a common continuation, and
  * recovers a snapshot-seeded follower after a dropped delta. Yjs struct bytes
  * need not match between independently edited authorities; duplicate delivery
  * must be byte-identical on each recipient. No projection normalization or
@@ -27,7 +27,7 @@ import { loadCatalog } from "../helpers.js";
 import { checkGraphInvariants } from "../graph-invariant-oracle.js";
 
 const catalog = loadCatalog();
-const roots = ["nodes", "links", "definitions", "meta", "__applied", "__stamps"] as const;
+const roots = ["nodes", "links", "definitions", "meta", "__applied", "__stamps", "__link_state", "__clock_reservations"] as const;
 const base: WorkflowJSON = {
   nodes: [{ id: 1, type: "CLIPTextEncode", pos: [0, 0], inputs: [], outputs: [], widgets_values: ["life-1"] }],
   links: [], last_node_id: 1, last_link_id: 0,
@@ -233,6 +233,12 @@ describe("precise rejection vs consumed no-op and batch abort", () => {
   // implementation rejecting every candidate cannot satisfy this matrix.
   for (const shape of ["valid", "malformed", "unknown-widget"] as const) {
     for (const deletedFirst of [false, true]) {
+      const widget = { valid: "text", malformed: null, "unknown-widget": "absent-widget" }[shape];
+      const code = {
+        valid: undefined,
+        malformed: "malformed_op",
+        "unknown-widget": deletedFirst ? undefined : "unknown_widget",
+      }[shape];
       it.each(["together", "split"] as const)(`${shape}/deletedFirst=${deletedFirst}/%s`, (mode) => {
         const doc = mint({
           ...base,
@@ -242,21 +248,24 @@ describe("precise rejection vs consumed no-op and batch abort", () => {
         const deletion: Op = { op: "delete_node", ...envelope(20, 10), node_id: 1, removed_links: [] };
         const candidate = {
           ...write(21, 20, "candidate", "0"),
-          widget: shape === "malformed" ? null : shape === "unknown-widget" ? "absent-widget" : "text",
+          widget,
         } as unknown as Op;
         const suffix: Op = { ...write(22, 30, "suffix", "0"), node_id: 2 };
-        const code = shape === "malformed" ? "malformed_op"
-          : shape === "unknown-widget" && !deletedFirst ? "unknown_widget" : undefined;
         const history = deletedFirst ? [deletion, candidate, suffix] : [candidate, deletion, suffix];
         const candidateIndex = deletedFirst ? 1 : 0;
-        const expected = history.map((op, index) => ({
-          op_id: op.op_id,
-          outcome: index === candidateIndex && code !== undefined ? "rejected"
-            : mode === "together" && code !== undefined && index > candidateIndex ? "rejected"
-            : index === candidateIndex && deletedFirst ? "no-op" : "applied",
-          code: index === candidateIndex ? code
-            : mode === "together" && code !== undefined && index > candidateIndex ? "batch_aborted" : undefined,
-        }));
+        const expected = history.map((op, index) => {
+          if (index === candidateIndex && code !== undefined) {
+            return { op_id: op.op_id, outcome: "rejected", code };
+          }
+          if (mode === "together" && code !== undefined && index > candidateIndex) {
+            return { op_id: op.op_id, outcome: "rejected", code: "batch_aborted" };
+          }
+          return {
+            op_id: op.op_id,
+            outcome: index === candidateIndex && deletedFirst ? "no-op" : "applied",
+            code: undefined,
+          };
+        });
         try {
           const actual = [];
           for (const batch of mode === "together" ? [history] : history.map((op) => [op])) {
