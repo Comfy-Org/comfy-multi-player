@@ -19,6 +19,7 @@ import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
 import {
   applyOps,
+  codePointCompare,
   mint,
   project,
   writeTarget,
@@ -29,6 +30,7 @@ import {
   type SetWidgetOp,
   type WorkflowJSON,
 } from "../src/index.js";
+import { rejectedOutcome } from "./apply-result-helpers.js";
 import { canonicalize, loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
@@ -229,11 +231,11 @@ describe("stamp targets normalize node ids to strings", () => {
     const applyOrder = (ops: AddNodeOp[]): Y.Doc => {
       const doc = new Y.Doc();
       Y.applyUpdate(doc, snapshot);
-      expect(applyOps(doc, ops, catalog).failed).toBeNull();
+      expect(rejectedOutcome(applyOps(doc, ops, catalog))).toBeUndefined();
       return doc;
     };
     const sortedEntries = (doc: Y.Doc, name: "__stamps" | "__applied"): [string, unknown][] =>
-      [...doc.getMap(name).entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+      [...doc.getMap(name).entries()].sort(([a], [b]) => codePointCompare(a, b));
 
     const forward = applyOrder([lower, higher]);
     const reverse = applyOrder([higher, lower]);
@@ -244,7 +246,7 @@ describe("stamp targets normalize node ids to strings", () => {
     expect(forwardProjection).toEqual(reverseProjection);
     expect(created).toHaveLength(1);
     expect(created[0]!.pos).toEqual([20, 20]);
-    expect(created[0]!.widgets_values?.[0]).toBe(999);
+    expect(Array.isArray(created[0]!.widgets_values) ? created[0]!.widgets_values[0] : undefined).toBe(999);
     expect(sortedEntries(forward, "__stamps")).toEqual(sortedEntries(reverse, "__stamps"));
     expect(sortedEntries(forward, "__stamps")).toHaveLength(1);
     expect(sortedEntries(forward, "__applied")).toEqual(sortedEntries(reverse, "__applied"));
@@ -260,12 +262,12 @@ describe("stamp targets normalize node ids to strings", () => {
     });
     const forwardAgain = applyOrder([lower, higher]);
     const forwardBefore = snapshotOf(forwardAgain);
-    expect(applyOps(forwardAgain, [lower], catalog).failed).toBeNull();
+    expect(rejectedOutcome(applyOps(forwardAgain, [lower], catalog))).toBeUndefined();
     expect(snapshotOf(forwardAgain)).toEqual(forwardBefore);
 
     const reverseAgain = applyOrder([higher, lower]);
     const reverseBefore = snapshotOf(reverseAgain);
-    expect(applyOps(reverseAgain, [higher], catalog).failed).toBeNull();
+    expect(rejectedOutcome(applyOps(reverseAgain, [higher], catalog))).toBeUndefined();
     expect(snapshotOf(reverseAgain)).toEqual(reverseBefore);
   });
 });
