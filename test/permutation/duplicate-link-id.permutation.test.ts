@@ -120,12 +120,30 @@ function winner(a: ConnectOp, b: ConnectOp): ConnectOp {
   return left[2] > right[2] ? a : b;
 }
 
+function assertNodeLinkOwnership(node: WorkflowNode, owner: ConnectOp, repro: string): void {
+  for (const [slot, input] of ((node.inputs ?? []) as Array<{ link?: unknown }>).entries()) {
+    const ownsInput = node.id === owner.to_node && slot === owner.to_slot;
+    expect(input.link == null ? null : String(input.link), repro).toBe(ownsInput ? "700" : null);
+  }
+  for (const [slot, output] of ((node.outputs ?? []) as Array<{ links?: unknown[] }>).entries()) {
+    const ownsOutput = node.id === owner.from_node && slot === owner.from_slot;
+    expect((output.links ?? []).map(String), repro).toEqual(ownsOutput ? ["700"] : []);
+  }
+}
+
+function assertExactLinkOwnership(wf: WorkflowJSON, owner: ConnectOp, repro: string): void {
+  // Counting two live refs alone would also accept refs on the wrong ports.
+  // Every non-owner port must be empty, including the displaced writer's.
+  for (const node of wf.nodes) assertNodeLinkOwnership(node, owner, repro);
+}
+
 function assertCoherentGraph(wf: WorkflowJSON, owner: ConnectOp, repro: string): void {
   expect(tuple(wf).slice(1, 6), repro).toEqual([owner.from_node, owner.from_slot, owner.to_node, owner.to_slot, owner.link_type]);
   const tupleIds = (wf.links as unknown[][]).map((link) => String(link[0]));
   expect(new Set(tupleIds).size, repro).toBe(tupleIds.length);
   const live = new Set(tupleIds);
   const refs: string[] = [];
+  assertExactLinkOwnership(wf, owner, repro);
   for (const node of wf.nodes) {
     for (const input of (node.inputs ?? []) as Array<{ link?: unknown }>) if (input.link != null) {
       refs.push(String(input.link));
