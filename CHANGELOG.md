@@ -7,6 +7,17 @@ this package uses semantic versioning.
 
 ## Unreleased
 
+## 0.3.1 - 2026-09-21
+
+### Fixed
+
+- Fixed `insert_workflow` remap dropping a pasted subgraph definition's
+  promoted-input and exposed-output `linkIds`. The synthetic IO node
+  sentinels a promoted input resolves against were being treated as missing
+  nodes during dangling-link dropping, so every sentinel-fed link was
+  discarded and the promoted widget silently stopped being recognized after
+  an insert.
+
 ## 0.3.0 - 2026-09-19
 
 ### Changed
