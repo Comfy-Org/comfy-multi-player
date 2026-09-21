@@ -318,7 +318,7 @@ describe("promoted host write: `set_widget` with `promoted` lands on the instanc
     const wv = node(project(doc, catalog), 57).widgets_values as unknown[];
     expect(wv[1]).toBe(768);
     expect(wv[2]).toBe(512);
-    expect(wv.length).toBe(8);
+    expect(wv).toHaveLength(8);
     expect([wv[0], ...wv.slice(3)]).toEqual([HOST_DEFAULTS[0], ...HOST_DEFAULTS.slice(3)]);
   });
 

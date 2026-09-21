@@ -594,7 +594,7 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
     const asArray = new Y.Doc();
     asArray.getArray<unknown>(ROOT_DEFINITIONS);
     for (const doc of [asMap, asArray]) {
-      expect(Y.encodeStateAsUpdate(doc).length).toBe(2);
+      expect(Y.encodeStateAsUpdate(doc)).toHaveLength(2);
       expect(readGraph(doc)).toEqual({ nodes: {}, links: {} });
       expect(readMeta(doc)).toEqual({});
       expect(docCatalogPin(doc)).toBe("");

@@ -147,7 +147,7 @@ describe("two-doc convergence through the single-applier discipline", () => {
       for (const variant of ["reverse", "rotate"] as const) {
         const other = fork();
         const reordered = permuted(variant);
-        expect(reordered.length).toBe(ops.length);
+        expect(reordered).toHaveLength(ops.length);
         expect(applyOps(other, reordered, catalog).outcomes.find((outcome) => outcome.outcome === "rejected")).toBeUndefined();
         const violations = checkGraphInvariants(other);
         expect(violations, `graph invariant violation: ${JSON.stringify(violations)}`).toEqual([]);

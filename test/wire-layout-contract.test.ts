@@ -395,7 +395,7 @@ describe("layer 3: the code, the golden vector and the schema documents agree (K
 
   it("uses the supported wire-layout vector format", () => {
     expect(golden.format_version).toBe(1);
-    expect(goldenRootNames.length).toBe(8);
+    expect(goldenRootNames).toHaveLength(8);
   });
 
   it("is reachable from the conformance manifest, so a second implementation finds it", () => {

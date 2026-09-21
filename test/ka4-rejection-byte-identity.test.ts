@@ -568,7 +568,7 @@ describe("KA-4: a rejected op leaves the doc byte-identical and does not consume
       expect(kinds.has(k), `no KA-4 rejection row for '${k}'`).toBe(true);
     }
     // #34 (issue #10) landed: all four former violations are ordinary CASES rows now.
-    expect(KNOWN_KA4_VIOLATIONS.length).toBe(0);
+    expect(KNOWN_KA4_VIOLATIONS).toHaveLength(0);
   });
 });
 
@@ -826,8 +826,8 @@ describe("KA-4 census skip predicate (cifix-16989 regression)", () => {
     expect(rejectionCodeCensus(instrumented).size).toBe(0);
   });
 
-  it("still censuses the authored applier in an uninstrumented run", () => {
-    if (isStrykerInstrumented(APPLIER_SRC)) return;
+  it("still censuses the authored applier in an uninstrumented run", ({ skip }) => {
+    if (isStrykerInstrumented(APPLIER_SRC)) skip();
     expect(rejectionCodeCensus(APPLIER_SRC).size).toBeGreaterThan(0);
   });
 });

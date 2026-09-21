@@ -146,7 +146,7 @@ describe("gen-coderabbit-config", () => {
     run(root, "--write");
     const generated = readFileSync(join(root, ".coderabbit.yaml"), "utf8");
     const edited = generated.replace("Filler instruction number 1.", "Filler instruction number 7.");
-    expect(edited.length).toBe(generated.length);
+    expect(edited).toHaveLength(generated.length);
     writeConfig(edited);
     expect(run(root).status).toBe(1);
   });

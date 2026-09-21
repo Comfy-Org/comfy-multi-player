@@ -61,7 +61,6 @@ describe("compareStampKeys (freeze doc §8.1)", () => {
     // U+1F600 (😀, surrogate pair d83d de00) vs U+FFFF: JS `<` on UTF-16 units
     // says "😀" < "￿"; Python code-point order says the opposite. Actors
     // are contractually ASCII, but the comparator must be code-point-true.
-    expect("😀" < "￿").toBe(true); // the trap
     expect(codePointCompare("😀", "￿")).toBe(1); // the contract
   });
 
