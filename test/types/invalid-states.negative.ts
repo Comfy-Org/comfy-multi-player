@@ -335,7 +335,7 @@ const okResetAsWireOp: WireOp = reset;
 
 // Keep every binding used so `noUnusedLocals` (if ever enabled) stays quiet and
 // nothing here is dead.
-export const checked = [
+export const checked: (WireOp | ClearOp | DeleteNodeOp)[] = [
   growWithConcreteSlot,
   growWithConcreteSlotUnion,
   nullSlotWithoutGrow,
@@ -365,4 +365,4 @@ export const checked = [
   okDeleteNode,
   okClear,
   okResetAsWireOp,
-] satisfies (WireOp | ClearOp | DeleteNodeOp)[];
+];
