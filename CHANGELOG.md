@@ -7,6 +7,15 @@ this package uses semantic versioning.
 
 ## Unreleased
 
+## 0.3.2 - 2026-09-21
+
+### Fixed
+
+- Republishes the 0.3.1 release, which never reached npm: the tag was never
+  pushed, so the version bump landed on `main` without a corresponding package
+  publish. 0.3.2 carries the same `insert_workflow` fix as 0.3.1 (see below)
+  and is published through the new label-gated release automation.
+
 ## 0.3.1 - 2026-09-21
 
 ### Fixed
