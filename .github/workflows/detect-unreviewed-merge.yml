@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   detect:
-    uses: Comfy-Org/github-workflows/.github/workflows/detect-unreviewed-merge.yml@ffcc3f5b4dfc568e846e769c4f4df4f749c7887b # v1
+    uses: Comfy-Org/github-workflows/.github/workflows/detect-unreviewed-merge.yml@bc8901ef7a5246337afe1cc2cb3cc08d4268705a # v1
     with:
       approval-mode: latest-per-reviewer
     secrets:
