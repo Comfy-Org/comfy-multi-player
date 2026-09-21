@@ -10,7 +10,8 @@
  * toggle two different fields on one node without contending.
  */
 import { describe, expect, it } from "vitest";
-import { applyOps, mint, project, type Op, type WidgetCatalog, type WorkflowJSON } from "../src/index.js";
+import * as Y from "yjs";
+import { applyOps, mint, project, type AddNodeOp, type DeleteNodeOp, type Op, type WidgetCatalog, type WorkflowJSON } from "../src/index.js";
 import { rejectedOutcome } from "./apply-result-helpers.js";
 import { loadCatalog } from "./helpers.js";
 
@@ -91,6 +92,21 @@ describe("set_node_field", () => {
     doc.destroy();
   });
 
+  it.each([
+    { field: "title", value: "Renamed", property: "title" },
+    { field: "flags.pinned", value: true, property: "pinned" },
+  ])("deletes $field when value is null", ({ field, value, property }) => {
+    const doc = mint(base, catalog);
+    expect(rejectedOutcome(applyOps(doc, [setNodeField("alice", 1, field, value)], catalog))).toBeUndefined();
+
+    expect(rejectedOutcome(applyOps(doc, [setNodeField("alice", 2, field, null)], catalog))).toBeUndefined();
+
+    const projected = node(doc) as unknown as Record<string, unknown>;
+    const owner = field === "title" ? projected : projected["flags"] as Record<string, unknown>;
+    expect(owner).not.toHaveProperty(property);
+    doc.destroy();
+  });
+
   it("resolves two writers of one field by stamp, in either arrival order", () => {
     const early = setNodeField("alice", 1, "title", "alice");
     const late = setNodeField("bob", 2, "title", "bob");
@@ -137,4 +153,54 @@ describe("set_node_field", () => {
       doc.destroy();
     },
   );
+
+  it.each([
+    { field: "title", value: 1 },
+    { field: "mode", value: "4" },
+    { field: "mode", value: -1 },
+    { field: "flags.collapsed", value: "yes" },
+    { field: "flags.pinned", value: 1 },
+  ])("rejects invalid $field value $value without mutating the document", ({ field, value }) => {
+    const doc = mint(base, catalog);
+    const before = Buffer.from(Y.encodeStateAsUpdate(doc));
+
+    const result = applyOps(doc, [setNodeField("alice", 1, field, value)], catalog);
+
+    expect(rejectedOutcome(result)).toMatchObject({ reason: { code: "malformed_op" } });
+    expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
+    doc.destroy();
+  });
+
+  it("does not let a stale lifetime write mutate a replacement node", () => {
+    const doc = mint(base, catalog);
+    const remove: DeleteNodeOp = {
+      op: "delete_node",
+      op_id: testOpId("d"),
+      actor: "alice",
+      base_version: 1,
+      stamp: [1, "alice"],
+      node_id: NODE_ID,
+      removed_links: [],
+    };
+    const replacementIncarnation = testOpId("life");
+    const replacement: AddNodeOp = {
+      op: "add_node",
+      op_id: testOpId("a"),
+      actor: "alice",
+      base_version: 2,
+      stamp: [2, "alice"],
+      node_id: NODE_ID,
+      node_incarnation: replacementIncarnation,
+      class_type: "LoadImage",
+      pos: [10, 20],
+      node: base.nodes[0]!,
+    };
+    expect(rejectedOutcome(applyOps(doc, [remove, replacement], catalog))).toBeUndefined();
+    const stale = setNodeField("bob", 3, "title", "wrong lifetime") as Op & { node_incarnation: string };
+    stale.node_incarnation = "0";
+
+    expect(applyOps(doc, [stale], catalog).outcomes[0]).toMatchObject({ outcome: "no-op" });
+    expect(node(doc)?.title).toBe("Load Image");
+    doc.destroy();
+  });
 });

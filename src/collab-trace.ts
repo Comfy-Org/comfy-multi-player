@@ -443,8 +443,16 @@ function assertOpPayload(value: unknown, context: string) {
       break;
     case "set_node_field":
       asNodeId(required(payload, "node_id", context), `${context}.node_id`);
-      asOneOf(required(payload, "field", context), WRITABLE_NODE_FIELDS, `${context}.field`);
-      required(payload, "value", context);
+      {
+        const field = asOneOf(required(payload, "field", context), WRITABLE_NODE_FIELDS, `${context}.field`);
+        const fieldValue = required(payload, "value", context);
+        if (fieldValue !== null) {
+          if (field === "title") asString(fieldValue, `${context}.value`);
+          else if (field === "mode") asInteger(fieldValue, `${context}.value`);
+          else asBoolean(fieldValue, `${context}.value`);
+        }
+        assertOptionalString(payload, "node_incarnation", context);
+      }
       break;
     case "delete_node":
       asNodeId(required(payload, "node_id", context), `${context}.node_id`);

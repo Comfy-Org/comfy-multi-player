@@ -360,7 +360,9 @@ Every op carries the same envelope, minted by its creator before dispatch:
 }
 ```
 
-Nine kinds, frozen:
+Nine kinds, frozen. Eight mirror comfy-cli's pinned vocabulary;
+`set_node_field` is the package-local, provisional addition recorded by
+ADR-032 and schema Amendment A21.
 
 | Kind | Payload beyond the envelope | Batchable (authoring) |
 |---|---|---|
@@ -369,7 +371,7 @@ Nine kinds, frozen:
 | `connect` | `link_id`, `from_node`, `from_slot`, `to_node`, `link_type`, then EITHER a numeric `to_slot` (`ConcreteConnectOp`) OR a `grow` payload with `to_slot` null/absent (`GrowConnectOp`); `grow.promoted: true` names a subgraph instance's DECLARED input, materialized on the instance and LWW-gated as one register (schema Amendment A15) | yes |
 | `disconnect` | `link_id`, `to_node`, `to_slot`; claims the same concrete input register as `connect` and removes the winning slot occupant | yes |
 | `set_widget` | `node_id`, `widget` (name, never index), `value`, optional `old`; an interior write adds `path` AND `inner_widget` together (`InteriorSetWidgetOp`); a promoted HOST write adds `promoted: {value_index, instance_path, host_widgets_values}` instead — a positional write into a subgraph instance's opaque array (schema Amendment A15) | yes |
-| `set_node_field` | `node_id`, `field` (one of `title`, `mode`, `flags.collapsed`, `flags.pinned` — exported as `WRITABLE_NODE_FIELDS`), `value` (`null` deletes the field). One LWW register per `(node lifetime, field)`, so two fields of one node never contend and neither disturbs that node's widget stamps | yes |
+| `set_node_field` | `node_id`, `field` (one of `title`, `mode`, `flags.collapsed`, `flags.pinned` — exported as `WRITABLE_NODE_FIELDS`), and a field-typed `value`: string for `title`, non-negative integer for `mode`, boolean for flags, or `null` to delete. One LWW register per `(node lifetime, field)`, so two fields of one node never contend and neither disturbs that node's widget stamps. Package-local and provisional (ADR-032) | yes |
 | `delete_node` | `node_id`, `removed_links` | yes |
 | `clear` | `removed_nodes` | no |
 | `insert_workflow` | `workflow` containing required raw-ID `nodes` plus optional `links`, `groups`, and `definitions`; the applier remaps IDs deterministically from `op_id` | no |

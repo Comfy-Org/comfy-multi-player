@@ -488,6 +488,7 @@ so a raw key gave `7` and `"7"` two registers for one node.
 | `connect` (autogrow) | `("input", String(to_node), "grow", base_name)` | no — identity only, canonicalized by stamp (A7) |
 | `connect` (promoted input, A15) | `("input", String(to_node), "grow", name)` with the FULL declared name (names may contain dots — `images.image0`), matching comfy-cli `_write_target` at amendment v1.5 (`ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`); only an ordinary autogrow keys by base name | **yes (A15)** — one register named by the definition |
 | every `connect` (link identity, A18) | `("link", String(link_id))` | **yes (A18)** — greatest stamp owns the complete tuple and coherent endpoint references |
+| `set_node_field` (package-local, A21) | `("node_field", String(node_id), node_incarnation, field)` | **yes (A21)** — one register per field and node lifetime |
 | `add_node` / `delete_node` (presence) | `("node", String(node_id))` | **yes (A7)** |
 | `clear` (one row per entry in `removed_nodes`) | `("node", String(node_id))` | **yes (A7)** |
 | `delete_node` (severance of the link ids in `removed_links`) | none | no — monotonic, ungated (A7) |
@@ -897,6 +898,7 @@ and first-class definitions (§5.1) only shrink these):
 | `connect` (concrete) | 4–5.2 / 7 | yes — bounded by the displaced link's source degree |
 | `connect` (autogrow) | ~4 → **+2 under A7** | yes — `grow_id` identity keeps replays non-clobbering; A7 adds the `("grow", …)` stamp and the `("grow_request", …)` row, plus renames bounded by the family's concurrent-grow count |
 | `delete_node` | 4.7–5 / 6 → **+1 under A7** | yes — writes bounded by the node's degree, plus the `("node", id)` stamp; the dangling-reference *scan* is O(nodes) read cost, accepted |
+| `set_node_field` (package-local, A21) | 2 — one node/nested-flag write + one field stamp | yes |
 | `clear` | O(doc), **+1 stamp per `removed_nodes` entry under A7** | **no — inherent.** Rare; standalone-only at the *authoring* surface (vocabulary §1.5: `apply_specs` rejects a spec batch containing it, code `workflow_clear_not_batchable`) — the *replay* surface (`apply_op` / `applyOps`, §4 abort-remainder) accepts it in any position and must, per `docs/portability.md`. SHOULD be host-mediated and never merged casually |
 
 ---
@@ -2157,3 +2159,30 @@ The wire-layout vector now names eight roots and schema v4. Semantic-op golden
 vectors remain unchanged: the op stamp and target namespaces did not change.
 Schema v4 requires coordinated reader adoption and FE sign-off before rollout;
 this implementation does not claim that sign-off or publish/deploy a package.
+
+## Amendment A21 — 2026-09-21 — field-addressed node metadata writes
+
+`set_node_field` adds post-creation writes for the four durable scalar fields
+that need independent multiplayer synchronization: `title`, `mode`,
+`flags.collapsed`, and `flags.pinned`. The field list is closed. Identity,
+wiring, widgets, and whole objects remain owned by their existing operations.
+
+The payload is `{node_id, field, value}` plus the ordinary envelope and optional
+`node_incarnation`. `title` accepts a string, `mode` a non-negative integer,
+and either flag a boolean; `null` deletes any of the four fields. Invalid
+field/value pairs are `malformed_op` before mutation. A stale incarnation and
+a missing node are delete-wins no-ops.
+
+Each field owns the LWW register
+`("node_field", String(node_id), node_incarnation, field)`. Thus a title write,
+a flag write, and a widget write can land independently on the same node. A
+whole-node `add_node` upsert is not an equivalent substitute: it rewrites the
+node payload and clears widget stamps, which can clobber concurrent work.
+
+This operation is package-local and provisional. comfy-cli's pinned
+`op-vocabulary-v1.md` does not yet define it, so ADR-032 and the FC-10 row in
+`docs/decisions/EXCEPTIONS.md` require reconciliation when upstream adopts a
+field-write operation. A language-neutral hand-authored session in
+`fixtures/session-node-fields.session.jsonl` covers all four fields in the
+shared conformance manifest meanwhile. No root or per-node reserved key is
+added, so `SCHEMA_VERSION` remains 4.

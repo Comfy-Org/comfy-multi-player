@@ -1,13 +1,14 @@
 /**
  * Types and constants for @comfyorg/comfy-multi-player.
  *
- * The op vocabulary is frozen at eight kinds; the normative contract is
- * comfy-cli's `docs/op-vocabulary-v1.md` and the stamp shapes minted by
- * `comfy_cli/workflow_ops.py` (`_new_op`), pinned by SHA at comfy-cli
- * `7e732242d971daf0d2d30f22f997abfacd78986e` (FC-10: never by branch — the
- * branch this file used to cite has since been deleted upstream). Every `§`
- * below is a section of that revision; see docs/upstream-pins.json for the pin
- * registry and the amendments upstream has added since.
+ * The op vocabulary mirrors comfy-cli's `docs/op-vocabulary-v1.md` and the
+ * stamp shapes minted by `comfy_cli/workflow_ops.py` (`_new_op`), pinned by
+ * SHA at comfy-cli `7e732242d971daf0d2d30f22f997abfacd78986e` (FC-10: never by
+ * branch — the branch this file used to cite has since been deleted upstream).
+ * `set_node_field` is the one package-local, provisional addition; ADR-032
+ * records its closed field set and the upstream reconciliation requirement.
+ * Every `§` below is a section of that revision; see docs/upstream-pins.json
+ * for the pin registry and the amendments upstream has added since.
  * The doc layout + op semantics reference is docs/multiplayer-schema.md.
  */
 
@@ -478,18 +479,21 @@ export type WritableNodeField = (typeof WRITABLE_NODE_FIELDS)[number];
  * `(node, field)` instead, so two collaborators editing two fields of one
  * node — or a field and a widget — never contend.
  */
-export interface SetNodeFieldOp extends OpBase {
+interface SetNodeFieldOpBase extends OpBase {
   op: "set_node_field";
   node_id: NodeId;
-  /** One of {@link WRITABLE_NODE_FIELDS}; anything else is `malformed_op`. */
-  field: WritableNodeField;
-  /**
-   * The new value. `null` DELETES the field, which is how a flag returns to
-   * absent — the frontend's `pinned` is `undefined` when unpinned, and an
-   * absent key is what workflow JSON round-trips.
-   */
-  value: unknown;
+  /** Creator-carried lifetime of the addressed node; absent means legacy life 0. */
+  node_incarnation?: string;
 }
+
+/**
+ * A field-addressed write whose value type is coupled to its field. `null`
+ * deletes the field, returning a title/mode/flag to its absent/default state.
+ */
+export type SetNodeFieldOp =
+  | (SetNodeFieldOpBase & { field: "title"; value: string | null })
+  | (SetNodeFieldOpBase & { field: "mode"; value: number | null })
+  | (SetNodeFieldOpBase & { field: "flags.collapsed" | "flags.pinned"; value: boolean | null });
 
 export interface ClearOp extends OpBase {
   op: "clear";

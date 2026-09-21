@@ -2844,21 +2844,43 @@ function applySetNodeField(doc: Y.Doc, op: SetNodeFieldOp): SuccessfulOutcome {
       `set_node_field: '${String(op.field)}' is not a writable field; expected one of ${WRITABLE_NODE_FIELDS.join(", ")}`,
     );
   }
-  const refusal = op.value === null ? null : mapValueRefusal(op.value);
-  if (refusal !== null) {
-    throw new OpRejectedError("malformed_op", `set_node_field: value: ${refusal}`);
+  if (op.node_incarnation !== undefined && (typeof op.node_incarnation !== "string" || op.node_incarnation.length === 0)) {
+    throw new OpRejectedError("malformed_op", "set_node_field: node_incarnation must be a non-empty string");
   }
-
-  const node = nodesMap(doc).get(String(op.node_id));
-  // Delete-wins: the target is gone, so the write is a silent no-op that
-  // still consumes its op_id.
-  if (!(node instanceof Y.Map)) return "no-op";
+  if (op.value !== null) {
+    switch (op.field) {
+      case "title":
+        if (typeof op.value !== "string") {
+          throw new OpRejectedError("malformed_op", "set_node_field: title must be a string or null");
+        }
+        break;
+      case "mode":
+        if (!Number.isInteger(op.value) || op.value < 0) {
+          throw new OpRejectedError("malformed_op", "set_node_field: mode must be a non-negative integer or null");
+        }
+        break;
+      case "flags.collapsed":
+      case "flags.pinned":
+        if (typeof op.value !== "boolean") {
+          throw new OpRejectedError("malformed_op", `set_node_field: ${op.field} must be a boolean or null`);
+        }
+        break;
+      default:
+        assertNever(op.field, "applier.applySetNodeField");
+    }
+  }
 
   const stamps = stampsMap(doc);
   const targetKey = stampTargetKey(op);
   const prior = stamps.get(targetKey) as StampKey | undefined;
   const stamp = stampKey(op);
   if (prior != null && compareStampKeys(stamp, prior) <= 0) return "lww-dropped";
+
+  const node = nodesMap(doc).get(String(op.node_id));
+  // Delete-wins: the target is gone, so the write is a silent no-op that
+  // still consumes its op_id.
+  if (!(node instanceof Y.Map)) return "no-op";
+  if (nodeIncarnation(node) !== (op.node_incarnation ?? LEGACY_NODE_INCARNATION)) return "no-op";
 
   const [head, leaf] = op.field.split(".");
   if (leaf === undefined) {

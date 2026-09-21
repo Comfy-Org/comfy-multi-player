@@ -31,6 +31,7 @@ import type {
   Op,
   OpKind,
   ResetDocOp,
+  SetNodeFieldOp,
   SetWidgetOp,
   TopLevelSetWidgetOp,
   WireOp,
@@ -219,6 +220,17 @@ const okDeferredKind: OpKind = "reset_doc";
 const unknownKind: OpKind = "unknown_op";
 
 // ---------------------------------------------------------------------------
+// set_node_field couples each closed field name to its wire value type
+// ---------------------------------------------------------------------------
+
+// @ts-expect-error node-field contract: titles are strings or null.
+const titleWithNumber: SetNodeFieldOp = { op: "set_node_field", ...env, node_id: 1, field: "title", value: 1 };
+// @ts-expect-error node-field contract: modes are numbers or null.
+const modeWithString: SetNodeFieldOp = { op: "set_node_field", ...env, node_id: 1, field: "mode", value: "4" };
+// @ts-expect-error node-field contract: flags are booleans or null.
+const collapsedWithNumber: SetNodeFieldOp = { op: "set_node_field", ...env, node_id: 1, field: "flags.collapsed", value: 1 };
+
+// ---------------------------------------------------------------------------
 // Positive controls — these MUST compile, or the gate above is vacuous
 // ---------------------------------------------------------------------------
 
@@ -310,6 +322,11 @@ const okInteriorSetWidget: Op = {
   inner_widget: "text",
 };
 
+const okSetTitle: SetNodeFieldOp = { op: "set_node_field", ...env, node_id: 1, field: "title", value: "Renamed" };
+const okSetMode: SetNodeFieldOp = { op: "set_node_field", ...env, node_id: 1, field: "mode", value: 4 };
+const okSetCollapsed: SetNodeFieldOp = { op: "set_node_field", ...env, node_id: 1, field: "flags.collapsed", value: true };
+const okClearPinned: SetNodeFieldOp = { op: "set_node_field", ...env, node_id: 1, field: "flags.pinned", value: null };
+
 const okDeleteNode: Op = { op: "delete_node", ...env, node_id: 1, removed_links: [4, 5] };
 const okClear: Op = { op: "clear", ...env, removed_nodes: [1, 2] };
 
@@ -330,6 +347,9 @@ export const checked = [
   topLevelWithPath,
   unprovenInteriorPath,
   resetAsOp,
+  titleWithNumber,
+  modeWithString,
+  collapsedWithNumber,
   okAddNode,
   okConcreteConnect,
   okGrowConnectExplicitNull,
@@ -338,6 +358,10 @@ export const checked = [
   okTopLevelSetWidget,
   okTopLevelSetWidgetExplicitNulls,
   okInteriorSetWidget,
+  okSetTitle,
+  okSetMode,
+  okSetCollapsed,
+  okClearPinned,
   okDeleteNode,
   okClear,
   okResetAsWireOp,
