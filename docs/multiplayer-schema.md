@@ -2183,6 +2183,6 @@ This operation is package-local and provisional. comfy-cli's pinned
 `op-vocabulary-v1.md` does not yet define it, so ADR-032 and the FC-10 row in
 `docs/decisions/EXCEPTIONS.md` require reconciliation when upstream adopts a
 field-write operation. A language-neutral hand-authored session in
-`fixtures/session-node-fields.session.jsonl` covers all four fields in the
+`fixtures/golden-vectors/session-node-fields.session.jsonl` covers all four fields in the
 shared conformance manifest meanwhile. No root or per-node reserved key is
 added, so `SCHEMA_VERSION` remains 4.
