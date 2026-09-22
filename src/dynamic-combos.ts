@@ -7,15 +7,17 @@
  * actually has depends on its current selection, exactly as the frontend
  * builds it (`src/core/graph/widgets/dynamicWidgets.ts`): the selected
  * option's widget slots sit right after their selector, a nested selector's
- * after it, and a selection change replaces the old option's slots with the
- * new option's, seeded from the spec defaults.
+ * after it, and a selection change seeds the new option's empty slots from
+ * the spec defaults. Which names a write may target does NOT depend on the
+ * selection (every option's slots are accepted), so an op's outcome never
+ * depends on the order it arrives in relative to a selector write.
  *
  * An entry WITHOUT `dynamic_combos` is returned unchanged everywhere here, so
  * the value-blind behaviour (BE-9176 `_extra_N` placeholders) is untouched.
  */
 import * as Y from "yjs";
 
-import { mdel, mset } from "./doc.js";
+import { mset } from "./doc.js";
 import type { DynamicComboEntry, WidgetCatalogEntry } from "./types.js";
 
 type Combos = Record<string, DynamicComboEntry>;
@@ -92,9 +94,16 @@ export function widgetOrderForWidgets(
 }
 
 /**
- * After `widget` was written: when it is a selector, drop the slots of every
- * option it no longer selects and seed the selected option's missing slots
- * with their defaults, recursing into nested selectors.
+ * After `widget` was written: when it is a selector, seed the selected
+ * option's slots that hold NO value yet with their catalog defaults,
+ * recursing into nested selectors.
+ *
+ * Order-independent by construction (KA-2/KA-4): it never deletes and never
+ * overwrites, and a seeded default carries no stamp, so any real stamped write
+ * to the same slot wins whichever arrives first. An option the node moves
+ * away from keeps its values — projection skips them — exactly as the
+ * frontend keeps them to restore when that option is selected again
+ * (`dynamicWidgets.ts` `restoreRemovedValues`).
  */
 export function reconcileDynamicCombo(
   entry: WidgetCatalogEntry | undefined,
@@ -103,27 +112,15 @@ export function reconcileDynamicCombo(
 ): void {
   const combos = combosOf(entry);
   if (!combos || !Object.hasOwn(combos, widget)) return;
-  const reconcile = (selector: string, depth: number): void => {
-    const combo = combos[selector]!;
-    const selected = selectedOption(combo, widgets.get(selector));
-    const keep = new Set(selected?.widgets ?? []);
-    const drop = (names: readonly string[], d: number): void => {
-      for (const name of names) {
-        if (keep.has(name)) continue;
-        if (widgets.has(name)) mdel(widgets, name);
-        if (d <= 32 && Object.hasOwn(combos, name)) {
-          for (const option of Object.values(combos[name]!.options)) drop(option.widgets, d + 1);
-        }
-      }
-    };
-    for (const option of Object.values(combo.options)) if (option !== selected) drop(option.widgets, depth);
+  const seed = (selector: string, depth: number): void => {
+    const selected = selectedOption(combos[selector]!, widgets.get(selector));
     if (!selected) return;
     for (const name of selected.widgets) {
       if (!widgets.has(name) && Object.hasOwn(selected.defaults, name)) {
         mset(widgets, name, structuredClone(selected.defaults[name]));
       }
-      if (depth <= 32 && Object.hasOwn(combos, name)) reconcile(name, depth + 1);
+      if (depth <= 32 && Object.hasOwn(combos, name)) seed(name, depth + 1);
     }
   };
-  reconcile(widget, 0);
+  seed(widget, 0);
 }
