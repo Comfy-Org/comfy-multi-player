@@ -65,7 +65,9 @@ function churned(opCount: number): { doc: Y.Doc; last: number } {
 
 function steps(doc: Y.Doc, nodeId: number): unknown {
   const node = project(doc, catalog).nodes.find((n) => n.id === nodeId)!;
-  return node.widgets_values![2];
+  const values = node.widgets_values;
+  if (!Array.isArray(values)) throw new TypeError(`node ${nodeId} has non-positional widget values`);
+  return values[2];
 }
 
 function encodedBytes(doc: Y.Doc): number {
@@ -136,6 +138,31 @@ describe("compact: carries LWW state so replays converge the same way", () => {
     // A newer counter wins, proving the gate is the stamp and not a frozen doc.
     applyOps(compacted, [setSteps(500, 1, 1234)], catalog);
     expect(steps(compacted, 1)).toBe(1234);
+  });
+
+  it("converges in both arrival orders and stays idempotent after compaction", () => {
+    const { doc, last } = churned(5);
+    const a = compact(doc, catalog);
+    const b = compact(doc, catalog);
+    // Competing writes to one live target: counters 100 (actor-a) and 100
+    // (actor-b) tie on counter and fall through to the actor tiebreak.
+    const fromA = { ...setSteps(100, 1, 111), op_id: opId(8001) } as Op;
+    const fromB = { ...setSteps(100, 1, 222), ...envelope(100, "actor-b"), op_id: opId(8002) } as Op;
+    applyOps(a, [fromA], catalog);
+    applyOps(a, [fromB], catalog);
+    applyOps(b, [fromB], catalog);
+    applyOps(b, [fromA], catalog);
+    expect(canonicalize(project(a, catalog))).toEqual(canonicalize(project(b, catalog)));
+    expect(steps(a, 1)).not.toBe(last);
+    expect(readStamps(a)).toEqual(readStamps(b));
+
+    // Double delivery of one op on the compacted lineage: the second copy is
+    // deduped by the fresh ledger and changes nothing.
+    const before = Y.encodeStateAsUpdate(a).byteLength;
+    const twice = applyOps(a, [fromA], catalog);
+    expect(twice.outcomes[0]!.outcome).toBe("no-op");
+    expect(canonicalize(project(a, catalog))).toEqual(canonicalize(project(b, catalog)));
+    expect(Y.encodeStateAsUpdate(a).byteLength).toBe(before);
   });
 
   it("drops widget stamps of a deleted node but keeps its node stamp (FC-8)", () => {
