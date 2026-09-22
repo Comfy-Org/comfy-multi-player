@@ -11,10 +11,12 @@
  *
  *   npm run build && npm run bench
  *
- * WHAT IS TIMED. Only the call under measurement. Every document, catalog and
- * op batch is built in `setup()` outside the timed region, because building a
- * 200-node workflow costs more than projecting one and would otherwise
- * dominate the sample.
+ * WHAT IS TIMED. Only the call under measurement. Every document is built in
+ * `beforeEach()` outside the timed region, because building a 200-node
+ * workflow costs more than projecting one and would otherwise dominate the
+ * sample. `beforeEach()` is deliberately per invocation, unlike Tinybench's
+ * task-level `setup()`: the latter would let the untimed async-detection call
+ * consume the op ids before every measured `applyOps` sample.
  *
  * DETERMINISM, AND ITS LIMIT. The INPUTS are fixed: both workflows and both op
  * batches come from one seed (`SEED`) through a small LCG, so the same
@@ -50,7 +52,15 @@
 import { cpus, loadavg } from "node:os";
 import { bench, describe } from "vitest";
 
-import { applyOps, mint, project, type Op, type WidgetCatalog, type WorkflowJSON } from "../src/index.js";
+import {
+  applyOps,
+  mint,
+  project,
+  type ApplyResult,
+  type Op,
+  type WidgetCatalog,
+  type WorkflowJSON,
+} from "../src/index.js";
 
 /** One 60 Hz frame, in milliseconds. Printed against, never asserted on. */
 const FRAME_MS = 16.6;
@@ -147,6 +157,42 @@ function seededOps(wf: WorkflowJSON, count: number): Op[] {
   return ops;
 }
 
+/** Fail loudly if a sample stopped measuring successful writes. Runs outside the timed region. */
+function assertAppliedSample(doc: ReturnType<typeof mint>, ops: Op[], result: ApplyResult, label: string): void {
+  if (result.outcomes.length !== ops.length || result.outcomes.some(({ outcome }) => outcome !== "applied")) {
+    throw new Error(`${label}: expected ${ops.length} applied outcomes, got ${JSON.stringify(result.outcomes)}`);
+  }
+
+  const expectedSteps = new Map<string, unknown>();
+  for (const op of ops) {
+    if (op.op !== "set_widget" || op.widget !== "steps") {
+      throw new Error(`${label}: benchmark fixture contains a non-steps op`);
+    }
+    expectedSteps.set(String(op.node_id), op.value);
+  }
+
+  const nodes = project(doc, catalog).nodes;
+  for (const [nodeId, expected] of expectedSteps) {
+    const node = nodes.find(({ id }) => String(id) === nodeId);
+    if (!node || node.widgets_values?.[1] !== expected) {
+      throw new Error(`${label}: node ${nodeId} has steps=${String(node?.widgets_values?.[1])}, expected ${String(expected)}`);
+    }
+  }
+}
+
+/**
+ * Negative control for the exact benchmark hazard: applying the fixed op ids
+ * twice to one document changes the second invocation into duplicate no-ops.
+ */
+function assertReusedDocumentIsInvalid(workflow: WorkflowJSON, ops: Op[], label: string): void {
+  const doc = mint(workflow, catalog);
+  assertAppliedSample(doc, ops, applyOps(doc, ops, catalog), `${label} fresh-document control`);
+  const replay = applyOps(doc, ops, catalog);
+  if (replay.outcomes.length !== ops.length || replay.outcomes.some(({ outcome }) => outcome !== "no-op")) {
+    throw new Error(`${label}: reused-document control did not produce only duplicate no-ops`);
+  }
+}
+
 /**
  * Printed once per run. Without it a number in a PR body cannot be compared to
  * a number from another machine, and a reader cannot tell a real regression
@@ -184,23 +230,32 @@ for (const size of SIZES) {
     // document instead of being a fixed 10 ops that get cheaper per node as
     // the graph grows.
     const opCount = Math.max(1, Math.round(size / 4));
+    const ops = seededOps(workflow, opCount);
+
+    assertReusedDocumentIsInvalid(workflow, ops, `${size}-node applyOps`);
+
+    let applyResult: ApplyResult | undefined;
 
     bench(`applyOps — ${opCount} valid set_widget ops`, () => {
-      applyOps(applyDoc, ops, catalog);
+      applyResult = applyOps(applyDoc, ops, catalog);
     }, {
-      setup: () => {
-        // Fresh document per iteration set: `op_id`s are idempotency keys, so
-        // replaying the same batch into the same doc after the first pass
-        // would measure the duplicate-op_id fast path, not an apply.
+      beforeEach: () => {
+        // Tinybench calls beforeEach for its untimed async-detection invocation
+        // as well as every warmup and measured sample. Every invocation must
+        // get a fresh document because op_ids are idempotency keys.
         applyDoc = mint(workflow, catalog);
-        ops = seededOps(workflow, opCount);
+        applyResult = undefined;
+      },
+      afterEach: () => {
+        if (!applyResult) throw new Error("applyOps benchmark invocation did not produce a result");
+        assertAppliedSample(applyDoc, ops, applyResult, `${size}-node applyOps sample`);
       },
     });
 
     bench("project — full document to WorkflowJSON", () => {
       project(projectDoc, catalog);
     }, {
-      setup: () => {
+      beforeEach: () => {
         projectDoc = mint(workflow, catalog);
       },
     });
@@ -208,8 +263,7 @@ for (const size of SIZES) {
   });
 }
 
-// Hoisted so `setup` can rebuild them without the timed closure capturing a
-// stale binding.
+// Hoisted so `beforeEach` can rebuild them without the timed closure capturing
+// a stale binding.
 let applyDoc: ReturnType<typeof mint>;
 let projectDoc: ReturnType<typeof mint>;
-let ops: Op[];
