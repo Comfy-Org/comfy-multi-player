@@ -7,17 +7,21 @@
  * actually has depends on its current selection, exactly as the frontend
  * builds it (`src/core/graph/widgets/dynamicWidgets.ts`): the selected
  * option's widget slots sit right after their selector, a nested selector's
- * after it, and a selection change seeds the new option's empty slots from
- * the spec defaults. Which names a write may target does NOT depend on the
- * selection (every option's slots are accepted), so an op's outcome never
- * depends on the order it arrives in relative to a selector write.
+ * after it. Nothing is written when the selection changes: a selected
+ * option's slot that no op ever wrote shows that option's DEFAULT, applied at
+ * read time (`widgetLayoutForWidgets`). Any receiver-side write at selection
+ * time is arrival-dependent — with two options sharing a child name, the
+ * first seed to land would win (review on #240) — so the document holds only
+ * values ops wrote and the projection is a pure function of it. A child name
+ * several options share is therefore ONE slot. Which names a write may target
+ * does not depend on the selection either (every option's slots are
+ * accepted), so no op's outcome depends on its arrival order.
  *
  * An entry WITHOUT `dynamic_combos` is returned unchanged everywhere here, so
  * the value-blind behaviour (BE-9176 `_extra_N` placeholders) is untouched.
  */
 import * as Y from "yjs";
 
-import { mset } from "./doc.js";
 import type { DynamicComboEntry, WidgetCatalogEntry } from "./types.js";
 
 type Combos = Record<string, DynamicComboEntry>;
@@ -46,28 +50,40 @@ function selectedOption(combo: DynamicComboEntry, value: unknown): DynamicComboE
   return key !== null && Object.hasOwn(combo.options, key) ? combo.options[key] : undefined;
 }
 
+/** A node's selection-aware order plus the read-time defaults of its selected options' slots. */
+export interface WidgetLayout {
+  order: string[];
+  /** Selected-option slot → the default shown while no op has written it. */
+  defaults: Map<string, unknown>;
+}
+
 /**
  * Expand `entry` for one selection. `valueAt(name, index)` returns the
- * selector's current value, given its name and its positional index in the
- * order built so far.
+ * selector's stored value (`undefined` when none), given its name and its
+ * positional index in the order built so far; an unstored nested selector
+ * falls back to its parent option's default for it, then to its own default.
  */
 function expand(
   entry: WidgetCatalogEntry,
   combos: Combos,
   valueAt: (name: string, index: number) => unknown,
-): string[] {
+): WidgetLayout {
   const owned = optionOwnedWidgets(entry);
-  const out: string[] = [];
+  const order: string[] = [];
+  const defaults = new Map<string, unknown>();
   const walk = (names: readonly string[], depth: number): void => {
     for (const name of names) {
-      out.push(name);
+      order.push(name);
       if (depth > 32 || !Object.hasOwn(combos, name)) continue;
-      const option = selectedOption(combos[name]!, valueAt(name, out.length - 1));
-      if (option) walk(option.widgets, depth + 1);
+      const stored = valueAt(name, order.length - 1);
+      const option = selectedOption(combos[name]!, stored === undefined ? defaults.get(name) : stored);
+      if (!option) continue;
+      for (const [child, value] of Object.entries(option.defaults)) defaults.set(child, value);
+      walk(option.widgets, depth + 1);
     }
   };
   walk(entry.widget_order.filter((name) => !owned.has(name)), 0);
-  return out;
+  return { order, defaults };
 }
 
 /** The order for a workflow node's own `widgets_values` (positional array or name-keyed object). */
@@ -75,12 +91,19 @@ export function widgetOrderForValues(entry: WidgetCatalogEntry | undefined, wv: 
   if (!entry) return undefined;
   const combos = combosOf(entry);
   if (!combos) return entry.widget_order;
-  if (Array.isArray(wv)) return expand(entry, combos, (_name, index) => wv[index]);
+  if (Array.isArray(wv)) return expand(entry, combos, (_name, index) => wv[index]).order;
   if (typeof wv === "object" && wv !== null) {
     const named = wv as Record<string, unknown>;
-    return expand(entry, combos, (name) => (Object.hasOwn(named, name) ? named[name] : undefined));
+    return expand(entry, combos, (name) => (Object.hasOwn(named, name) ? named[name] : undefined)).order;
   }
-  return expand(entry, combos, () => undefined);
+  return expand(entry, combos, () => undefined).order;
+}
+
+/** The layout for a document node's name-keyed widgets map: order plus read-time defaults. */
+export function widgetLayoutForWidgets(entry: WidgetCatalogEntry, widgets: Y.Map<unknown> | undefined): WidgetLayout {
+  const combos = combosOf(entry);
+  if (!combos) return { order: entry.widget_order, defaults: new Map() };
+  return expand(entry, combos, (name) => widgets?.get(name));
 }
 
 /** The order for a document node's name-keyed widgets map. */
@@ -88,39 +111,17 @@ export function widgetOrderForWidgets(
   entry: WidgetCatalogEntry,
   widgets: Y.Map<unknown> | undefined,
 ): readonly string[] {
-  const combos = combosOf(entry);
-  if (!combos) return entry.widget_order;
-  return expand(entry, combos, (name) => widgets?.get(name));
+  return widgetLayoutForWidgets(entry, widgets).order;
 }
 
 /**
- * After `widget` was written: when it is a selector, seed the selected
- * option's slots that hold NO value yet with their catalog defaults,
- * recursing into nested selectors.
- *
- * Order-independent by construction (KA-2/KA-4): it never deletes and never
- * overwrites, and a seeded default carries no stamp, so any real stamped write
- * to the same slot wins whichever arrives first. An option the node moves
- * away from keeps its values — projection skips them — exactly as the
- * frontend keeps them to restore when that option is selected again
- * (`dynamicWidgets.ts` `restoreRemovedValues`).
+ * The node's projected `widgets_values` length: one past the highest slot
+ * that holds a stored value OR shows a read-time default.
  */
-export function reconcileDynamicCombo(
-  entry: WidgetCatalogEntry | undefined,
-  widgets: Y.Map<unknown>,
-  widget: string,
-): void {
-  const combos = combosOf(entry);
-  if (!combos || !Object.hasOwn(combos, widget)) return;
-  const seed = (selector: string, depth: number): void => {
-    const selected = selectedOption(combos[selector]!, widgets.get(selector));
-    if (!selected) return;
-    for (const name of selected.widgets) {
-      if (!widgets.has(name) && Object.hasOwn(selected.defaults, name)) {
-        mset(widgets, name, structuredClone(selected.defaults[name]));
-      }
-      if (depth <= 32 && Object.hasOwn(combos, name)) seed(name, depth + 1);
-    }
-  };
-  seed(widget, 0);
+export function projectedLength(layout: WidgetLayout, widgets: Y.Map<unknown> | undefined): number {
+  let max = -1;
+  layout.order.forEach((name, index) => {
+    if (widgets?.has(name) || layout.defaults.has(name)) max = Math.max(max, index);
+  });
+  return max + 1;
 }

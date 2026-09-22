@@ -145,7 +145,7 @@ import {
   type WireOp,
 } from "./types.js";
 import { addInteriorLinkOrder, removeInteriorLinkOrder } from "./interior-link-order.js";
-import { optionOwnedWidgets, reconcileDynamicCombo, widgetOrderForValues, widgetOrderForWidgets } from "./dynamic-combos.js";
+import { optionOwnedWidgets, projectedLength, widgetLayoutForWidgets, widgetOrderForValues, widgetOrderForWidgets } from "./dynamic-combos.js";
 import { NODE_INCARNATION_KEY, WRITABLE_NODE_FIELDS } from "./types.js";
 
 /**
@@ -1684,7 +1684,6 @@ function applyPromotedHostWrite(
     case "named":
       validateWidgetName(catalog, String(target.get("type") ?? ""), op.widget, target);
       mset(widgetsOf(target), op.widget, structuredClone(op.value));
-      reconcileDynamicCombo(catalogEntry(catalog, target.get("type")), widgetsOf(target), op.widget);
       mset(stamps, targetKey, key);
       return "applied";
     case "positional": {
@@ -1781,12 +1780,14 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
     const entry = catalogEntry(catalog, nodeType);
     if (entry) {
       const current = target.get("widgets");
-      const order = widgetOrderForWidgets(entry, current instanceof Y.Map ? current : undefined);
-      const idx = order.indexOf(widget);
+      const stored = current instanceof Y.Map ? current : undefined;
+      const layout = widgetLayoutForWidgets(entry, stored);
+      const idx = layout.order.indexOf(widget);
       // Interior writes never pad (comfy-cli `_write_widget` extend=False):
       // the projected positional index must already be inside the node's
-      // current widgets_values length.
-      const len = projectedWidgetsLength(target, order);
+      // current widgets_values length — which counts a selected option's
+      // read-time defaults, since the projection shows them.
+      const len = Math.max(projectedWidgetsLength(target, layout.order), projectedLength(layout, stored));
       if (idx >= len) {
         throw new OpRejectedError(
           "widget_out_of_range",
@@ -1795,7 +1796,6 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
       }
     }
     mset(widgetsOf(target), widget, structuredClone(op.value));
-    reconcileDynamicCombo(entry, widgetsOf(target), widget);
     mset(stamps, targetKey, key);
     return "applied";
   }
@@ -1809,7 +1809,6 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
   // Top-level writes may extend past the current positional length — comfy-cli
   // pads with None; here the name-keyed map makes padding a projection concern.
   mset(widgetsOf(node), op.widget, structuredClone(op.value));
-  reconcileDynamicCombo(catalogEntry(catalog, node.get("type")), widgetsOf(node), op.widget);
   mset(stamps, targetKey, key);
   return "applied";
 }

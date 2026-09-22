@@ -641,7 +641,7 @@ export interface WidgetCatalogEntry {
    * Every option of every dynamic-combo selector, keyed by the selector's full
    * dotted name (comfy-cli `Graph.dynamic_combo_options`). `widget_order`
    * expands each selector at its `default` key only; this is what lets the
-   * applier name, validate, position and seed any other selection
+   * applier name, validate, position and show read-time defaults for any other selection
    * (see `dynamic-combos.ts`).
    */
   dynamic_combos?: Record<string, DynamicComboEntry>;

@@ -43,7 +43,7 @@ import { assertNever } from "./exhaustive.js";
 import { projectInteriorLinkOrder } from "./interior-link-order.js";
 import { assertReadableSchema } from "./schema-version.js";
 import { NODE_INCARNATION_KEY, type WidgetCatalog, type WorkflowJSON, type WorkflowNode } from "./types.js";
-import { optionOwnedWidgets, widgetOrderForWidgets } from "./dynamic-combos.js";
+import { optionOwnedWidgets, projectedLength, widgetLayoutForWidgets } from "./dynamic-combos.js";
 
 /** Sorted-by-id comparator: numeric when both ids are numbers, else string order. */
 function idCompare(a: unknown, b: unknown): number {
@@ -118,24 +118,29 @@ function widgetsToPositional(
       `project: type '${nodeType}' has widget values but is not in the pinned catalog (schema §1.2 — projection is catalog-dependent by design)`,
     );
   }
-  // The order for this node's current selection (dynamic-combo options).
-  const order = widgetOrderForWidgets(entry, widgets);
+  // The order for this node's current selection (dynamic-combo options),
+  // plus the defaults its selected options show for slots nothing wrote.
+  const layout = widgetLayoutForWidgets(entry, widgets);
+  const order = layout.order;
   const inactive = optionOwnedWidgets(entry);
   let max = -1;
   widgets.forEach((_v, name) => {
     const i = positionalIndexOf(order, name);
-    // A sub-widget of an option the node no longer selects (left by a
-    // concurrent write) owns no slot — the frontend removes it too.
+    // A sub-widget of an option the node does not select owns no slot; its
+    // value is kept for when that option is selected again.
     if (i < 0 && inactive.has(name)) return;
     if (i < 0) {
       throw new TypeError(`project: widget '${name}' is not in widget_order for ${nodeType}`);
     }
     if (i > max) max = i;
   });
+  max = Math.max(max, projectedLength(layout, widgets) - 1);
   const out: unknown[] = [];
   for (let i = 0; i <= max; i++) {
     const name = order[i] ?? overflowWidgetName(i);
-    out.push(widgets.has(name) ? structuredClone(widgets.get(name)) : null);
+    if (widgets.has(name)) out.push(structuredClone(widgets.get(name)));
+    else if (layout.defaults.has(name)) out.push(structuredClone(layout.defaults.get(name)));
+    else out.push(null);
   }
   return out;
 }
