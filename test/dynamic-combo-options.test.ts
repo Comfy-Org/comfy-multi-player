@@ -85,11 +85,39 @@ describe("dynamic combos: every option is addressable", () => {
     expect(values(doc)).toEqual([0, 2, "flexible", "enhance_skin"]);
   });
 
-  it("still refuses a sub-widget of an option that is not selected", () => {
+  // Validation must not depend on the current selection: a child write that
+  // arrives before the selector write it follows would otherwise be refused on
+  // one replica and applied on another. An unselected option's value is stored
+  // and simply not projected — the frontend likewise keeps it for when that
+  // option is selected again (dynamicWidgets.ts `restoreRemovedValues`).
+  it("stores a sub-widget of an unselected option without projecting it", () => {
     const doc = mint(canvas([0, 2, "faithful", 55]), catalog);
-    expect(applyOps(doc, [setWidget("mode.optimized_for", "enhance_skin")], catalog).outcomes[0]).toMatchObject({
+    expect(applyOps(doc, [setWidget("mode.optimized_for", "improve_lighting")], catalog).outcomes[0]).toMatchObject({
+      outcome: "applied",
+    });
+    expect(values(doc)).toEqual([0, 2, "faithful", 55]);
+    applyOps(doc, [setWidget("mode", "flexible")], catalog);
+    expect(values(doc)).toEqual([0, 2, "flexible", "improve_lighting"]);
+  });
+
+  it("still refuses a name no option of the class has", () => {
+    const doc = mint(canvas([0, 2, "faithful", 55]), catalog);
+    expect(applyOps(doc, [setWidget("mode.no_such_widget", 1)], catalog).outcomes[0]).toMatchObject({
       outcome: "rejected",
       reason: { code: "unknown_widget" },
     });
   });
+
+  it.each(["child-first", "child-last"] as const)(
+    "converges when a new option's child write races the selector write (%s)",
+    (arrival) => {
+      const doc = mint(canvas([0, 2, "creative"]), catalog);
+      const selector = setWidget("mode", "faithful"); // lower stamp
+      const child = setWidget("mode.skin_detail", 63); // higher stamp
+      const ops = arrival === "child-first" ? [child, selector] : [selector, child];
+      const outcomes = ops.map((op) => applyOps(doc, [op], catalog).outcomes[0]!.outcome);
+      expect(outcomes).toEqual(["applied", "applied"]);
+      expect(values(doc)).toEqual([0, 2, "faithful", 63]);
+    },
+  );
 });
