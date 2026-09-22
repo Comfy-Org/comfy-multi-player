@@ -145,6 +145,7 @@ import {
   type WireOp,
 } from "./types.js";
 import { addInteriorLinkOrder, removeInteriorLinkOrder } from "./interior-link-order.js";
+import { reconcileDynamicCombo, widgetOrderForValues, widgetOrderForWidgets } from "./dynamic-combos.js";
 import { NODE_INCARNATION_KEY, WRITABLE_NODE_FIELDS } from "./types.js";
 
 /**
@@ -1118,7 +1119,7 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
     }
     rejectUnprojectableWidgets(node.type, wv, entry);
     try {
-      nodeWrites.push([String(node.id), node.id, createNodeMap(node, entry?.widget_order)]);
+      nodeWrites.push([String(node.id), node.id, createNodeMap(node, widgetOrderForValues(entry, node.widgets_values))]);
     } catch (err) {
       throw new OpRejectedError("invalid_node_payload", `insert_workflow(${node.type}): ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1229,11 +1230,14 @@ function rejectUnprojectableWidgets(
       `add_node(${type}): named widgets_values for a class absent from the pinned catalog cannot be projected (schema §1.2 — projection is catalog-dependent by design)`,
     );
   }
+  // Selection-aware: the payload's own selector values pick each dynamic
+  // combo's option, so a non-default option's sub-widgets are real names.
+  const order = widgetOrderForValues(entry, wv) ?? entry.widget_order;
   for (const name of names) {
-    if (!entry.widget_order.includes(name)) {
+    if (!order.includes(name)) {
       throw new OpRejectedError(
         "unknown_widget",
-        `add_node(${type}): widget '${name}' is not in widget_order for ${type}; available: ${entry.widget_order.join(", ") || "(none — all inputs are links)"}`,
+        `add_node(${type}): widget '${name}' is not in widget_order for ${type}; available: ${order.join(", ") || "(none — all inputs are links)"}`,
       );
     }
   }
@@ -1263,7 +1267,7 @@ function requireAddNodeValid(op: AddNodeOp): void {
 function createAddedNode(op: AddNodeOp, catalog?: WidgetCatalog): Y.Map<unknown> {
   const wv = op.node.widgets_values;
   const entry = catalogEntry(catalog, op.node.type);
-  const order = entry?.widget_order;
+  const order = widgetOrderForValues(entry, wv);
   if (!catalog && Array.isArray(wv) && wv.length > 0) {
     throw new OpRejectedError(
       "catalog_required",
@@ -1409,6 +1413,7 @@ function validateWidgetName(
   catalog: WidgetCatalog | undefined,
   nodeType: string,
   widget: string,
+  node?: Y.Map<unknown>,
 ): void {
   if (!catalog) return;
   const entry = catalogEntry(catalog, nodeType);
@@ -1418,10 +1423,14 @@ function validateWidgetName(
       `set_widget(${nodeType}): named widget write to a class absent from the pinned catalog cannot be projected (schema §1.2 — projection is catalog-dependent by design)`,
     );
   }
-  if (!entry.widget_order.includes(widget)) {
+  // The order for the node's CURRENT selection: a dynamic combo's selected
+  // option names its own sub-widgets; an unselected option's are refused.
+  const widgets = node?.get("widgets");
+  const order = widgetOrderForWidgets(entry, widgets instanceof Y.Map ? widgets : undefined);
+  if (!order.includes(widget)) {
     throw new OpRejectedError(
       "unknown_widget",
-      `widget '${widget}' not found on ${nodeType}; available: ${entry.widget_order.join(", ") || "(none — all inputs are links)"}`,
+      `widget '${widget}' not found on ${nodeType}; available: ${order.join(", ") || "(none — all inputs are links)"}`,
     );
   }
 }
@@ -1670,8 +1679,9 @@ function applyPromotedHostWrite(
   const storage = hostWriteStorage(target, catalog);
   switch (storage) {
     case "named":
-      validateWidgetName(catalog, String(target.get("type") ?? ""), op.widget);
+      validateWidgetName(catalog, String(target.get("type") ?? ""), op.widget, target);
       mset(widgetsOf(target), op.widget, structuredClone(op.value));
+      reconcileDynamicCombo(catalogEntry(catalog, target.get("type")), widgetsOf(target), op.widget);
       mset(stamps, targetKey, key);
       return "applied";
     case "positional": {
@@ -1762,16 +1772,18 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
     // makes the WHOLE document unprojectable exactly as it would at top level.
     // Runs BEFORE the range check so an uncatalogued class is refused rather
     // than falling through the `if (entry)` block as an accepted write (#13).
-    validateWidgetName(catalog, nodeType, widget);
+    validateWidgetName(catalog, nodeType, widget, target);
     // OWN-property lookup (#13): an inherited key such as `__proto__` must read
     // as "absent from the catalog", not resolve to a prototype object.
     const entry = catalogEntry(catalog, nodeType);
     if (entry) {
-      const idx = entry.widget_order.indexOf(widget);
+      const current = target.get("widgets");
+      const order = widgetOrderForWidgets(entry, current instanceof Y.Map ? current : undefined);
+      const idx = order.indexOf(widget);
       // Interior writes never pad (comfy-cli `_write_widget` extend=False):
       // the projected positional index must already be inside the node's
       // current widgets_values length.
-      const len = projectedWidgetsLength(target, entry.widget_order);
+      const len = projectedWidgetsLength(target, order);
       if (idx >= len) {
         throw new OpRejectedError(
           "widget_out_of_range",
@@ -1780,6 +1792,7 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
       }
     }
     mset(widgetsOf(target), widget, structuredClone(op.value));
+    reconcileDynamicCombo(entry, widgetsOf(target), widget);
     mset(stamps, targetKey, key);
     return "applied";
   }
@@ -1789,10 +1802,11 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
   if (!node) return "no-op"; // target concurrently deleted → no-op (delete wins)
   if (nodeIncarnation(node) !== (op.node_incarnation ?? LEGACY_NODE_INCARNATION)) return "no-op";
   rejectIfOpaqueWidgets(node, op.widget);
-  validateWidgetName(catalog, String(node.get("type") ?? ""), op.widget);
+  validateWidgetName(catalog, String(node.get("type") ?? ""), op.widget, node);
   // Top-level writes may extend past the current positional length — comfy-cli
   // pads with None; here the name-keyed map makes padding a projection concern.
   mset(widgetsOf(node), op.widget, structuredClone(op.value));
+  reconcileDynamicCombo(catalogEntry(catalog, node.get("type")), widgetsOf(node), op.widget);
   mset(stamps, targetKey, key);
   return "applied";
 }
@@ -2377,6 +2391,7 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
       catalog,
       String(dst.get("type") ?? ""),
       String(op.grow.inputcount.widget),
+      dst,
     );
     assertWritableValue(op.grow.inputcount.value, "connect: grow.inputcount");
   }
@@ -2845,7 +2860,7 @@ function applyInputcountBump(
   const prior = stamps.get(targetKey) as StampKey | undefined;
   const key = stampKey(op);
   if (prior != null && compareStampKeys(key, prior) <= 0) return; // lww-dropped
-  validateWidgetName(catalog, String(dst.get("type") ?? ""), ic.widget);
+  validateWidgetName(catalog, String(dst.get("type") ?? ""), ic.widget, dst);
   mset(widgetsOf(dst), ic.widget, structuredClone(ic.value));
   mset(stamps, targetKey, key);
 }

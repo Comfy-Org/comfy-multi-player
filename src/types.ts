@@ -637,6 +637,20 @@ export interface WidgetCatalogEntry {
   widget_order: string[];
   /** Autogrow element-naming templates, keyed by the growable input's base name. */
   autogrow_templates?: Record<string, { prefix?: string; names?: string[] }>;
+  /**
+   * Every option of every dynamic-combo selector, keyed by the selector's full
+   * dotted name (comfy-cli `Graph.dynamic_combo_options`). `widget_order`
+   * expands each selector at its `default` key only; this is what lets the
+   * applier name, validate, position and seed any other selection
+   * (see `dynamic-combos.ts`).
+   */
+  dynamic_combos?: Record<string, DynamicComboEntry>;
+}
+
+/** One dynamic-combo selector: its fresh-node key and each option's slots. */
+export interface DynamicComboEntry {
+  default: string | null;
+  options: Record<string, { widgets: string[]; defaults: Record<string, unknown> }>;
 }
 
 /** The pinned catalog: class_type → entry. Matches fixtures/catalog.json. */

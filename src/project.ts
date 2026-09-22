@@ -43,6 +43,7 @@ import { assertNever } from "./exhaustive.js";
 import { projectInteriorLinkOrder } from "./interior-link-order.js";
 import { assertReadableSchema } from "./schema-version.js";
 import { NODE_INCARNATION_KEY, type WidgetCatalog, type WorkflowJSON, type WorkflowNode } from "./types.js";
+import { optionOwnedWidgets, widgetOrderForWidgets } from "./dynamic-combos.js";
 
 /** Sorted-by-id comparator: numeric when both ids are numbers, else string order. */
 function idCompare(a: unknown, b: unknown): number {
@@ -117,10 +118,15 @@ function widgetsToPositional(
       `project: type '${nodeType}' has widget values but is not in the pinned catalog (schema §1.2 — projection is catalog-dependent by design)`,
     );
   }
-  const order = entry.widget_order;
+  // The order for this node's current selection (dynamic-combo options).
+  const order = widgetOrderForWidgets(entry, widgets);
+  const inactive = optionOwnedWidgets(entry);
   let max = -1;
   widgets.forEach((_v, name) => {
     const i = positionalIndexOf(order, name);
+    // A sub-widget of an option the node no longer selects (left by a
+    // concurrent write) owns no slot — the frontend removes it too.
+    if (i < 0 && inactive.has(name)) return;
     if (i < 0) {
       throw new TypeError(`project: widget '${name}' is not in widget_order for ${nodeType}`);
     }
