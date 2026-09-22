@@ -429,6 +429,24 @@ export function appliedOpIds(doc: Y.Doc): readonly string[] {
 }
 
 /**
+ * The applied-op ledger as plain frozen data: `op_id` → the value the applier
+ * recorded when it integrated that op (schema §4). Since amendment A8 that is
+ * `sha256(canonicalOp(op))` as a 64-hex string (`opDigest`); a pre-A8 record
+ * is the literal `1`. The value is returned as stored — a consumer that needs
+ * to tell a digest from a legacy marker checks `typeof value === "string"`,
+ * exactly as `applyOps`'s reuse gate does, so this surface stays a faithful
+ * read rather than a second schema opinion.
+ *
+ * `appliedOpIds` answers "which ops"; this answers "which ops, recorded how",
+ * which is what a ledger backfill or a cross-language conformance harness
+ * compares. Symmetric with `readStamps`.
+ */
+export function readApplied(doc: Y.Doc): Readonly<Record<string, unknown>> {
+  assertSnapshotReadable(doc, "readApplied");
+  return snapshotRoot(doc, ROOT_APPLIED);
+}
+
+/**
  * The LWW ledger as plain frozen data: write-target key →
  * `[base_version, actor, op_id]` (schema §3/§4). This is where per-op actor
  * attribution is durably observable, and it is what a cross-language

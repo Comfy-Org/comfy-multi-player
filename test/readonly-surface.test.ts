@@ -35,6 +35,7 @@ import {
   OPAQUE_WIDGETS_KEY,
   project,
   SchemaVersionError,
+  readApplied,
   readGraph,
   readLinkState,
   readMeta,
@@ -43,7 +44,9 @@ import {
   type WorkflowJSON,
 } from "../src/index.js";
 import * as publicApi from "../src/index.js";
+import { opDigest } from "../src/applier.js";
 import {
+  appliedMap,
   metaMap,
   nodesMap,
   ROOT_DEFINITIONS,
@@ -127,6 +130,7 @@ function readSurfaceResults(doc: Y.Doc): [string, unknown][] {
     ["hasNode(doc, id)", hasNode(doc, KSAMPLER_ID)],
     ["hasAppliedOp(doc, opId)", hasAppliedOp(doc, SET_WIDGET_OP_ID)],
     ["appliedOpIds(doc)", appliedOpIds(doc)],
+    ["readApplied(doc)", readApplied(doc)],
     ["readStamps(doc)", readStamps(doc)],
   ];
 }
@@ -216,6 +220,27 @@ describe("read-only surface — it actually reads the document", () => {
     // attribution a conformance harness compares (KA-2).
     expect(rows).toContainEqual([3, "alice", SET_WIDGET_OP_ID]);
   });
+
+  it("readApplied exposes the §4 A8 ledger values, as stored", () => {
+    const doc = fixtureDoc();
+    const ledger = readApplied(doc);
+    // The value is the applier's own digest of the canonical op — the thing an
+    // op_id-reuse check or a ledger backfill (ADR 029) compares — not a marker.
+    expect(ledger[SET_WIDGET_OP_ID]).toBe(opDigest(setWidgetOp));
+    expect(ledger[SET_WIDGET_OP_ID]).toMatch(/^[0-9a-f]{64}$/);
+    // Same key set as appliedOpIds: neither surface sees an op the other does not.
+    expect(Object.keys(ledger).sort()).toEqual([...appliedOpIds(doc)].sort());
+
+    // A pre-A8 record is the literal 1. It comes back as 1, not coerced to a
+    // string or dropped, so a consumer can tell "legacy" from "digest" with
+    // the same typeof test applyOps's reuse gate uses.
+    const legacyOpId = "b".repeat(32);
+    doc.transact(() => appliedMap(doc).set(legacyOpId, 1));
+    const after = readApplied(doc);
+    expect(after[legacyOpId]).toBe(1);
+    expect(after[SET_WIDGET_OP_ID]).toBe(opDigest(setWidgetOp));
+    expect(hasAppliedOp(doc, legacyOpId)).toBe(true);
+  });
 });
 
 describe("read-only surface — no live handle escapes", () => {
@@ -299,6 +324,7 @@ describe("read-only surface — a caller cannot mutate the document through it",
     const meta = readMeta(doc);
     const stamps = readStamps(doc);
     const applied = appliedOpIds(doc);
+    const ledger = readApplied(doc);
     const node = graph.nodes[String(KSAMPLER_ID)]! as Record<string, unknown>;
 
     const attempts: [string, () => void][] = [
@@ -318,6 +344,8 @@ describe("read-only surface — a caller cannot mutate the document through it",
       ["write a stamp row", () => ((stamps as Record<string, unknown>)["nodes/11/widgets/steps"] = [99, "mallory", "z".repeat(32)])],
       ["push onto appliedOpIds", () => (applied as string[]).push("f".repeat(32))],
       ["overwrite an applied op id", () => ((applied as string[])[0] = "f".repeat(32))],
+      ["write a ledger digest", () => ((ledger as Record<string, unknown>)[SET_WIDGET_OP_ID] = "0".repeat(64))],
+      ["add a ledger entry", () => ((ledger as Record<string, unknown>)["f".repeat(32)] = 1)],
     ];
 
     for (const [what, attempt] of attempts) {
@@ -364,6 +392,7 @@ describe("read-only surface — a read is not a write", () => {
     expect(hasNode(doc, 1)).toBe(false);
     expect(hasAppliedOp(doc, "a".repeat(32))).toBe(false);
     expect(appliedOpIds(doc)).toEqual([]);
+    expect(readApplied(doc)).toEqual({});
 
     expect([...doc.share.keys()], "a read gave the document roots it never received").toEqual([]);
     expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(bytesBefore)).toBe(true);
@@ -469,6 +498,7 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
         ["hasNode", () => hasNode(doc, KSAMPLER_ID)],
         ["hasAppliedOp", () => hasAppliedOp(doc, SET_WIDGET_OP_ID)],
         ["appliedOpIds", () => appliedOpIds(doc)],
+        ["readApplied", () => readApplied(doc)],
         ["readStamps", () => readStamps(doc)],
       ];
       for (const [name, call] of calls) {
@@ -523,6 +553,7 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
     expect(hasNode(doc, KSAMPLER_ID)).toBe(false);
     expect(hasAppliedOp(doc, SET_WIDGET_OP_ID)).toBe(false);
     expect(appliedOpIds(doc)).toEqual([]);
+    expect(readApplied(doc)).toEqual({});
     expect([...doc.share.keys()]).toEqual([]);
   });
 
@@ -541,6 +572,7 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
     expect(docCatalogPin(doc)).toBe("");
     expect(hasNode(doc, KSAMPLER_ID)).toBe(false);
     expect(appliedOpIds(doc)).toEqual([]);
+    expect(readApplied(doc)).toEqual({});
   });
 
   it("refuses a v2 document that renamed its roots — the case a name-keyed probe cannot see", () => {
@@ -773,6 +805,7 @@ describe("read-only surface — classification", () => {
     "hasNode",
     "hasAppliedOp",
     "appliedOpIds",
+    "readApplied",
     "readStamps",
     "OPAQUE_WIDGETS_KEY",
   ];

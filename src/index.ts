@@ -36,7 +36,8 @@
  *  - the ADR-004 follower read surface (`nodesMap`, `linksMap`,
  *    `OPAQUE_WIDGETS_KEY`) for consuming the wire layout without applying ops;
  *  - the safer snapshot surface (`readGraph`, `readMeta`, `docCatalogPin`,
- *    `hasNode`, `hasAppliedOp`, `appliedOpIds`, `readStamps`) for consumers
+ *    `hasNode`, `hasAppliedOp`, `appliedOpIds`, `readApplied`, `readStamps`) for
+ *    consumers
  *    that do not need ADR-004's live follower handles — see src/read.ts;
  *  - operation, workflow, catalog, and result types.
  *
@@ -84,6 +85,7 @@ export {
   docCatalogPin,
   hasAppliedOp,
   hasNode,
+  readApplied,
   readGraph,
   readLinkState,
   readMeta,
