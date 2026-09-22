@@ -7,6 +7,25 @@ this package uses semantic versioning.
 
 ## Unreleased
 
+## 0.3.3 - 2026-09-22
+
+### Fixed
+
+- Keep nodes inserted by `insert_workflow` editable and remap promoted-widget
+  references to their renamed interior nodes, preserving reserved IO sentinels.
+- Measure benchmark apply operations against fresh documents rather than
+  already-applied operations.
+
+### Added
+
+- Typed per-field node metadata operations with independent conflict ordering.
+- `readApplied()` for inspecting the applied-operation ledger.
+- `compact()` for creating a fresh document lineage while retaining conflict
+  stamps, node incarnations, link state and clock reservations. Hosts still own
+  replica cutover; publishing this helper does not enable compaction in consumers.
+- Regression coverage for duplicate-create convergence and CLI-created Note
+  nodes, plus a document-growth benchmark matrix.
+
 ## 0.3.2 - 2026-09-21
 
 ### Fixed
