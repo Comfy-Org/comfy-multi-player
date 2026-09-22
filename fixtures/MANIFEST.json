@@ -5,7 +5,7 @@
     "generator_commit": "7e732242d971daf0d2d30f22f997abfacd78986e",
     "generator_command": "cd <comfy-cli-checkout> && uv run <crdt-spike-checkout>/gen_fixtures.py",
     "runtime": "Python via uv on Linux; comfy_cli.workflow_ops from the pinned checkout; prod object_info.json from services/ingest/data/",
-    "notes": "The historical generator lived in the V1-007 crdt-spike workspace and was not graduated into either repository. session-frontend-only-notes.session.jsonl was hand-authored later; see fixtures/README.md."
+    "notes": "The historical generator lived in the V1-007 crdt-spike workspace and was not graduated into either repository. session-frontend-only-notes.session.jsonl was hand-authored later; see fixtures/README.md. Package-local conformance vectors live under golden-vectors/ and are verified by the parity suite."
   },
   "files": {
     "catalog.json": {

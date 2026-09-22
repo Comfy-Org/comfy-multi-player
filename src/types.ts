@@ -1,13 +1,14 @@
 /**
  * Types and constants for @comfyorg/comfy-multi-player.
  *
- * The op vocabulary is frozen at eight kinds; the normative contract is
- * comfy-cli's `docs/op-vocabulary-v1.md` and the stamp shapes minted by
- * `comfy_cli/workflow_ops.py` (`_new_op`), pinned by SHA at comfy-cli
- * `7e732242d971daf0d2d30f22f997abfacd78986e` (FC-10: never by branch — the
- * branch this file used to cite has since been deleted upstream). Every `§`
- * below is a section of that revision; see docs/upstream-pins.json for the pin
- * registry and the amendments upstream has added since.
+ * The op vocabulary mirrors comfy-cli's `docs/op-vocabulary-v1.md` and the
+ * stamp shapes minted by `comfy_cli/workflow_ops.py` (`_new_op`), pinned by
+ * SHA at comfy-cli `7e732242d971daf0d2d30f22f997abfacd78986e` (FC-10: never by
+ * branch — the branch this file used to cite has since been deleted upstream).
+ * `set_node_field` is the one package-local, provisional addition; ADR-032
+ * records its closed field set and the upstream reconciliation requirement.
+ * Every `§` below is a section of that revision; see docs/upstream-pins.json
+ * for the pin registry and the amendments upstream has added since.
  * The doc layout + op semantics reference is docs/multiplayer-schema.md.
  */
 
@@ -70,6 +71,7 @@ export const FROZEN_OPS = [
   "connect",
   "disconnect",
   "set_widget",
+  "set_node_field",
   "delete_node",
   "clear",
   "define_subgraph",
@@ -101,7 +103,15 @@ export const DEFERRED_OPS = ["reset_doc"] as const;
  * belongs. `test/batch-policy.test.ts` pins the list, the README table, and
  * the deliberate non-enforcement together.
  */
-export const BATCHABLE_OPS = ["add_node", "connect", "disconnect", "set_widget", "delete_node", "define_subgraph"] as const;
+export const BATCHABLE_OPS = [
+  "add_node",
+  "connect",
+  "disconnect",
+  "set_widget",
+  "set_node_field",
+  "delete_node",
+  "define_subgraph",
+] as const;
 
 /** A kind `applyOps` implements. */
 export type FrozenOpKind = (typeof FROZEN_OPS)[number];
@@ -444,6 +454,47 @@ export interface DeleteNodeOp extends OpBase {
   removed_links: NodeId[];
 }
 
+/**
+ * The node fields a `set_node_field` may write, as a CLOSED set.
+ *
+ * Everything outside it either has an op of its own (`widgets_values` is
+ * `set_widget`'s, `inputs`/`outputs` belong to `connect`/`disconnect`) or is
+ * node identity (`id`, `type`) that only `add_node` and `delete_node` may
+ * move. `flags` as a whole is excluded too: a whole-object write would
+ * reintroduce the clobber this op exists to avoid, so each flag is its own
+ * register.
+ */
+export const WRITABLE_NODE_FIELDS = ["title", "mode", "flags.collapsed", "flags.pinned"] as const;
+
+/** A field `set_node_field` may address. */
+export type WritableNodeField = (typeof WRITABLE_NODE_FIELDS)[number];
+
+/**
+ * A per-field LWW write to a node's durable scalar state.
+ *
+ * An `add_node` upsert can already carry a changed field, but only by
+ * replacing the WHOLE node: it rewrites the node's widget values and clears
+ * its widget stamps, so a field change concurrent with a remote widget write
+ * on the same node discards that write. This op claims one register per
+ * `(node, field)` instead, so two collaborators editing two fields of one
+ * node — or a field and a widget — never contend.
+ */
+interface SetNodeFieldOpBase extends OpBase {
+  op: "set_node_field";
+  node_id: NodeId;
+  /** Creator-carried lifetime of the addressed node; absent means legacy life 0. */
+  node_incarnation?: string;
+}
+
+/**
+ * A field-addressed write whose value type is coupled to its field. `null`
+ * deletes the field, returning a title/mode/flag to its absent/default state.
+ */
+export type SetNodeFieldOp =
+  | (SetNodeFieldOpBase & { field: "title"; value: string | null })
+  | (SetNodeFieldOpBase & { field: "mode"; value: number | null })
+  | (SetNodeFieldOpBase & { field: "flags.collapsed" | "flags.pinned"; value: boolean | null });
+
 export interface ClearOp extends OpBase {
   op: "clear";
   /**
@@ -493,6 +544,7 @@ export type Op =
   | ConnectOp
   | DisconnectOp
   | SetWidgetOp
+  | SetNodeFieldOp
   | DeleteNodeOp
   | ClearOp
   | DefineSubgraphOp

@@ -7,7 +7,7 @@
  */
 import { assertNever } from "./exhaustive.js";
 import { compareStampKeys } from "./stamps.js";
-import { FROZEN_OPS, type Op, type StampKey } from "./types.js";
+import { FROZEN_OPS, WRITABLE_NODE_FIELDS, type Op, type StampKey } from "./types.js";
 
 export const COLLAB_TRACE_SCHEMA = "comfy.collab-replay/v1" as const;
 export type CollabTraceSchema = typeof COLLAB_TRACE_SCHEMA;
@@ -440,6 +440,19 @@ function assertOpPayload(value: unknown, context: string) {
       asNodeId(required(payload, "link_id", context), `${context}.link_id`);
       asNodeId(required(payload, "to_node", context), `${context}.to_node`);
       asInteger(required(payload, "to_slot", context), `${context}.to_slot`);
+      break;
+    case "set_node_field":
+      asNodeId(required(payload, "node_id", context), `${context}.node_id`);
+      {
+        const field = asOneOf(required(payload, "field", context), WRITABLE_NODE_FIELDS, `${context}.field`);
+        const fieldValue = required(payload, "value", context);
+        if (fieldValue !== null) {
+          if (field === "title") asString(fieldValue, `${context}.value`);
+          else if (field === "mode") asInteger(fieldValue, `${context}.value`);
+          else asBoolean(fieldValue, `${context}.value`);
+        }
+        assertOptionalString(payload, "node_incarnation", context);
+      }
       break;
     case "delete_node":
       asNodeId(required(payload, "node_id", context), `${context}.node_id`);

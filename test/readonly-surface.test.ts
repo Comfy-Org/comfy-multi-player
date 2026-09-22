@@ -731,6 +731,7 @@ describe("read-only surface — classification", () => {
     "FROZEN_OPS",
     "DEFERRED_OPS",
     "BATCHABLE_OPS",
+    "WRITABLE_NODE_FIELDS",
     "codePointCompare",
     "compareStampKeys",
     "stampKey",
