@@ -86,6 +86,9 @@ function remapLinkIdArray(
   }
 }
 
+/** A proxyWidgets entry owner of `-1` addresses the instance itself. */
+const PROXY_INSTANCE_SENTINEL = "-1";
+
 /**
  * Rewrite a subgraph instance's `properties.proxyWidgets` entries, which name
  * the promoted widget's interior node by its raw id (`["27", "text"]`), through
@@ -99,6 +102,9 @@ function remapProxyWidgets(node: WorkflowNode, interiorIds: Map<string, string> 
   if (!Array.isArray(proxy)) return;
   for (const entry of proxy) {
     if (!Array.isArray(entry) || entry.length < 1) continue;
+    // `-1` is the instance sentinel, never an interior node — even when the
+    // definition holds an interior node whose own id is -1.
+    if (normalizedId(entry[0]) === PROXY_INSTANCE_SENTINEL) continue;
     const remapped = interiorIds.get(normalizedId(entry[0]));
     if (remapped !== undefined) entry[0] = remapped;
   }
