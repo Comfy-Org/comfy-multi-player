@@ -145,7 +145,7 @@ import {
   type WireOp,
 } from "./types.js";
 import { addInteriorLinkOrder, removeInteriorLinkOrder } from "./interior-link-order.js";
-import { reconcileDynamicCombo, widgetOrderForValues, widgetOrderForWidgets } from "./dynamic-combos.js";
+import { optionOwnedWidgets, reconcileDynamicCombo, widgetOrderForValues, widgetOrderForWidgets } from "./dynamic-combos.js";
 import { NODE_INCARNATION_KEY, WRITABLE_NODE_FIELDS } from "./types.js";
 
 /**
@@ -1233,8 +1233,9 @@ function rejectUnprojectableWidgets(
   // Selection-aware: the payload's own selector values pick each dynamic
   // combo's option, so a non-default option's sub-widgets are real names.
   const order = widgetOrderForValues(entry, wv) ?? entry.widget_order;
+  const owned = optionOwnedWidgets(entry);
   for (const name of names) {
-    if (!order.includes(name)) {
+    if (!order.includes(name) && !owned.has(name)) {
       throw new OpRejectedError(
         "unknown_widget",
         `add_node(${type}): widget '${name}' is not in widget_order for ${type}; available: ${order.join(", ") || "(none — all inputs are links)"}`,
@@ -1423,11 +1424,13 @@ function validateWidgetName(
       `set_widget(${nodeType}): named widget write to a class absent from the pinned catalog cannot be projected (schema §1.2 — projection is catalog-dependent by design)`,
     );
   }
-  // The order for the node's CURRENT selection: a dynamic combo's selected
-  // option names its own sub-widgets; an unselected option's are refused.
+  // Any option's sub-widget is a legal target, selected or not: accepting only
+  // the CURRENT selection's would make the outcome depend on whether the
+  // selector write arrived first (KA-2). An unselected option's value is
+  // stored and not projected until that option is selected.
   const widgets = node?.get("widgets");
   const order = widgetOrderForWidgets(entry, widgets instanceof Y.Map ? widgets : undefined);
-  if (!order.includes(widget)) {
+  if (!order.includes(widget) && !optionOwnedWidgets(entry).has(widget)) {
     throw new OpRejectedError(
       "unknown_widget",
       `widget '${widget}' not found on ${nodeType}; available: ${order.join(", ") || "(none — all inputs are links)"}`,
