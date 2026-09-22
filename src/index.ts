@@ -17,6 +17,10 @@
  * Public surface:
  *  - `mint(workflow, catalog)` — workflow JSON → fresh Y.Doc (the bootstrap
  *    snapshot every replica forks from — schema §9);
+ *  - `compact(doc, catalog)` — fresh-checkpoint re-mint (schema §4 rule 2):
+ *    a new-lineage Y.Doc with the same projection, live stamps, incarnations,
+ *    link state and clock reservations but an empty `__applied` ledger and no
+ *    tombstone history; the host owns the replica cutover;
  *  - `applyOps(doc, ops, catalog?)` — idempotent, LWW-gated, abort-remainder
  *    op application (schema §2–§4);
  *  - `inspectOps(ops)` — pure validation and canonical bytes/digest/stamp
@@ -78,6 +82,7 @@ export {
 export { applyOps, inspectOps } from "./applier.js";
 export { project } from "./project.js";
 export { mint } from "./mint.js";
+export { compact } from "./compact.js";
 export { migrate } from "./migrate.js";
 export { assertReadableSchema, readSchemaVersion } from "./schema-version.js";
 export {

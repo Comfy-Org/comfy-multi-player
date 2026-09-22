@@ -755,6 +755,8 @@ describe("read-only surface — classification", () => {
     "inspectOps",
     "project",
     "mint",
+    // Fresh-checkpoint re-mint: reads the source, writes only the new Y.Doc.
+    "compact",
     "migrate",
     "SCHEMA_VERSION",
     "LINK_STATE_DESCRIPTOR_VERSION",
