@@ -93,6 +93,10 @@ function envelope(i, actor, body) {
   };
 }
 
+// Mirrors src/limits.ts MAX_OPS_PER_BATCH (the bench runs against dist/, so the
+// harness cannot import src/); test/growth-matrix.test.ts pins the two equal.
+export const MAX_OPS_PER_BATCH = 1024;
+
 // ---------------------------------------------------------------------------
 // Workloads: each returns { nodes, ops(count) } where ops yields the i-th op.
 // `checkpointEvery` lets add/delete land its checkpoints after the delete.
@@ -232,6 +236,10 @@ export function runWorkload(
   const { Y, mint, applyOps } = cmp;
   const w = WORKLOADS[name];
   if (!w) throw new Error(`growth-matrix: unknown workload '${name}'`);
+  if (w.op !== null && opCount % w.checkpointEvery !== 0)
+    throw new Error(
+      `growth-matrix: ${name} opCount ${opCount} must be a multiple of ${w.checkpointEvery} (a trailing partial add/delete pair would leave a live node in the last sample)`,
+    );
   const nodes = typeof w.nodes === "function" ? w.nodes(opCount) : w.nodes;
   const doc = mint(workflow(nodes), CATALOG, CATALOG.catalog_version);
 
@@ -245,16 +253,22 @@ export function runWorkload(
     let applied = 0;
     while (applied < opCount) {
       const target = Math.min(opCount, applied + stepOps);
-      const batch = [];
-      for (let i = applied; i < target; i++) batch.push(w.op(i));
-      const result = applyOps(doc, batch, CATALOG);
-      // A silently rejected batch would flatten every slope to zero and make
-      // the matrix lie; fail loudly instead.
-      const bad = result.outcomes.find((o) => o.outcome !== "applied");
-      if (bad)
-        throw new Error(
-          `growth-matrix: ${name} op ${bad.op_id} ${bad.outcome}: ${JSON.stringify(bad.reason)}`,
-        );
+      // applyOps refuses batches above MAX_OPS_PER_BATCH; a checkpoint
+      // interval may be wider than that, so feed it in capped batches and
+      // sample only once the whole interval has landed.
+      for (let start = applied; start < target; start += MAX_OPS_PER_BATCH) {
+        const end = Math.min(target, start + MAX_OPS_PER_BATCH);
+        const batch = [];
+        for (let i = start; i < end; i++) batch.push(w.op(i));
+        const result = applyOps(doc, batch, CATALOG);
+        // A silently rejected batch would flatten every slope to zero and make
+        // the matrix lie; fail loudly instead.
+        const bad = result.outcomes.find((o) => o.outcome !== "applied");
+        if (bad)
+          throw new Error(
+            `growth-matrix: ${name} op ${bad.op_id} ${bad.outcome}: ${JSON.stringify(bad.reason)}`,
+          );
+      }
       applied = target;
       samples.push(measure(Y, doc, applied));
     }

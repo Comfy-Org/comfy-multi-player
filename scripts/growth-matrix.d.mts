@@ -3,6 +3,8 @@
 import type * as YNs from "yjs";
 import type { applyOps as applyOpsFn, mint as mintFn } from "../src/index.js";
 
+export const MAX_OPS_PER_BATCH: number;
+
 export interface GrowthSample {
   ops: number;
   total: number;

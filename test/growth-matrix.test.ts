@@ -3,11 +3,13 @@
 // Runs against src/ (no dist dependency; the first CI job has no build step).
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
-import { applyOps, mint } from "../src/index.js";
+import { MAX_OPS_PER_BATCH, applyOps, mint } from "../src/index.js";
 import { ROOT_APPLIED, ROOT_NODES, ROOT_STAMPS } from "../src/doc.js";
 import {
+  MAX_OPS_PER_BATCH as HARNESS_MAX_OPS_PER_BATCH,
   formatMatrix,
   runGrowthMatrix,
+  runWorkload,
   type WorkloadResult,
 } from "../scripts/growth-matrix.mjs";
 
@@ -120,6 +122,34 @@ describe("growth matrix: which root grows under which op shape", () => {
     }).large_workflow_baseline!;
     // Two mints, two clientIDs: up to one byte per item of encoding noise.
     expect(Math.abs(half.slopes.total - perNode)).toBeLessThan(perNode * 0.1);
+  });
+});
+
+describe("growth matrix: harness guards", () => {
+  it("mirrors the applier batch cap and splits wide checkpoint intervals", () => {
+    expect(HARNESS_MAX_OPS_PER_BATCH).toBe(MAX_OPS_PER_BATCH);
+    // One interval of MAX_OPS_PER_BATCH + 2 ops would be rejected by applyOps
+    // if fed as a single batch; the harness must split it and still sample.
+    const wide = runWorkload(cmp, "single_target_churn", {
+      opCount: MAX_OPS_PER_BATCH + 2,
+      checkpoints: 2,
+    });
+    expect(wide.opCount).toBe(MAX_OPS_PER_BATCH + 2);
+    expect(wide.samples).toHaveLength(2);
+    expect(wide.samples[1]!.ops).toBe(MAX_OPS_PER_BATCH + 2);
+  });
+
+  it("refuses an odd op count for add/delete churn (unmatched trailing add)", () => {
+    expect(() =>
+      runWorkload(cmp, "add_delete_churn", { opCount: 7, checkpoints: 2 }),
+    ).toThrow(/multiple of 2/);
+    // Even counts still land every checkpoint with zero live nodes added.
+    const even = runWorkload(cmp, "add_delete_churn", {
+      opCount: 8,
+      checkpoints: 3,
+    });
+    for (const s of even.samples.slice(1))
+      expect(s.live[ROOT_NODES]).toBe(even.samples[0]!.live[ROOT_NODES]);
   });
 });
 
