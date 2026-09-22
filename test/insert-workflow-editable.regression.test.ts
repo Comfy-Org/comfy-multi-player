@@ -93,3 +93,39 @@ describe("insert_workflow: inserted nodes stay editable", () => {
     expect(proxy).toEqual([[String(interiorId), "text"]]);
   });
 });
+
+describe("insert_workflow: proxyWidgets instance sentinel", () => {
+  // `-1` in a proxyWidgets entry means "the instance itself", never an interior
+  // node — even when the definition really holds an interior node whose id is -1.
+  it("keeps a -1 proxy entry as the instance sentinel when an interior node is also -1", () => {
+    const wf = {
+      nodes: [{ id: 57, type: "def-1", properties: { proxyWidgets: [["-1", "seed"], ["27", "text"]] } }],
+      links: [],
+      definitions: {
+        subgraphs: [
+          {
+            id: "def-1",
+            name: "D",
+            nodes: [
+              { id: -1, type: "Inner", widgets_values: ["x"] },
+              { id: 27, type: "Inner", widgets_values: ["t"] },
+            ],
+            links: [],
+          },
+        ],
+      },
+    } as unknown as WorkflowJSON;
+    const doc = mint({ nodes: [], links: [] }, catalog);
+    const op = { ...envelope(OP_ID), op_id: OP_ID, op: "insert_workflow", workflow: wf } as unknown as Op;
+    expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+    const projected = project(doc, catalog) as unknown as {
+      nodes: { properties: { proxyWidgets: unknown[][] } }[];
+      definitions: { subgraphs: { nodes: { id: unknown }[] }[] };
+    };
+    const interior27 = projected.definitions.subgraphs[0]!.nodes[1]!.id;
+    expect(projected.nodes[0]!.properties.proxyWidgets).toEqual([
+      ["-1", "seed"],
+      [String(interior27), "text"],
+    ]);
+  });
+});
