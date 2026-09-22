@@ -11,12 +11,13 @@
  *
  *   npm run build && npm run bench
  *
- * WHAT IS TIMED. Only the call under measurement. Every document is built in
- * `beforeEach()` outside the timed region, because building a 200-node
- * workflow costs more than projecting one and would otherwise dominate the
- * sample. `beforeEach()` is deliberately per invocation, unlike Tinybench's
- * task-level `setup()`: the latter would let the untimed async-detection call
- * consume the op ids before every measured `applyOps` sample.
+ * WHAT IS TIMED. Document construction and correctness assertions are outside
+ * the timed region. Vitest exposes Tinybench's phase-level `setup`/`teardown`
+ * hooks, but not its per-invocation hooks, so each phase preallocates a fixed
+ * pool of fresh documents. The timed callback pays only the constant fixture
+ * lookup/result capture around `applyOps`. Fixed iteration counts make the
+ * pool exact, including one extra document for Tinybench's untimed async-
+ * detection call in each phase.
  *
  * DETERMINISM, AND ITS LIMIT. The INPUTS are fixed: both workflows and both op
  * batches come from one seed (`SEED`) through a small LCG, so the same
@@ -64,6 +65,10 @@ import {
 
 /** One 60 Hz frame, in milliseconds. Printed against, never asserted on. */
 const FRAME_MS = 16.6;
+
+/** Fixed counts keep the preallocated document pool exact in both phases. */
+const APPLY_ITERATIONS = 250;
+const APPLY_WARMUP_ITERATIONS = 25;
 
 /** Fixed so both documents are reproducible run to run, host to host. */
 const SEED = 0x5eed_5eed;
@@ -114,7 +119,7 @@ function seededWorkflow(n: number): WorkflowJSON {
   const nodes = [];
   const links = [];
   for (let i = 1; i <= n; i++) {
-    const type = TYPES[Math.floor(rand() * TYPES.length)];
+    const type = TYPES[Math.floor(rand() * TYPES.length)]!;
     const widgets_values = widgetValuesFor(type, rand);
     nodes.push({
       id: i,
@@ -142,7 +147,7 @@ function seededOps(wf: WorkflowJSON, count: number): Op[] {
   const ksamplers = (wf.nodes as { id: number; type: string }[]).filter((node) => node.type === "KSampler");
   const ops: Op[] = [];
   for (let i = 0; i < count; i++) {
-    const target = ksamplers[i % ksamplers.length];
+    const target = ksamplers[i % ksamplers.length]!;
     ops.push({
       op: "set_widget",
       op_id: `b${String(i).padStart(4, "0")}`.padEnd(32, "0"),
@@ -174,8 +179,9 @@ function assertAppliedSample(doc: ReturnType<typeof mint>, ops: Op[], result: Ap
   const nodes = project(doc, catalog).nodes;
   for (const [nodeId, expected] of expectedSteps) {
     const node = nodes.find(({ id }) => String(id) === nodeId);
-    if (!node || node.widgets_values?.[1] !== expected) {
-      throw new Error(`${label}: node ${nodeId} has steps=${String(node?.widgets_values?.[1])}, expected ${String(expected)}`);
+    const widgets = Array.isArray(node?.widgets_values) ? node.widgets_values : undefined;
+    if (!widgets || widgets[1] !== expected) {
+      throw new Error(`${label}: node ${nodeId} has steps=${String(widgets?.[1])}, expected ${String(expected)}`);
     }
   }
 }
@@ -200,7 +206,7 @@ function assertReusedDocumentIsInvalid(workflow: WorkflowJSON, ops: Op[], label:
  */
 function reportEnvironment(): void {
   const cores = cpus();
-  const [oneMinute] = loadavg();
+  const oneMinute = loadavg()[0] ?? 0;
   console.log(
     [
       `\nbench env: node ${process.version} (v8 ${process.versions.v8})`,
@@ -234,28 +240,45 @@ for (const size of SIZES) {
 
     assertReusedDocumentIsInvalid(workflow, ops, `${size}-node applyOps`);
 
-    let applyResult: ApplyResult | undefined;
+    let applyDocs: ReturnType<typeof mint>[] = [];
+    let applyResults: Array<ApplyResult | undefined> = [];
+    let applyCursor = 0;
+
+    const invocationCount = (mode: "warmup" | "run") =>
+      (mode === "warmup" ? APPLY_WARMUP_ITERATIONS : APPLY_ITERATIONS) + 1;
 
     bench(`applyOps — ${opCount} valid set_widget ops`, () => {
-      applyResult = applyOps(applyDoc, ops, catalog);
+      const doc = applyDocs[applyCursor];
+      if (!doc) throw new Error(`applyOps fixture pool exhausted at invocation ${applyCursor}`);
+      applyResults[applyCursor] = applyOps(doc, ops, catalog);
+      applyCursor++;
     }, {
-      beforeEach: () => {
-        // Tinybench calls beforeEach for its untimed async-detection invocation
-        // as well as every warmup and measured sample. Every invocation must
-        // get a fresh document because op_ids are idempotency keys.
-        applyDoc = mint(workflow, catalog);
-        applyResult = undefined;
+      time: 0,
+      iterations: APPLY_ITERATIONS,
+      warmupTime: 0,
+      warmupIterations: APPLY_WARMUP_ITERATIONS,
+      setup: (_task, mode) => {
+        applyDocs = Array.from({ length: invocationCount(mode) }, () => mint(workflow, catalog));
+        applyResults = Array.from({ length: invocationCount(mode) });
+        applyCursor = 0;
       },
-      afterEach: () => {
-        if (!applyResult) throw new Error("applyOps benchmark invocation did not produce a result");
-        assertAppliedSample(applyDoc, ops, applyResult, `${size}-node applyOps sample`);
+      teardown: (_task, mode) => {
+        const expected = invocationCount(mode);
+        if (applyCursor !== expected) {
+          throw new Error(`${size}-node ${mode}: expected ${expected} invocations, got ${applyCursor}`);
+        }
+        for (let i = 0; i < expected; i++) {
+          const result = applyResults[i];
+          if (!result) throw new Error(`${size}-node ${mode}: invocation ${i} produced no result`);
+          assertAppliedSample(applyDocs[i]!, ops, result, `${size}-node ${mode} invocation ${i}`);
+        }
       },
     });
 
     bench("project — full document to WorkflowJSON", () => {
       project(projectDoc, catalog);
     }, {
-      beforeEach: () => {
+      setup: () => {
         projectDoc = mint(workflow, catalog);
       },
     });
@@ -263,7 +286,6 @@ for (const size of SIZES) {
   });
 }
 
-// Hoisted so `beforeEach` can rebuild them without the timed closure capturing
-// a stale binding.
-let applyDoc: ReturnType<typeof mint>;
+// Hoisted so `setup` can rebuild it without the timed closure capturing a stale
+// binding.
 let projectDoc: ReturnType<typeof mint>;
