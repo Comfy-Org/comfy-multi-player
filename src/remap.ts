@@ -86,6 +86,30 @@ function remapLinkIdArray(
   }
 }
 
+/** A proxyWidgets entry owner of `-1` addresses the instance itself. */
+const PROXY_INSTANCE_SENTINEL = "-1";
+
+/**
+ * Rewrite a subgraph instance's `properties.proxyWidgets` entries, which name
+ * the promoted widget's interior node by its raw id (`["27", "text"]`), through
+ * that definition's interior id map. `-1` (the instance itself) and ids the
+ * definition does not hold pass through untouched.
+ */
+function remapProxyWidgets(node: WorkflowNode, interiorIds: Map<string, string> | undefined): void {
+  const properties = (node as { properties?: unknown }).properties;
+  if (interiorIds === undefined || typeof properties !== "object" || properties === null) return;
+  const proxy = (properties as { proxyWidgets?: unknown }).proxyWidgets;
+  if (!Array.isArray(proxy)) return;
+  for (const entry of proxy) {
+    if (!Array.isArray(entry) || entry.length < 1) continue;
+    // `-1` is the instance sentinel, never an interior node — even when the
+    // definition holds an interior node whose own id is -1.
+    if (normalizedId(entry[0]) === PROXY_INSTANCE_SENTINEL) continue;
+    const remapped = interiorIds.get(normalizedId(entry[0]));
+    if (remapped !== undefined) entry[0] = remapped;
+  }
+}
+
 function remapGraph(
   graph: Record<string, unknown>,
   opId: string,
@@ -93,6 +117,7 @@ function remapGraph(
   definitionIds: Map<string, string>,
   dropDanglingLinks: boolean,
   isDefinitionInterior = false,
+  interiorNodeIds: (definitionId: string) => Map<string, string> | undefined = () => undefined,
 ): void {
   const nodes = graph["nodes"] as WorkflowNode[];
   const nodeIds = new Map<string, string>();
@@ -114,7 +139,10 @@ function remapGraph(
 
   for (const node of nodes) {
     node.id = nodeIds.get(normalizedId(node.id))!;
-    if (definitionIds.has(node.type)) node.type = definitionIds.get(node.type)!;
+    if (definitionIds.has(node.type)) {
+      remapProxyWidgets(node, interiorNodeIds(node.type));
+      node.type = definitionIds.get(node.type)!;
+    }
     remapInputs(node.inputs, linkIds, droppedLinkIds);
     remapLinkIdArray(node.outputs, "links", linkIds, droppedLinkIds);
   }
@@ -154,6 +182,11 @@ export function remapInsertedWorkflowIds(wf: WorkflowJSON, opId: string): Workfl
   out.groups ??= [];
   const subgraphs = (out.definitions?.subgraphs ?? []) as Array<Record<string, unknown>>;
   const definitionIdsByScope = new Map<string, Map<string, string>>();
+  // Interior node id maps keyed by definition scope, computed before any
+  // rewrite so an instance's proxyWidgets can follow its interior nodes.
+  const interiorNodeIdsByScope = new Map<string, Map<string, string>>();
+  const definitionScopeOf = (scope: string, original: string): string =>
+    `${scope}/definition:${encodeURIComponent(JSON.stringify(original))}`;
   const collect = (definitions: Array<Record<string, unknown>>, scope: string): void => {
     const definitionIds = new Map<string, string>();
     definitionIdsByScope.set(scope, definitionIds);
@@ -161,23 +194,39 @@ export function remapInsertedWorkflowIds(wf: WorkflowJSON, opId: string): Workfl
       const original = String(definition["id"]);
       const remapped = derivedDefinitionId(opId, scope, original);
       definitionIds.set(original, remapped);
+      const definitionScope = definitionScopeOf(scope, original);
+      const interior = new Map<string, string>();
+      for (const node of (definition["nodes"] as WorkflowNode[] | undefined) ?? []) {
+        interior.set(normalizedId(node.id), derivedId(opId, definitionScope, "node", node.id));
+      }
+      interiorNodeIdsByScope.set(definitionScope, interior);
       const nested = (definition["definitions"] as { subgraphs?: Array<Record<string, unknown>> } | undefined)?.subgraphs ?? [];
-      collect(nested, `${scope}/definition:${encodeURIComponent(JSON.stringify(original))}`);
+      collect(nested, definitionScope);
     }
   };
+  const interiorAt = (scope: string) => (definitionId: string) =>
+    interiorNodeIdsByScope.get(definitionScopeOf(scope, definitionId));
   collect(subgraphs, "root");
   const rewrite = (definitions: Array<Record<string, unknown>>, scope: string): void => {
     const definitionIds = definitionIdsByScope.get(scope)!;
     for (const definition of definitions) {
       const original = String(definition["id"]);
       definition["id"] = definitionIds.get(original)!;
-      const definitionScope = `${scope}/definition:${encodeURIComponent(JSON.stringify(original))}`;
-      remapGraph(definition, opId, definitionScope, definitionIdsByScope.get(definitionScope)!, true, true);
+      const definitionScope = definitionScopeOf(scope, original);
+      remapGraph(
+        definition,
+        opId,
+        definitionScope,
+        definitionIdsByScope.get(definitionScope)!,
+        true,
+        true,
+        interiorAt(definitionScope),
+      );
       const nested = (definition["definitions"] as { subgraphs?: Array<Record<string, unknown>> } | undefined)?.subgraphs ?? [];
       rewrite(nested, definitionScope);
     }
   };
-  remapGraph(out, opId, "root", definitionIdsByScope.get("root")!, true);
+  remapGraph(out, opId, "root", definitionIdsByScope.get("root")!, true, false, interiorAt("root"));
   rewrite(subgraphs, "root");
   return out;
 }
