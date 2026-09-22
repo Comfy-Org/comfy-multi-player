@@ -49,7 +49,23 @@ import {
   type WorkflowJSON,
 } from "../src/index.js";
 import { appliedMap } from "../src/doc.js";
-import { remapInsertedWorkflowIds } from "../src/remap.js";
+import { MAX_LINK_ID_MINT_ATTEMPTS, remapInsertedWorkflowIds } from "../src/remap.js";
+
+/**
+ * The numeric id `remap.ts`'s `derivedLinkId` would mint for
+ * (`opId`, `"root"`, `rawLinkId`) given `reserved` already taken. Walking it
+ * repeatedly (each prior result fed back as `reserved`) recovers the mint's
+ * whole deterministic attempt sequence for one seed — used below to
+ * construct the id-space-exhaustion row (ADR-033).
+ */
+function derivedLinkIdForRow(opId: string, rawLinkId: number, reserved: ReadonlySet<number> = new Set()): number {
+  const remapped = remapInsertedWorkflowIds(
+    { nodes: [{ id: "a", type: "Src" }, { id: "b", type: "Sink" }], links: [[rawLinkId, "a", 0, "b", 0, "x"]] } as unknown as WorkflowJSON,
+    opId,
+    reserved,
+  ) as unknown as { links: Array<[number, ...unknown[]]> };
+  return remapped.links[0]![0];
+}
 
 const catalog: WidgetCatalog = {
   types: {
@@ -215,20 +231,35 @@ const CASES: Row[] = [
     },
   },
   {
+    // A link's numeric id is minted with an active, doc-state-aware
+    // reservation (ADR-033's `derivedLinkId`), so — unlike the node/definition
+    // rows above, which collide against the FIRST (and only) id the applier
+    // ever derives — a single occupied candidate is no longer enough to
+    // reach this code: the mint simply retries past it (covered by
+    // `test/insert-workflow.test.ts`'s "mints a fresh numeric id..." case).
+    // This row instead exhausts every candidate the mint's bounded retry
+    // will ever try for this seed, which is the ONE scenario
+    // `MAX_LINK_ID_MINT_ATTEMPTS` exists to fail loudly on rather than loop
+    // (`docs/decisions/EXCEPTIONS.md`'s KA-5 row) — an adversarial
+    // reservation set, not a realistic document.
     kind: "insert_workflow",
-    why: "remapped link id collides with the live tree",
+    why: "every numeric link-id mint attempt is already occupied (id-space exhaustion)",
     code: "link_id_collision",
     build: () =>
       ({
         op: "insert_workflow",
         ...env(),
-        workflow: { nodes: [{ id: 2, type: "Src" }, { id: 3, type: "Sink" }], links: [[7, 2, 0, 3, 0, "X"]] },
+        workflow: { nodes: [{ id: 2, type: "Src" }, { id: 3, type: "Sink" }], links: [[901, 2, 0, 3, 0, "X"]] },
       }) as Op,
     seed: (op) => {
       const workflow = baseWorkflow();
-      const remapped = remapInsertedWorkflowIds((op as { workflow: WorkflowJSON }).workflow, op.op_id);
-      const [remappedLinkId] = remapped.links![0] as [string, number, number, number, number, string];
-      workflow.links!.push([remappedLinkId, 2, 0, 3, 0, "X"]);
+      const reserved = new Set<number>();
+      for (let i = 0; i < MAX_LINK_ID_MINT_ATTEMPTS; i++) {
+        const candidate = derivedLinkIdForRow(op.op_id, 901, reserved);
+        reserved.add(candidate);
+        workflow.nodes!.push({ id: `excl-src-${String(i)}`, type: "Src" }, { id: `excl-sink-${String(i)}`, type: "Sink" });
+        workflow.links!.push([candidate, `excl-src-${String(i)}`, 0, `excl-sink-${String(i)}`, 0, "occupied"]);
+      }
       return workflow;
     },
   },

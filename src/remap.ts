@@ -1,4 +1,4 @@
-import type { WorkflowJSON, WorkflowNode } from "./types.js";
+import { OpRejectedError, type WorkflowJSON, type WorkflowNode } from "./types.js";
 import { sha256Hex } from "./digest.js";
 
 function derivedId(opId: string, scope: string, kind: string, original: unknown): string {
@@ -8,6 +8,69 @@ function derivedId(opId: string, scope: string, kind: string, original: unknown)
 function derivedDefinitionId(opId: string, scope: string, original: unknown): string {
   const hex = sha256Hex(derivedId(opId, scope, "definition", original));
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+/**
+ * A newly derived link id must be a real `number` — ComfyUI_frontend's
+ * `LinkId` is `number & { __brand }`, unlike `NodeId` (`string | number`), so
+ * the string form `derivedId` gives every other kind cannot satisfy it
+ * (ComfyUI_frontend#18458). Hex digits kept from the digest: comfortably
+ * inside `Number.MAX_SAFE_INTEGER` (2^53 - 1) even after the `+1` below, so
+ * the candidate is always a lossless JS integer.
+ */
+const LINK_ID_HEX_DIGITS = 13; // 52 bits
+
+/**
+ * Bounded retries per link before minting gives up (ADR-033). Collision
+ * probability per attempt is `taken.size / 2^52`; any realistic document —
+ * even one with millions of live links — clears this on the first or second
+ * attempt. The bound exists so a pathological/adversarial reservation set
+ * (see `docs/decisions/EXCEPTIONS.md`'s KA-5 row) fails LOUDLY, byte-identically,
+ * and in bounded work, rather than looping.
+ */
+export const MAX_LINK_ID_MINT_ATTEMPTS = 256;
+
+/** Deterministic 52-bit candidate for the `attempt`'th try of `seed`. Never 0. */
+function candidateLinkId(seed: string, attempt: number): number {
+  const hex = sha256Hex(`${seed}#${String(attempt)}`).slice(0, LINK_ID_HEX_DIGITS);
+  return Number(BigInt(`0x${hex}`)) + 1;
+}
+
+/**
+ * Mint a genuinely unique numeric id for a link `insert_workflow` carries.
+ *
+ * Deterministic given (`opId`, `scope`, `original`) and `taken`'s state at
+ * the time of the call: the same inputs always retry through the same
+ * candidate sequence, and the FIRST one absent from `taken` wins and is
+ * immediately reserved into `taken` so a later link in the same insertion
+ * (this scope or any other) can never mint the same value. This is what
+ * makes the guarantee genuine rather than probabilistic — every candidate is
+ * checked against every id the caller told this function about, not merely
+ * assumed unlikely to collide (ComfyUI_frontend#18458's review: a 32-bit
+ * hash collided at a measured ~0.01-1% rate at realistic link counts).
+ *
+ * `taken` is caller-supplied rather than read here (ADR-033): this module
+ * stays free of `Y.Doc`/Yjs entirely (KA-3), and the caller decides what
+ * "already spoken for" means — `applier.ts` seeds it from
+ * `doc.ts`'s `persistedLinkIds()` before the first call in one
+ * `insert_workflow` application, so the reservation also covers ids a PRIOR
+ * `insert_workflow` (or a native `connect`/`mint()`) already committed to
+ * this same document, which is exactly the cross-op collision
+ * ComfyUI_frontend#18458 reproduced against the interim 32-bit hash.
+ */
+function derivedLinkId(opId: string, scope: string, original: unknown, taken: Set<number>): number {
+  const seed = derivedId(opId, scope, "link", original);
+  for (let attempt = 0; attempt < MAX_LINK_ID_MINT_ATTEMPTS; attempt++) {
+    const candidate = candidateLinkId(seed, attempt);
+    if (!taken.has(candidate)) {
+      taken.add(candidate);
+      return candidate;
+    }
+  }
+  throw new OpRejectedError(
+    "link_id_collision",
+    `insert_workflow: could not mint a collision-free numeric id for link '${String(original)}' (scope '${scope}') after ${String(MAX_LINK_ID_MINT_ATTEMPTS)} attempts`,
+  );
 }
 
 function linkEndpoints(link: unknown): [unknown, unknown] | undefined {
@@ -51,7 +114,7 @@ export function linkHasMissingEndpoint(link: unknown, hasNode: (id: unknown) => 
   return endpoints !== undefined && (!hasNode(endpoints[0]) || !hasNode(endpoints[1]));
 }
 
-function remapInputs(inputs: unknown, linkIds: Map<string, string>, droppedLinkIds: Set<string>): void {
+function remapInputs(inputs: unknown, linkIds: Map<string, number>, droppedLinkIds: Set<string>): void {
   if (!Array.isArray(inputs)) return;
   for (const input of inputs) {
     if (typeof input !== "object" || input === null || !("link" in input)) continue;
@@ -73,7 +136,7 @@ function remapInputs(inputs: unknown, linkIds: Map<string, string>, droppedLinkI
 function remapLinkIdArray(
   records: unknown,
   field: string,
-  linkIds: Map<string, string>,
+  linkIds: Map<string, number>,
   droppedLinkIds: Set<string>,
 ): void {
   if (!Array.isArray(records)) return;
@@ -116,12 +179,13 @@ function remapGraph(
   scope: string,
   definitionIds: Map<string, string>,
   dropDanglingLinks: boolean,
+  takenLinkIds: Set<number>,
   isDefinitionInterior = false,
   interiorNodeIds: (definitionId: string) => Map<string, string> | undefined = () => undefined,
 ): void {
   const nodes = graph["nodes"] as WorkflowNode[];
   const nodeIds = new Map<string, string>();
-  const linkIds = new Map<string, string>();
+  const linkIds = new Map<string, number>();
   // Numeric and string aliases normalized by validation name the same node.
   for (const node of nodes) nodeIds.set(normalizedId(node.id), derivedId(opId, scope, "node", node.id));
   const droppedLinkIds = new Set<string>();
@@ -134,7 +198,7 @@ function remapGraph(
   });
   for (const link of links) {
     const id = linkId(link);
-    linkIds.set(normalizedId(id), derivedId(opId, scope, "link", id));
+    linkIds.set(normalizedId(id), derivedLinkId(opId, scope, id, takenLinkIds));
   }
 
   for (const node of nodes) {
@@ -175,11 +239,29 @@ function remapGraph(
   }
 }
 
-/** Deterministically remap every id carried by an insertion op, including nested definition graphs. */
-export function remapInsertedWorkflowIds(wf: WorkflowJSON, opId: string): WorkflowJSON {
+/**
+ * Deterministically remap every id carried by an insertion op, including
+ * nested definition graphs.
+ *
+ * `reservedLinkIds` seeds the numeric link-id mint's exclusion set (ADR-033):
+ * the caller (`applier.ts`) passes every numeric link id already persisted in
+ * the target document (`doc.ts`'s `persistedLinkIds`) so a freshly minted id
+ * can never land on one. It defaults to empty for callers with no document
+ * to consult — direct unit tests, and any caller minting a workflow that has
+ * never been merged into a doc. One `Set` is shared across the whole
+ * traversal (root scope and every definition scope, at every nesting depth)
+ * so two links in the SAME insertion, however they are scoped, can never
+ * collide with each other either.
+ */
+export function remapInsertedWorkflowIds(
+  wf: WorkflowJSON,
+  opId: string,
+  reservedLinkIds: Iterable<number> = [],
+): WorkflowJSON {
   const out = structuredClone(wf) as WorkflowJSON & Record<string, unknown>;
   out.links ??= [];
   out.groups ??= [];
+  const takenLinkIds = new Set<number>(reservedLinkIds);
   const subgraphs = (out.definitions?.subgraphs ?? []) as Array<Record<string, unknown>>;
   const definitionIdsByScope = new Map<string, Map<string, string>>();
   // Interior node id maps keyed by definition scope, computed before any
@@ -219,6 +301,7 @@ export function remapInsertedWorkflowIds(wf: WorkflowJSON, opId: string): Workfl
         definitionScope,
         definitionIdsByScope.get(definitionScope)!,
         true,
+        takenLinkIds,
         true,
         interiorAt(definitionScope),
       );
@@ -226,7 +309,7 @@ export function remapInsertedWorkflowIds(wf: WorkflowJSON, opId: string): Workfl
       rewrite(nested, definitionScope);
     }
   };
-  remapGraph(out, opId, "root", definitionIdsByScope.get("root")!, true, false, interiorAt("root"));
+  remapGraph(out, opId, "root", definitionIdsByScope.get("root")!, true, takenLinkIds, false, interiorAt("root"));
   rewrite(subgraphs, "root");
   return out;
 }

@@ -98,6 +98,7 @@ import {
   mset,
   nodesMap,
   nodeIncarnation,
+  persistedLinkIds,
   resolveDefinition,
   stampsMap,
   widgetStorageOf,
@@ -985,7 +986,7 @@ function validateDefinitionInputs(subgraphs: unknown[], path = "workflow.definit
   });
 }
 
-function prepareInsertedWorkflow(op: InsertWorkflowOp): Record<string, unknown> {
+function prepareInsertedWorkflow(doc: Y.Doc, op: InsertWorkflowOp): Record<string, unknown> {
   const workflow = scrubPrivateKeys(op.workflow) as unknown;
   if (typeof workflow !== "object" || workflow === null || Array.isArray(workflow)) {
     throw new OpRejectedError("malformed_op", "insert_workflow: workflow must be an object");
@@ -1007,11 +1008,21 @@ function prepareInsertedWorkflow(op: InsertWorkflowOp): Record<string, unknown> 
   }
   validateRawGraphIds(wf["nodes"] as unknown[], (wf["links"] as unknown[] | undefined) ?? [], "workflow");
   validateDefinitionInputs((subgraphs as unknown[] | undefined) ?? []);
-  return remapInsertedWorkflowIds(wf as unknown as import("./types.js").WorkflowJSON, op.op_id) as unknown as Record<string, unknown>;
+  // ADR-033 / KA-5 exception (docs/decisions/EXCEPTIONS.md): unlike every
+  // other id this op derives, a link's numeric id must not collide with
+  // anything already persisted in THIS document, so the mint reads doc state
+  // here — see `remap.ts`'s `derivedLinkId` for why the type constraint
+  // (`LinkId` is a branded `number`, unlike the string-or-number `NodeId`)
+  // makes that unavoidable.
+  return remapInsertedWorkflowIds(
+    wf as unknown as import("./types.js").WorkflowJSON,
+    op.op_id,
+    persistedLinkIds(doc),
+  ) as unknown as Record<string, unknown>;
 }
 
 function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetCatalog): SuccessfulOutcome {
-  const wf = prepareInsertedWorkflow(op);
+  const wf = prepareInsertedWorkflow(doc, op);
   const remappedDefinitions = wf["definitions"] as { subgraphs?: unknown[] } | undefined;
   const remappedSubgraphs = remappedDefinitions?.subgraphs ?? [];
 
@@ -1177,9 +1188,16 @@ function updateInsertedWorkflowMeta(
   const currentNode = numericId(meta.get("last_node_id")) ?? 0;
   const maxNode = Math.max(currentNode, ...nodeWrites.map(([, id]) => numericId(id) ?? currentNode));
   if (maxNode > currentNode) mset(meta, "last_node_id", maxNode);
-  const currentLink = numericId(meta.get("last_link_id")) ?? 0;
-  const maxLink = Math.max(currentLink, ...linkWrites.map((link) => numericId(link[0]) ?? currentLink));
-  if (maxLink > currentLink) mset(meta, "last_link_id", maxLink);
+  // `last_link_id` is deliberately NOT advanced from `linkWrites` (KA-5:
+  // "document high-water marks are advisory, never allocators"). Every
+  // inserted link's own id is now a large, arbitrary-looking derived number
+  // (ADR-033 — `remap.ts`'s `derivedLinkId`, needed only because ComfyUI_
+  // frontend's `LinkId` is a branded `number`), not a small sequential one,
+  // so folding it into the high-water mark would pin the doc's bookkeeping
+  // field to that value forever after the FIRST insert_workflow — a new,
+  // surprising side effect this line never had before (the pre-fix STRING
+  // derived id already failed `numericId` and left this a no-op for every
+  // inserted link).
 }
 
 // ---------------------------------------------------------------------------
