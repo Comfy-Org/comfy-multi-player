@@ -1141,7 +1141,11 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
     }
     for (const [key, id, nodeMap] of nodeWrites) {
       clearObsoleteWidgetStamps(stamps, key);
-      mset(nodeMap, NODE_INCARNATION_KEY, `${op.op_id}:${key}`);
+      // Legacy life, not a per-op token: the remapped id already encodes the
+      // op, and clients (comfy-cli, the frontend) mint writes without
+      // node_incarnation and cannot read one back from the projection — a
+      // per-op incarnation made every write to an inserted node a no-op.
+      mset(nodeMap, NODE_INCARNATION_KEY, LEGACY_NODE_INCARNATION);
       mset(nodes, key, nodeMap);
       mset(stamps, JSON.stringify(["insert_workflow_node", key]), stamp);
       mset(stamps, targetKey, stamp);
