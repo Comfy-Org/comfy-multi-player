@@ -355,13 +355,13 @@ here:
    REST OF THE BATCH, which makes this a projection divergence and not merely
    an `__applied` one. Amendment A6. As on the source axis, every OP-ONLY
    precondition is checked before the delete-wins return and does NOT carve
-   out; only the checks that must read the destination do.
+   out; only checks below the destination's delete-wins return carve out.
 
 6. The same shape in `applySetWidget`. `if (!node) return` (and the interior
    path's `resolveInteriorNode(...) === null` return) are delete-wins no-ops
    that consume the `op_id`, and `rejectIfOpaqueWidgets`, `validateWidgetName`
-   and the `widget_out_of_range` check all READ the node, so they sit below
-   them. A `set_widget` refused by any of those, racing its target's deletion,
+   and the `widget_out_of_range` check sit below those returns. A `set_widget`
+   refused by any of those, racing its target's deletion,
    is rejected by a replica that still holds the node and applied as a no-op by
    one that does not; under §4 abort-remainder that reaches the projection.
    Measured. Amendment A6.
@@ -431,7 +431,7 @@ probing a handler nobody had probed yet, and treating it as complete is what mad
 each of those omissions look like a contradiction rather than a gap. If you need
 to know whether a specific rejection converges, apply the rule and measure both
 arrival orders; do not conclude "it is not in the list, therefore it converges".
-Everything that satisfies neither mechanism — including concrete-input
+Every rejection that satisfies neither mechanism — including concrete-input
 contention, which used to be an unstated carve-out of its own — converges.
 
 ---
@@ -455,8 +455,9 @@ Pins the code does not state (spike report, "what the freeze doc must pin"):
 3. **`add_node`'s `op.node` payload is authoritative.** Replay copies it
    verbatim; it is never re-derived from a schema (defaults drift).
 4. Delete-wins is silent: an op whose target node is gone is a no-op that
-   still consumes its `op_id`. Malformed/unknown ops are rejected loudly,
-   never silently (vocabulary §3).
+   still consumes its `op_id`. Subject to §2.5's delete-wins, LWW, and stamp-gate
+   no-op carve-outs, malformed/unknown ops are rejected loudly, never silently
+   (vocabulary §3).
 
 Write-target keys are the spike applier's, normative. **Gated and committed**
 through `__stamps` (Amendment A1): the `set_widget` rows, the connect-embedded
@@ -1503,11 +1504,11 @@ projection divergence. Measured: `[connect(malformed), add_node 900]` racing
 `nodes={300,301,900}` in the other.
 
 So every op-only `connect` precondition is hoisted above that return too, and
-the residual is exactly the checks that must READ the destination: `to_slot` in
-range or addressing a slot record, an opaque widget destination, and a
-`grow.inputcount.widget` the catalogue cannot describe. None is answerable once
-the destination is gone, and the three alternatives above are rejected here for
-the same reasons.
+the residual is exactly the checks below the destination's delete-wins return:
+`to_slot` in range or addressing a slot record, an opaque widget destination,
+and a `grow.inputcount.widget` the catalogue cannot describe. None is answerable
+once the destination is gone, and the three alternatives above are rejected
+here for the same reasons.
 
 **Scope, stated precisely.** Items 4 and 5 are about `connect`. The identical
 shape in `applySetWidget` and `applyAddNode` is items **6 and 7** — enumerated
@@ -1535,9 +1536,10 @@ hoisted `from_slot` only; the second hoisted `to_slot`'s `typeof` check but left
 its integer/sign domain below the return — and both times the full suite stayed
 green while prose claimed the whole class was hoisted. The divergence was found
 by probing both arrival orders directly, not by reading. If a future change adds
-a `connect` precondition, the question is not "is it validated before the first
-write" but **"does it read the document"** — and if it does not, it belongs in
-`requireOpOnlyValid`.
+a `connect` precondition, ask both whether it sits below an `op_id`-consuming
+document-dependent return and whether its own verdict depends on mutable
+document state. A precondition that depends on the op alone belongs in
+`requireOpOnlyValid` before any document read.
 
 ### Consequent corrections
 
@@ -1565,9 +1567,10 @@ write" but **"does it read the document"** — and if it does not, it belongs in
 - **`api-contract-proposal.md` D5** carried the same sentence and is corrected
   alongside it.
 - §2.5's closing sentence no longer enumerates completeness at all. It now
-  states the RULE that generates the carve-outs — a check that reads the document
-  and sits below an `op_id`-consuming early return — and marks items 1-8 as
-  illustrative of it. That change is the durable one: this list was extended
+  states the two mechanisms that generate the carve-outs — a throw below an
+  `op_id`-consuming document-dependent early return, or a verdict computed from
+  mutable document state — and marks items 1-8 as illustrative of them. That
+  change is the durable one: this list was extended
   three times in a single review, and each omission read as a contradiction only
   because the sentence claimed the list was exhaustive.
 ---

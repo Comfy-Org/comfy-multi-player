@@ -107,7 +107,8 @@ half holds everywhere. The byte-identity half is swept per rejection code by
 rejections that validated *after* their first write — one of them severing an
 incumbent link. **All four now hold**, and #34 additionally makes every op-only
 `connect`/`set_widget` precondition run before the delete-wins returns, so those
-rejections are order-independent too (schema Amendment A6).
+rejections are order-independent except for the schema §2.5 carve-outs
+(Amendment A6).
 
 Amendment A9 closes the cloneable-but-unstorable, `connect.link_id`, and
 `delete_node.removed_links` write-order paths. Amendment A10 closes reference
