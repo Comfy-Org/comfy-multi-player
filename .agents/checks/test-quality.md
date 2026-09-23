@@ -95,6 +95,8 @@ The item-2 oracle, and the deference to the profile that owns it:
 <!-- claim: break; // abort-remainder :: src/applier.ts -->
 <!-- claim: a delete-wins no-op that CONSUMES the `op_id` :: src/applier.ts -->
 <!-- claim: CLOSED by Amendment A7 :: docs/multiplayer-schema.md -->
+<!-- claim-absent: READS THE DOCUMENT and sits below an early return :: docs/decisions/EXCEPTIONS.md -->
+<!-- claim: That happens two ways :: docs/multiplayer-schema.md -->
 
 Why the projection is inadequate. `project()` must not reach either ledger, and it now has THREE ways to do so: the raw root names, the `ROOT_*` name constants, and the `doc.ts` accessors that are the realistic route (`src/project.ts` reaches doc state only through imported helpers, so a projection that started rendering stamps would add `stampsMap`, never the literal `__stamps`). All six spellings are banned. The `ROOT_STAMPS`/`ROOT_APPLIED` bans arrived with the read-only snapshot surface, which named the roots as constants so the writer helpers and the reader could not drift: that indirection is a route the four original bans did not enumerate, and a ban is only as good as the name it enumerates. For the same reason the positive markers pin **every** hop of each accessor — the exported identifier, the constant it resolves through, and the string that constant holds — because pinning the body alone would let `stampsMap` be renamed with the positive claims still green while `claim-absent: stampsMap` quietly became a ban on a string that exists nowhere.
 

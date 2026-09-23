@@ -30,4 +30,15 @@ For `wire_layout`, a conforming runner must resolve the doc's root types by the 
 
 Every conformance session in `fixtures/golden-vectors/` has single-instance definitions addressed by id, so a runner can count by literal string, pass 100% of the vectors, and still let one op mutate a definition backing two nodes — the KA-1 fan-out this package fixed in `countDefinitionInstances`. It can equally over-reject by taking rules 1-3 without rule 4, and no vector will say so. Until a shared-definition vector exists, implement all four from this prose.
 
+**Not vectored, but normative:** schema §2.5's two mechanisms for
+arrival-order-dependent rejection disposition. First, a throw below a
+document-dependent early return that consumes the `op_id` may be reached in one
+order and skipped as an accepted no-op in another. Second, a rejection whose
+own verdict depends on mutable document state may change without any early
+return. Under §4 abort-remainder either difference can change which trailing
+ops apply. A port must preserve the numbered carve-outs and apply both
+mechanisms when classifying new rejection paths; passing the current vectors is
+insufficient because they contain no delete-race or other two-order rejection
+case.
+
 The files use UTF-8 JSON/JSONL, JSON numbers, strings, booleans, arrays, objects, and null only. Runners must not rely on JavaScript-specific serialization or object-key order. Adding or changing op semantics requires updating the shared vectors and all language runners together; a second private fixture set is not an acceptable parity claim.

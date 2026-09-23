@@ -513,7 +513,7 @@ arbitrary strings remain legal.
 The four `connect` paths this row used to except — the two `output_slot_missing`
 cases and the two `connect`+`inputcount` grow rejections, swept by
 `test/ka4-rejection-byte-identity.test.ts` — **now hold**, and are additionally
-order-independent (schema Amendment A6).
+order-independent except for the schema §2.5 carve-outs (Amendment A6).
 
 `applied` means "this document is done with that op_id", not "your value won".
 A client that renders optimistically must clear a pending op when its effect
@@ -596,9 +596,11 @@ Concretely, pinned by the test suite (`npm test`):
   rejected rather than recorded as an applied no-op. Otherwise whether an op
   was rejected would depend on which replica had already seen the delete, and
   under §4 abort-remainder the two would then disagree about the rest of the
-  batch as well. Checks that must READ the deleted node — slot ranges, opaque
-  widget storage, the catalogue lookup — necessarily still resolve differently;
-  schema §2.5 items 4-8 carve that out explicitly — 4 and 5 for `connect`, 6 for `set_widget`, 7 for `add_node`, 8 for interior path resolution — and §2.5 now states the general RULE those items illustrate.
+  batch as well. Checks below a delete-wins return — slot ranges, opaque widget
+  storage, the catalogue lookup — can still resolve differently; schema §2.5
+  items 4-6 and 8 illustrate that mechanism. Item 7's former `add_node`
+  carve-out was closed by Amendment A7. Section 2.5 also covers the second
+  mechanism: a verdict computed from mutable document state.
 - **Rejection is loud.** An op that is unsatisfiable against a live target is
   rejected, never silently dropped.
 
@@ -629,20 +631,21 @@ is closed.
    display name the pinned catalog describes as a node class is *not* a
    spelling of the definition: naming a subgraph after the node it wraps is
    common, and those nodes are classes, not instances.
-6. A `connect` refused by a check that must READ a node — `from_slot`/`to_slot`
+6. A `connect` refused below a node's delete-wins return — `from_slot`/`to_slot`
    out of range or not addressing a slot record, an opaque widget destination,
    or a `grow.inputcount.widget` the catalogue cannot describe — racing that
    node's deletion is rejected by a replica that still holds the node and
-   accepted as a delete-wins no-op by one that does not. Checks that depend on
-   the OP ALONE are hoisted above the delete-wins return and do not carve out.
-   Schema §2.5 items 4-8, Amendment A6 — the same shape recurs in
-   `set_widget` (item 6), `add_node` (item 7) and interior path resolution
-   (item 8), and §2.5 states the rule they illustrate.
+   accepted as a delete-wins no-op by one that does not. The applier enforces
+   that checks depending on the OP ALONE are hoisted above the delete-wins
+   return. Schema §2.5 items 4-6 and 8 illustrate the two mechanisms that can
+   still make rejection disposition order-dependent. Item 7's former
+   `add_node` carve-out is closed by Amendment A7.
 
-This list and the schema's are the same list seen from two sides: schema §2.5
-enumerates eight; items 1-3 map one-to-one, schema items 4-8 are folded into
-item 6 here, item 4 above is the intra-batch `base_version` case (which the
-schema states in §3 instead), and item 5 is the §5.3 shared-definition rejection.
+This list and the schema describe overlapping concerns at different levels:
+schema §2.5's numbered items illustrate rejection-disposition carve-outs rather
+than exhaustively enumerating them; item 4 above is the intra-batch
+`base_version` case (which the schema states in §3), and item 5 is the §5.3
+shared-definition rejection.
 
 ### Opaque widgets
 
