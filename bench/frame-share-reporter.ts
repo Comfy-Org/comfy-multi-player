@@ -16,7 +16,7 @@
  * this baseline refuses to invent a threshold.
  */
 
-import type { Reporter } from "vitest/reporters";
+import type { Reporter } from "vitest/node";
 
 /** One 60 Hz frame, in milliseconds. Must match bench/apply-project.bench.ts. */
 const FRAME_MS = 16.6;
