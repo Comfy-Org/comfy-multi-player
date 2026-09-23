@@ -111,4 +111,24 @@ describe("verify-corpus fail-closed guards", () => {
       corpusFail(`${relativePath}: expected ${sha}, got ${actualSha}`),
     );
   });
+
+  it.each(["../outside.json", "golden-vectors/../outside.json", "golden-vectors\\outside.json"])(
+    "rejects non-canonical nested fixture path %s",
+    (relativePath) => {
+      writeFileSync(
+        join(dir, "MANIFEST.json"),
+        JSON.stringify({ files: { [relativePath]: { sha256: "0".repeat(64) } } }),
+      );
+
+      const run = runAgainst(dir);
+
+      expect(run.status).toBe(1);
+      expect(run.stderr).toBe(
+        corpusFail(
+          `${relativePath} is not a safe relative fixture path`,
+          `${relativePath} is listed but missing from fixtures/`,
+        ),
+      );
+    },
+  );
 });

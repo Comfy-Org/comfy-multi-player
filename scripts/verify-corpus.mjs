@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, normalize } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -42,7 +42,11 @@ const manifestFiles = Object.keys(entries).sort();
 const errors = [];
 
 const safeManifestPath = (file) =>
-  !isAbsolute(file) && normalize(file) === file && file !== ".." && !file.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`);
+  !file.includes("\\") &&
+  !posix.isAbsolute(file) &&
+  posix.normalize(file) === file &&
+  file !== ".." &&
+  !file.startsWith("../");
 const fixtureFiles = [...topLevelFixtureFiles];
 for (const file of manifestFiles.filter((name) => name.includes("/") || name.includes("\\"))) {
   if (!safeManifestPath(file)) {
