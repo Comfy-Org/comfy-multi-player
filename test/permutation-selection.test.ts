@@ -17,9 +17,12 @@ describe("permutation scheduling contract", () => {
     const command = manifest.scripts[script];
     expect(command).toEqual(expect.stringMatching(/^vitest run(?: |$)/));
     // Ask the installed Vitest to collect using the actual script's flags and
-    // config. A string-only check misses an intersected/unsupported tag filter.
+    // config. Runtime collection is required because these suites and their
+    // tags are generated from the tier table; Vitest 5's default static parser
+    // deliberately leaves those expressions unevaluated.
     const args = command!.split(" ").slice(2);
     if (script === "test") args.push(suite);
+    args.push("--no-static-parse");
     const result = spawnSync(process.execPath, ["node_modules/vitest/vitest.mjs", "list", ...args, "--json"], {
       cwd: root, encoding: "utf8", timeout: 10_000,
     });
