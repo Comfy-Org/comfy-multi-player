@@ -189,6 +189,21 @@ const CASES: Row[] = [
         node: { id: 9, type: "Src", [OPAQUE_WIDGETS_KEY]: [1] },
       }) as unknown as Op,
   },
+  {
+    kind: "add_node",
+    why: "interior path names a missing container",
+    code: "interior_container_not_found",
+    build: () =>
+      ({
+        op: "add_node",
+        ...env(),
+        path: ["missing"],
+        node_id: 9,
+        class_type: "Src",
+        pos: [0, 0],
+        node: { id: 9, type: "Src", pos: [0, 0], inputs: [], outputs: [] },
+      }) as unknown as Op,
+  },
 
   // ---- insert_workflow ----------------------------------------------------
   {
@@ -737,6 +752,7 @@ const ALL_REJECTION_CODES = [
   "output_slot_missing",
   "uncatalogued_widget_write",
   "not_a_subgraph",
+  "interior_container_not_found",
   "interior_node_not_found",
   "shared_definition_unforked",
   "definition_conflict",

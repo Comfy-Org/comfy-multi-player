@@ -10,6 +10,7 @@
     { "name": "edit-heavy", "session": "../session-edit-heavy.session.jsonl" },
     { "name": "subgraph", "session": "../session-subgraph.session.jsonl" },
     { "name": "frontend-only-notes", "session": "../session-frontend-only-notes.session.jsonl" },
-    { "name": "node-fields", "session": "session-node-fields.session.jsonl" }
+    { "name": "node-fields", "session": "session-node-fields.session.jsonl" },
+    { "name": "interior-add-node", "session": "session-interior-add-node.session.jsonl" }
   ]
 }

@@ -366,7 +366,7 @@ ADR-032 and schema Amendment A21.
 
 | Kind | Payload beyond the envelope | Batchable (authoring) |
 |---|---|---|
-| `add_node` | `node_id`, `class_type`, `pos`, `node` (the complete node object, inserted verbatim) | yes |
+| `add_node` | `node_id`, `class_type`, `pos`, `node` (the complete node object, inserted verbatim); an interior add also carries a non-empty instance `path` and optional `container_incarnation` for its head instance | yes |
 | `define_subgraph` | `subgraph_id`, `subgraph_definition` (the complete initial definition, inserted once) | yes |
 | `connect` | `link_id`, `from_node`, `from_slot`, `to_node`, `link_type`, then EITHER a numeric `to_slot` (`ConcreteConnectOp`) OR a `grow` payload with `to_slot` null/absent (`GrowConnectOp`); `grow.promoted: true` names a subgraph instance's DECLARED input, materialized on the instance and LWW-gated as one register (schema Amendment A15) | yes |
 | `disconnect` | `link_id`, `to_node`, `to_slot`; claims the same concrete input register as `connect` and removes the winning slot occupant | yes |

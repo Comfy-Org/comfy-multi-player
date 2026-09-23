@@ -1239,7 +1239,13 @@ function rejectUnprojectableWidgets(
   }
 }
 
-function applyAddNode(doc: Y.Doc, op: AddNodeOp, catalog?: WidgetCatalog): SuccessfulOutcome {
+function requireAddNodeValid(op: AddNodeOp): void {
+  if (op.path !== undefined && (!Array.isArray(op.path) || op.path.length === 0)) {
+    throw new OpRejectedError("malformed_op", "add_node: path must be a non-empty array when present");
+  }
+  if (op.container_incarnation !== undefined && (typeof op.container_incarnation !== "string" || op.container_incarnation.length === 0)) {
+    throw new OpRejectedError("malformed_op", "add_node: container_incarnation must be a non-empty string");
+  }
   if (op.node_incarnation !== undefined && (typeof op.node_incarnation !== "string" || op.node_incarnation.length === 0)) {
     throw new OpRejectedError("malformed_op", "add_node: node_incarnation must be a non-empty string");
   }
@@ -1252,7 +1258,44 @@ function applyAddNode(doc: Y.Doc, op: AddNodeOp, catalog?: WidgetCatalog): Succe
       `add_node: wire node_id '${String(op.node_id)}' does not match payload node.id '${String(op.node.id)}'`,
     );
   }
-  const nodes = nodesMap(doc);
+}
+
+function createAddedNode(op: AddNodeOp, catalog?: WidgetCatalog): Y.Map<unknown> {
+  const wv = op.node.widgets_values;
+  const entry = catalogEntry(catalog, op.node.type);
+  const order = entry?.widget_order;
+  if (!catalog && Array.isArray(wv) && wv.length > 0) {
+    throw new OpRejectedError(
+      "catalog_required",
+      `add_node(${op.node.type}): positional widgets_values needs the pinned catalog widget_order to decompose into the name-keyed widgets map (schema §1.2)`,
+    );
+  }
+  rejectUnprojectableWidgets(op.node.type, wv, entry);
+  try {
+    return createNodeMap(op.node, order);
+  } catch (err) {
+    throw new OpRejectedError(
+      "invalid_node_payload",
+      `add_node(${String(op.node.type)}): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+function applyAddNode(doc: Y.Doc, op: AddNodeOp, catalog?: WidgetCatalog): SuccessfulOutcome {
+  requireAddNodeValid(op);
+  const route: Pick<AddNodeOp, "path" | "node_incarnation"> = op.path ? { path: op.path } : {};
+  if (op.container_incarnation !== undefined) route.node_incarnation = op.container_incarnation;
+  const interiorScope = op.path
+    ? resolveInteriorGraphScope(
+      doc,
+      route,
+      catalog,
+      "add_node",
+      true,
+      true,
+    )
+    : null;
+  const nodes = interiorScope?.nodes ?? nodesMap(doc);
   const key = String(op.node_id);
   const stamps = stampsMap(doc);
   const targetKey = stampTargetKey(op);
@@ -1264,34 +1307,17 @@ function applyAddNode(doc: Y.Doc, op: AddNodeOp, catalog?: WidgetCatalog): Succe
   // verbatim, never re-derived from the catalog. The catalog IS needed here,
   // unlike in Python: decomposing the payload's positional widgets_values
   // into the name-keyed widgets map (schema §1.2) requires widget_order.
-  const wv = op.node.widgets_values;
-  // OWN-property lookup: `catalog.types['__proto__']` (and any other inherited
-  // key) otherwise resolves to a prototype object and is mistaken for a real
-  // catalog entry (#13).
-  const entry = catalogEntry(catalog, op.node.type);
-  const order = entry?.widget_order;
   // No catalog AT ALL: the host cannot tell an unknown class from a known one,
   // so it cannot decide between name-decomposition and opaque storage — reject
   // rather than guess. A catalog that simply lacks THIS class is a different
   // case: the class is unknown to object_info (frontend-only nodes always are),
   // and `createNodeMap` stores its values opaquely (schema §1.2).
-  if (!catalog && Array.isArray(wv) && wv.length > 0) {
-    throw new OpRejectedError(
-      "catalog_required",
-      `add_node(${op.node.type}): positional widgets_values needs the pinned catalog widget_order to decompose into the name-keyed widgets map (schema §1.2)`,
-    );
-  }
-  rejectUnprojectableWidgets(op.node.type, wv, entry);
-  let nodeMap: Y.Map<unknown>;
-  try {
-    nodeMap = createNodeMap(op.node, order);
-  } catch (err) {
-    throw new OpRejectedError(
-      "invalid_node_payload",
-      `add_node(${String(op.node.type)}): ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-  clearObsoleteWidgetStamps(stamps, key);
+  const nodeMap = createAddedNode(op, catalog);
+  clearObsoleteWidgetStamps(
+    stamps,
+    key,
+    interiorScope ? String(interiorScope.definition.get("id") ?? "") : undefined,
+  );
   mset(nodeMap, NODE_INCARNATION_KEY, op.node_incarnation ?? LEGACY_NODE_INCARNATION);
   mset(nodes, key, nodeMap);
   mset(stamps, targetKey, stamp);
@@ -1302,10 +1328,16 @@ function applyAddNode(doc: Y.Doc, op: AddNodeOp, catalog?: WidgetCatalog): Succe
   // and the outcome then depended on whether the concurrent delete had
   // arrived. Everything else in the payload is still copied verbatim (FC-8) —
   // only `inputs[].link` / `outputs[].links` are re-derived.
-  reconcileNodeLinkRefs(doc, op.node_id, nodeMap);
-  restoreDurableLinks(doc, op.node_id);
+  if (interiorScope) {
+    reconcileInteriorNodeLinkRefs(interiorScope, op.node_id, nodeMap);
+    recordInteriorNodeOrder(interiorScope.definition, stamps, key, stamp);
+  } else {
+    reconcileNodeLinkRefs(doc, op.node_id, nodeMap);
+    restoreDurableLinks(doc, op.node_id);
+  }
 
   // last_node_id is a max-register (vocabulary §8.3): write only on increase.
+  if (interiorScope) return "applied";
   const meta = metaMap(doc);
   const cur = meta.get("last_node_id");
   const curN = typeof cur === "number" ? cur : 0;
@@ -1323,7 +1355,12 @@ function applyAddNode(doc: Y.Doc, op: AddNodeOp, catalog?: WidgetCatalog): Succe
  * arrived before or after the delete. The add is the deterministic convergence
  * point, so both arrival orders retain the same current-life ledger.
  */
-function clearObsoleteWidgetStamps(stamps: Y.Map<unknown>, nodeKey: string): void {
+function clearObsoleteWidgetStamps(
+  stamps: Y.Map<unknown>,
+  nodeKey: string,
+  definitionId?: string,
+): void {
+  const interiorNodePath = definitionId === undefined ? null : [definitionId, nodeKey];
   for (const targetKey of [...stamps.keys()]) {
     let target: unknown;
     try {
@@ -1331,7 +1368,14 @@ function clearObsoleteWidgetStamps(stamps: Y.Map<unknown>, nodeKey: string): voi
     } catch {
       continue;
     }
-    if (Array.isArray(target) && target[0] === "widget" && target[1] === nodeKey) {
+    if (!Array.isArray(target)) continue;
+    const targetNode = target[1];
+    const isTarget = interiorNodePath
+      ? Array.isArray(targetNode)
+        && targetNode.length === interiorNodePath.length
+        && targetNode.every((segment, index) => String(segment) === interiorNodePath[index])
+      : targetNode === nodeKey;
+    if (target[0] === "widget" && isTarget) {
       mdel(stamps, targetKey);
     }
   }
@@ -2039,32 +2083,48 @@ function validateGrowPayload(op: ConnectOp): void {
   }
 }
 
-interface InteriorConnectScope {
+interface InteriorGraphScope {
   nodes: Y.Map<Y.Map<unknown>>;
   links: Y.Map<unknown>;
   definition: Y.Map<unknown>;
 }
 
-/** Resolve the definition owned by the instance at an interior connect path. */
-function resolveInteriorConnectScope(
+function resolveVisibleInteriorHost(
   doc: Y.Doc,
-  op: ConnectOp,
+  nodeKey: string,
+  routeIncarnation: string,
+  requireMatchingIncarnation: boolean,
+): Y.Map<unknown> | undefined {
+  const host = nodesMap(doc).get(nodeKey);
+  if (!(host instanceof Y.Map)) return undefined;
+  if (requireMatchingIncarnation && nodeIncarnation(host) !== routeIncarnation) return undefined;
+  return host;
+}
+
+/** Resolve the definition owned by an instance route for an interior graph edit. */
+function resolveInteriorGraphScope(
+  doc: Y.Doc,
+  op: Pick<ConnectOp | AddNodeOp, "path" | "node_incarnation">,
   catalog?: WidgetCatalog,
-): InteriorConnectScope | null {
+  operation = "connect",
+  rejectMissingHead = false,
+  requireMatchingHeadIncarnation = false,
+): InteriorGraphScope | null {
   if (!op.path || op.path.length === 0) return null;
   const path = op.path.map(String);
-  let host = nodesMap(doc).get(path[0]!);
+  const routeIncarnation = op.node_incarnation ?? LEGACY_NODE_INCARNATION;
+  let host = resolveVisibleInteriorHost(doc, path[0]!, routeIncarnation, requireMatchingHeadIncarnation);
   if (!(host instanceof Y.Map)) {
     // Connect accepts instance routes only. A missing head must have been a
     // real instance in this incarnation; unlike set_widget, a definition id
     // is never a direct addressing alias for this operation.
     const retainedDefinitionId = stampsMap(doc).get(interiorRouteKey(
       path[0]!,
-      op.node_incarnation ?? LEGACY_NODE_INCARNATION,
+      routeIncarnation,
     ));
-    if (typeof retainedDefinitionId !== "string") return null;
+    if (typeof retainedDefinitionId !== "string") return missingInteriorHead(operation, path[0]!, rejectMissingHead);
     const retainedDefinition = resolveDefinition(doc, retainedDefinitionId);
-    if (!retainedDefinition) return null;
+    if (!retainedDefinition) return missingInteriorHead(operation, path[0]!, rejectMissingHead);
     const retainedId = String(retainedDefinition.get("id") ?? retainedDefinitionId);
     const retainedInstances = countDefinitionInstances(doc, retainedId, catalog) + 1;
     rejectSharedInteriorDefinition(retainedId, retainedInstances);
@@ -2082,29 +2142,7 @@ function resolveInteriorConnectScope(
     path.shift();
   }
 
-  function descend(host: Y.Map<unknown>, segment: string): Y.Map<unknown> {
-    const ownerType = String(host.get("type") ?? "");
-    const owner = resolveDefinition(doc, ownerType);
-    if (!owner) {
-      throw new OpRejectedError(
-        "not_a_subgraph",
-        `node ${String(host.get("id"))} is not a subgraph; cannot descend to '${segment}'`,
-      );
-    }
-    const ownerId = String(owner.get("id") ?? ownerType);
-    rejectSharedInteriorDefinition(ownerId, countDefinitionInstances(doc, ownerId, catalog));
-    const innerNodes = owner.get("nodes");
-    const inner = innerNodes instanceof Y.Map ? innerNodes.get(segment) : undefined;
-    if (!(inner instanceof Y.Map)) {
-      throw new OpRejectedError(
-        "interior_node_not_found",
-        `interior node ${segment} not found in subgraph ${ownerId}`,
-      );
-    }
-    return inner;
-  }
-
-  for (const segment of path) host = descend(host, segment);
+  for (const segment of path) host = descendInteriorHost(doc, host, segment, catalog);
   const hostType = String(host.get("type") ?? "");
   const definition = resolveDefinition(doc, hostType);
   if (!definition) {
@@ -2119,6 +2157,41 @@ function resolveInteriorConnectScope(
   return interiorConnectScope(definition, definitionId);
 }
 
+function missingInteriorHead(operation: string, head: string, reject: boolean): null {
+  if (!reject) return null;
+  throw new OpRejectedError(
+    "interior_container_not_found",
+    `${operation}: interior container ${head} not found`,
+  );
+}
+
+function descendInteriorHost(
+  doc: Y.Doc,
+  host: Y.Map<unknown>,
+  segment: string,
+  catalog?: WidgetCatalog,
+): Y.Map<unknown> {
+  const ownerType = String(host.get("type") ?? "");
+  const owner = resolveDefinition(doc, ownerType);
+  if (!owner) {
+    throw new OpRejectedError(
+      "not_a_subgraph",
+      `node ${String(host.get("id"))} is not a subgraph; cannot descend to '${segment}'`,
+    );
+  }
+  const ownerId = String(owner.get("id") ?? ownerType);
+  rejectSharedInteriorDefinition(ownerId, countDefinitionInstances(doc, ownerId, catalog));
+  const innerNodes = owner.get("nodes");
+  const inner = innerNodes instanceof Y.Map ? innerNodes.get(segment) : undefined;
+  if (!(inner instanceof Y.Map)) {
+    throw new OpRejectedError(
+      "interior_node_not_found",
+      `interior node ${segment} not found in subgraph ${ownerId}`,
+    );
+  }
+  return inner;
+}
+
 function rejectSharedInteriorDefinition(definitionId: string, instances: number): void {
   if (instances <= 1) return;
   throw new OpRejectedError(
@@ -2127,7 +2200,7 @@ function rejectSharedInteriorDefinition(definitionId: string, instances: number)
   );
 }
 
-function interiorConnectScope(definition: Y.Map<unknown>, definitionId: string): InteriorConnectScope {
+function interiorConnectScope(definition: Y.Map<unknown>, definitionId: string): InteriorGraphScope {
   const nodes = definition.get("nodes");
   const links = definition.get("links");
   if (!(nodes instanceof Y.Map) || !(links instanceof Y.Map)) {
@@ -2136,7 +2209,7 @@ function interiorConnectScope(definition: Y.Map<unknown>, definitionId: string):
   return { nodes: nodes as Y.Map<Y.Map<unknown>>, links, definition };
 }
 
-function applyInteriorConnect(doc: Y.Doc, op: ConnectOp, scope: InteriorConnectScope): SuccessfulOutcome {
+function applyInteriorConnect(doc: Y.Doc, op: ConnectOp, scope: InteriorGraphScope): SuccessfulOutcome {
   const linkRefusal = arrayItemRefusal(op.link_id) ?? mapValueRefusal(op.link_id);
   if (linkRefusal !== null) {
     throw new OpRejectedError("malformed_op", `connect: link_id: ${linkRefusal}`);
@@ -2218,13 +2291,71 @@ function recordInteriorLinkOrder(definition: Y.Map<unknown>, stamps: Y.Map<unkno
   }
 }
 
+function recordInteriorNodeOrder(definition: Y.Map<unknown>, stamps: Y.Map<unknown>, nodeKey: string, key: StampKey): void {
+  const nodeOrder = definition.get("node_order");
+  const orderedIds: unknown[] = Array.isArray(nodeOrder) ? [...nodeOrder] : [];
+  const definitionId = String(definition.get("id") ?? "");
+  const orderStampKey = (candidate: string) =>
+    JSON.stringify(["interior_node_order", definitionId, candidate]);
+  const additions: Record<string, StampKey> = Object.create(null) as Record<string, StampKey>;
+  for (const candidate of orderedIds.map(String)) {
+    const addedStamp = stamps.get(orderStampKey(candidate));
+    if (Array.isArray(addedStamp)) additions[candidate] = addedStamp as StampKey;
+  }
+  const wasAdded = Object.hasOwn(additions, nodeKey);
+  const wasPresent = orderedIds.some((candidate) => String(candidate) === nodeKey);
+  const nextOrder = addInteriorLinkOrder(orderedIds, nodeKey, key, additions);
+  if (!wasPresent || wasAdded) mset(stamps, orderStampKey(nodeKey), key);
+  if (nextOrder.some((candidate, index) => candidate !== orderedIds[index]) || nextOrder.length !== orderedIds.length) {
+    mset(definition, "node_order", nextOrder);
+  }
+}
+
+function reconcileInteriorNodeLinkRefs(
+  scope: InteriorGraphScope,
+  nodeId: unknown,
+  node: Y.Map<unknown>,
+): void {
+  const id = String(nodeId);
+  const inbound = new Map<number, unknown>();
+  const outbound = new Map<number, unknown[]>();
+  scope.links.forEach((raw: unknown) => {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return;
+    const link = raw as Record<string, unknown>;
+    if (String(link.origin_id) === id && typeof link.origin_slot === "number") {
+      const port = outbound.get(link.origin_slot) ?? [];
+      port.push(link.id);
+      outbound.set(link.origin_slot, port);
+    }
+    if (String(link.target_id) === id && typeof link.target_slot === "number") {
+      inbound.set(link.target_slot, link.id);
+    }
+  });
+
+  const inputs = node.get("inputs");
+  if (inputs instanceof Y.Array) {
+    inputs.forEach((slot: unknown, index: number) => {
+      if (slot instanceof Y.Map) mset(slot, "link", inbound.get(index) ?? null);
+    });
+  }
+  const outputs = node.get("outputs");
+  if (outputs instanceof Y.Array) {
+    outputs.forEach((slot: unknown, index: number) => {
+      if (!(slot instanceof Y.Map)) return;
+      const links = new Y.Array<unknown>();
+      links.push(outbound.get(index) ?? []);
+      mset(slot, "links", links);
+    });
+  }
+}
+
 function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): SuccessfulOutcome {
   // OP-ONLY validation first, before ANY document read decides the outcome
   // (KA-4, Amendment A6).
   requireOpOnlyValid(op);
 
   if (op.path && op.path.length > 0) {
-    const scope = resolveInteriorConnectScope(doc, op, catalog);
+    const scope = resolveInteriorGraphScope(doc, op, catalog);
     if (scope === null) return "no-op";
     return applyInteriorConnect(doc, op, scope);
   }
@@ -2410,7 +2541,7 @@ function operationLinkDestination(
 }
 
 /** Claim the normalized complete-tuple link register (schema Amendment A18). */
-function claimLinkIdentity(doc: Y.Doc, op: ConnectOp, scope?: InteriorConnectScope): boolean {
+function claimLinkIdentity(doc: Y.Doc, op: ConnectOp, scope?: InteriorGraphScope): boolean {
   const stamps = stampsMap(doc);
   const normalizedId = String(op.link_id);
   const targetKey = JSON.stringify(["link", ...(scope && op.path ? [op.path.map(String)] : []), normalizedId]);
@@ -2782,7 +2913,7 @@ function removeLink(doc: Y.Doc, linkId: unknown): void {
   if (linkState.has(key)) mdel(linkState, key);
 }
 
-function removeLinkInScope(scope: InteriorConnectScope, linkId: unknown): void {
+function removeLinkInScope(scope: InteriorGraphScope, linkId: unknown): void {
   const key = String(linkId);
   if (scope.links.has(key)) mdel(scope.links, key);
   scrubNodeLinkRefs(scope.nodes, (candidate) => candidate != null && String(candidate) === key);
