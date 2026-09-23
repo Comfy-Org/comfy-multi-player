@@ -104,6 +104,7 @@ export function writeTarget(op: WireOp): unknown[] {
       }
       return ["widget", String(op.node_id), incarnation, op.widget];
     case "add_node":
+      return nodeTarget(op.node_id, op.path);
     case "delete_node":
       return ["node", String(op.node_id)];
     case "set_node_field":
@@ -162,6 +163,12 @@ export function writeTarget(op: WireOp): unknown[] {
       checkExhaustive(op);
       return [(op as WireOp).op];
   }
+}
+
+function nodeTarget(nodeId: unknown, path?: readonly string[] | null): unknown[] {
+  return path && path.length > 0
+    ? ["node", path.map(String), String(nodeId)]
+    : ["node", String(nodeId)];
 }
 
 /** Target key for the inputcount widget write embedded in a grow connect. */

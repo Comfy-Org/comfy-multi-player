@@ -185,6 +185,8 @@ export interface OpBase {
 
 export interface AddNodeOp extends OpBase {
   op: "add_node";
+  /** Non-empty instance route when adding inside a subgraph definition. */
+  path?: [string, ...string[]];
   /** Creator-carried lifetime token; omitted by legacy v1 op streams (life 0). */
   node_incarnation?: string;
   node_id: NodeId;

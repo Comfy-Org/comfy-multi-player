@@ -7,6 +7,12 @@ this package uses semantic versioning.
 
 ## Unreleased
 
+### Added
+
+- Support `add_node` inside a subgraph definition via a non-empty instance
+  `path`, with path-scoped LWW identity, deterministic interior node ordering,
+  shared-definition protection, and explicit missing-container rejection.
+
 ## 0.3.5 - 2026-09-23
 
 ### Fixed

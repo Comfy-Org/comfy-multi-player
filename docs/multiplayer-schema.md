@@ -489,7 +489,8 @@ so a raw key gave `7` and `"7"` two registers for one node.
 | `connect` (promoted input, A15) | `("input", String(to_node), "grow", name)` with the FULL declared name (names may contain dots — `images.image0`), matching comfy-cli `_write_target` at amendment v1.5 (`ba0b0b92abcc86b01e8a6704d07088f92afe7aa7`); only an ordinary autogrow keys by base name | **yes (A15)** — one register named by the definition |
 | every `connect` (link identity, A18) | `("link", String(link_id))` | **yes (A18)** — greatest stamp owns the complete tuple and coherent endpoint references |
 | `set_node_field` (package-local, A21) | `("node_field", String(node_id), node_incarnation, field)` | **yes (A21)** — one register per field and node lifetime |
-| `add_node` / `delete_node` (presence) | `("node", String(node_id))` | **yes (A7)** |
+| `add_node` (top-level) / `delete_node` (presence) | `("node", String(node_id))` | **yes (A7)** |
+| `add_node` (interior) | `("node", instance_path, String(node_id))` | **yes** — root and interior identities never contend |
 | `clear` (one row per entry in `removed_nodes`) | `("node", String(node_id))` | **yes (A7)** |
 | `delete_node` (severance of the link ids in `removed_links`) | none | no — monotonic, ungated (A7) |
 
@@ -655,7 +656,11 @@ package also supports `connect` with a non-empty instance `path`:
   A missing instance without a retained route is an accepted, consumed no-op,
   including when the path happens to name a definition. It does not edit that
   definition; it is not a rejected operation with a byte-identity guarantee.
-- `add_node`/`delete_node` cannot address interior nodes at all.
+- Interior `add_node` resolves the definition owned by a non-empty instance
+  `path`, rejects writes to shared unforked definitions, and inserts the node
+  into that definition's deterministic `node_order`. A missing container is a
+  rejected `interior_container_not_found`; it never synthesizes a definition.
+  `delete_node` still cannot address interior nodes.
 
 `set_widget` accepts three address forms — flat promoted (`57.text`, routed
 through the instance's `proxyWidgets`), nested interior (`57/3.steps`), and

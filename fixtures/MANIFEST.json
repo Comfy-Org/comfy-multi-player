@@ -19,11 +19,15 @@
     },
     "golden-vectors/conformance.json": {
       "generator": "hand-authored package-local conformance manifest",
-      "sha256": "0c6ec927025ed8f7c66e99b4f73a1d6df2d6e65bc29162396b3e5977e8447c24"
+      "sha256": "772607484279e2ac685e6e208837fa79f3349dcc6bcbb1630b748e62fc89d9cb"
     },
     "golden-vectors/definition-payload-rejections.json": {
       "generator": "hand-authored package-local N1-N8 rejection fixtures",
       "sha256": "d77b5608988440393eeee1bb620ddfc18f5bde3a54d4ea991d6a025caeb16639"
+    },
+    "golden-vectors/session-interior-add-node.session.jsonl": {
+      "generator": "hand-authored package-local interior add_node conformance vector (D-E2 / ecw337-4)",
+      "sha256": "ca396e6fa40f03e35d35f0c3683be4829eb0abfac4b3e3be2f4343b7982e14c3"
     },
     "lww-vectors.json": {
       "generator": "crdt-spike/gen_fixtures.py: workflow_ops.apply_op both-order vectors",
