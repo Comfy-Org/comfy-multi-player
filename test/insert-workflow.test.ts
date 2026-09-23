@@ -1032,3 +1032,47 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
     expect(definitions.find((definition) => definition.id === "def-1-deadbeef")!.name).toBe("Occupied");
   });
 });
+
+// Declared last in the file: every other test's expectations embed op_ids
+// derived from the shared `seq` counter `env()` advances, so a new test
+// declared earlier would shift them all.
+describe("insert_workflow: subgraph instance nested inside another subgraph", () => {
+  it("remaps an interior node that is itself a subgraph instance of a FLAT SIBLING definition", () => {
+    // litegraph's own serializer (`LGraph.asSerialisable`, `findUsedSubgraphIds`)
+    // never nests a definition inside another definition's own
+    // `definitions.subgraphs` — it collects every used subgraph, however
+    // deeply an instance sits, into ONE flat top-level list. A subgraph
+    // definition nested inside another subgraph (as opposed to two
+    // independently-instantiated definitions, see "materializes two distinct
+    // subgraph definitions..." in ComfyUI_frontend) is expressed this way:
+    // "outer" and "leaf" are flat siblings here, and "outer"'s own interior
+    // node names "leaf" by id in its `type` field, exactly as an interior
+    // SubgraphNode instance does. Contrast with
+    // "stores nested definitions as addressable maps for later interior
+    // set_widget" above, which covers the OTHER shape this op supports: a
+    // definition genuinely nested in the JSON via `definitions.subgraphs`.
+    const doc = mint(baseWorkflow(), catalog);
+    const op = insertOp({
+      nodes: [],
+      links: [],
+      definitions: {
+        subgraphs: [
+          { id: "leaf", name: "Leaf", nodes: [{ id: 1, type: "Inner", widgets_values: ["v"] }], links: [] },
+          { id: "outer", name: "Outer", nodes: [{ id: 2, type: "leaf" }], links: [] },
+        ],
+      },
+    });
+
+    expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+    const definitions = project(doc, catalog).definitions!.subgraphs! as Array<Record<string, unknown>>;
+    const leaf = definitions.find((definition) => definition["name"] === "Leaf")!;
+    const outer = definitions.find((definition) => definition["name"] === "Outer")!;
+    const interiorType = String(((outer["nodes"] as Array<{ type: unknown }>)[0]!).type);
+
+    // Before the fix this stayed "leaf" — the un-remapped, un-registered
+    // raw id nothing else in the document carries — instead of resolving to
+    // the SAME id the leaf definition itself was remapped to.
+    expect(interiorType).toBe(String(leaf["id"]));
+    expect(interiorType).not.toBe("leaf");
+  });
+});

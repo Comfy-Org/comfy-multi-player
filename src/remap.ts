@@ -277,9 +277,39 @@ export function remapInsertedWorkflowIds(wf: WorkflowJSON, opId: string): Workfl
       collect(nested, definitionScope);
     }
   };
-  const interiorAt = (scope: string) => (definitionId: string) =>
-    interiorNodeIdsByScope.get(definitionScopeOf(scope, definitionId));
   collect(subgraphs, "root");
+  /**
+   * A definition's interior node can name, by its `type`, a definition
+   * genuinely NESTED inside this one (JSON `definitions.subgraphs` — the
+   * `childScope`) or — the shape litegraph's own serializer actually
+   * produces — a definition this op carries as a FLAT SIBLING of this one:
+   * `LGraph.asSerialisable()` never nests a definition inside another
+   * definition's own `definitions.subgraphs`. It walks every USED subgraph
+   * reachable from the root, however deeply an instance sits, into the
+   * single top-level `out.definitions.subgraphs` list it emits alongside
+   * the root graph (`findUsedSubgraphIds`), so an interior node that is
+   * itself a subgraph instance names a definition that is this
+   * definition's SIBLING (the `siblingScope` this definition itself was
+   * collected under), not one nested under it.
+   *
+   * Check the nested scope first, so two definitions nested under different
+   * parents that happen to share a raw id (see
+   * "scopes repeated nested definition ids to their sibling definition
+   * paths") stay distinct, then fall back to the sibling scope. Before this
+   * fallback, an interior node that was itself a subgraph instance kept its
+   * un-remapped, un-registered blueprint id and materialized as a plain,
+   * widget-less node.
+   */
+  const definitionIdsAt = (childScope: string, siblingScope: string): Map<string, string> => {
+    const sibling = definitionIdsByScope.get(siblingScope) ?? new Map<string, string>();
+    const child = definitionIdsByScope.get(childScope) ?? new Map<string, string>();
+    return child.size === 0 ? sibling : new Map([...sibling, ...child]);
+  };
+  const interiorNodeIdsAt =
+    (childScope: string, siblingScope: string) =>
+    (definitionId: string): Map<string, string> | undefined =>
+      interiorNodeIdsByScope.get(definitionScopeOf(childScope, definitionId)) ??
+      interiorNodeIdsByScope.get(definitionScopeOf(siblingScope, definitionId));
   const rewrite = (definitions: Array<Record<string, unknown>>, scope: string): void => {
     const definitionIds = definitionIdsByScope.get(scope)!;
     for (const definition of definitions) {
@@ -290,16 +320,24 @@ export function remapInsertedWorkflowIds(wf: WorkflowJSON, opId: string): Workfl
         definition,
         opId,
         definitionScope,
-        definitionIdsByScope.get(definitionScope)!,
+        definitionIdsAt(definitionScope, scope),
         true,
         true,
-        interiorAt(definitionScope),
+        interiorNodeIdsAt(definitionScope, scope),
       );
       const nested = (definition["definitions"] as { subgraphs?: Array<Record<string, unknown>> } | undefined)?.subgraphs ?? [];
       rewrite(nested, definitionScope);
     }
   };
-  remapGraph(out, opId, "root", definitionIdsByScope.get("root")!, true, false, interiorAt("root"));
+  remapGraph(
+    out,
+    opId,
+    "root",
+    definitionIdsByScope.get("root")!,
+    true,
+    false,
+    interiorNodeIdsAt("root", "root"),
+  );
   rewrite(subgraphs, "root");
   return out;
 }
