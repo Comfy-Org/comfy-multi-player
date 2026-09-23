@@ -7,6 +7,24 @@ this package uses semantic versioning.
 
 ## Unreleased
 
+## 0.3.5 - 2026-09-23
+
+### Fixed
+
+- Declared `structuredClone` as an ambient global in `src/global.d.ts` instead
+  of relying on a consumer's resolved `@types/node` version or the `"DOM"`
+  lib. TypeScript only knows about `structuredClone`'s type via
+  `lib.dom.d.ts`/`lib.webworker.d.ts`, or via `@types/node`'s `web-globals`
+  module, which only later `@types/node` releases ship. A toolchain that
+  resolves an older `@types/node` with no `"DOM"` in `lib` (this package's own
+  `tsconfig.json` has `lib: ["ES2022"]`) hit `TS2304: Cannot find name
+  'structuredClone'` across `applier.ts`, `project.ts`, `mint.ts`,
+  `compact.ts`, and `doc.ts`, even though the function is present at runtime
+  in Node >=17 and every evergreen browser. The declaration coexists with
+  `@types/node`'s own when a newer version is resolved, and does not add
+  `"DOM"` to `lib`, which would conflict with this package's `check:purity`
+  guard against DOM globals leaking into the Node-side build.
+
 ## 0.3.4 - 2026-09-23
 
 ### Fixed
