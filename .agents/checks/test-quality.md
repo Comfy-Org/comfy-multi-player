@@ -90,7 +90,7 @@ The item-2 oracle, and the deference to the profile that owns it:
 <!-- claim: a failed op must leave encoded document bytes unchanged :: .agents/checks/convergence-idempotency.md -->
 <!-- claim: encodeStateAsUpdate must be byte-identical :: test/ka4-rejection-byte-identity.test.ts -->
 <!-- claim: encodeStateAsUpdate must be byte-identical :: test/w8-applier-stamps-edge.test.ts -->
-<!-- claim: MIGRATED from KNOWN_KA4_VIOLATIONS when PR #34 landed :: test/ka4-rejection-byte-identity.test.ts -->
+<!-- claim: MIGRATED into CASES when PR #34 landed :: test/ka4-rejection-byte-identity.test.ts -->
 <!-- claim: import { appliedMap } from "../src/doc.js"; :: test/ka4-rejection-byte-identity.test.ts -->
 <!-- claim: break; // abort-remainder :: src/applier.ts -->
 <!-- claim: a delete-wins no-op that CONSUMES the `op_id` :: src/applier.ts -->
