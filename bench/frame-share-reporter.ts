@@ -7,45 +7,19 @@
  * is a number a reader can act on, where "1.03 ms" invites comparison against
  * nothing.
  *
- * WHY A REPORTER AND NOT `afterAll`. `afterAll` does not run under
- * `vitest bench` — probed against vitest 4.1.11, where a hook in a benchmark
- * suite produced no output at all. Reporters are the supported seam.
- *
- * WHY `onTestRunEnd` AND `test.task.result.benchmark`. Vitest 4 replaced the
- * v3 `onFinished(files)` hook with `onTestRunEnd(testModules)`; a reporter
- * defining only `onFinished` loads, runs `onInit`, and is then silently never
- * called again. The public `test.meta().benchmark` is only the boolean marking
- * a task AS a benchmark — the measurements hang off the underlying runner task
- * at `test.task.result.benchmark`. Both were established by probing, not from
- * docs, so the access is defensive: anything missing is skipped rather than
- * throwing, and a version bump that moves these degrades to printing nothing
- * instead of failing a run that has no assertions to fail.
+ * Vitest 5 exposes completed benchmark measurements through the reporter's
+ * dedicated `onTestCaseBenchmark` hook. Rows are collected there and printed
+ * together at the end of the run.
  *
  * This asserts nothing and fails nothing. A frame share is context for setting
  * a budget later, not a pass mark; see bench/apply-project.bench.ts for why
  * this baseline refuses to invent a threshold.
  */
 
+import type { Reporter } from "vitest/node";
+
 /** One 60 Hz frame, in milliseconds. Must match bench/apply-project.bench.ts. */
 const FRAME_MS = 16.6;
-
-interface BenchmarkMeasurement {
-  mean?: number;
-  p99?: number;
-  rme?: number;
-}
-
-interface BenchTest {
-  name: string;
-  parent?: { name?: string };
-  /** Public and stable: `true` marks a task AS a benchmark. Not the measurements. */
-  meta?: () => { benchmark?: boolean };
-  task?: { result?: { benchmark?: BenchmarkMeasurement } };
-}
-
-interface TestModule {
-  children?: { allTests?: () => Iterable<BenchTest> };
-}
 
 interface Row {
   label: string;
@@ -54,53 +28,22 @@ interface Row {
   rme: number;
 }
 
-/** One finished benchmark's measurements, or `null` when they are not where we expect. */
-function measurementOf(test: BenchTest): Row | null {
-  const measured = test.task?.result?.benchmark;
-  if (!measured || typeof measured.mean !== "number") return null;
-  const suite = test.parent?.name;
-  return {
-    label: suite ? `${suite} \u203a ${test.name}` : test.name,
-    mean: measured.mean,
-    p99: typeof measured.p99 === "number" ? measured.p99 : Number.NaN,
-    rme: typeof measured.rme === "number" ? measured.rme : Number.NaN,
-  };
-}
+const rows: Row[] = [];
 
-/** Defensive by design: see the header on why these accessors were probed, not read from docs. */
-function collectRows(modules: TestModule[]): { rows: Row[]; benchmarksSeen: number } {
-  const rows: Row[] = [];
-  let benchmarksSeen = 0;
-  for (const module of modules) {
-    for (const test of module.children?.allTests?.() ?? []) {
-      if (test.meta?.()?.benchmark) benchmarksSeen++;
-      const row = measurementOf(test);
-      if (row) rows.push(row);
+const reporter = {
+  onTestCaseBenchmark(testCase, benchmark): void {
+    for (const task of benchmark.tasks) {
+      rows.push({
+        label: `${testCase.fullName} \u203a ${task.name}`,
+        mean: task.latency.mean,
+        p99: task.latency.p99,
+        rme: task.latency.rme,
+      });
     }
-  }
-  return { rows, benchmarksSeen };
-}
+  },
 
-export default class FrameShareReporter {
-  onTestRunEnd(modules: TestModule[] = []): void {
-    const { rows, benchmarksSeen } = collectRows(modules);
-
-    // Benchmarks ran but produced no frame shares: the measurements moved.
-    // Say so loudly instead of printing nothing. A silent skip here looks
-    // exactly like a healthy run while the only figure this baseline exists to
-    // produce has quietly stopped appearing. Not thrown: this file asserts
-    // nothing, and failing a run that has no assertions would turn a reporting
-    // regression into a red build on a benchmark nobody gates on.
-    if (rows.length === 0) {
-      if (benchmarksSeen > 0) {
-        console.error(
-          `\n  [frame-share] ${benchmarksSeen} benchmark(s) ran but none exposed measurements at ` +
-            "`test.task.result.benchmark` — vitest likely moved them. No frame shares were printed; " +
-            "update bench/frame-share-reporter.ts.\n",
-        );
-      }
-      return;
-    }
+  onTestRunEnd(): void {
+    if (rows.length === 0) return;
 
     const share = (ms: number) => (Number.isFinite(ms) ? `${((ms / FRAME_MS) * 100).toFixed(2)}%` : "n/a");
     const width = Math.max(...rows.map((row) => row.label.length));
@@ -114,5 +57,8 @@ export default class FrameShareReporter {
       );
     }
     console.log("");
-  }
-}
+    rows.length = 0;
+  },
+} satisfies Reporter;
+
+export default reporter;

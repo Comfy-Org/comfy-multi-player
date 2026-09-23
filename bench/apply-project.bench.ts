@@ -12,12 +12,10 @@
  *   npm run build && npm run bench
  *
  * WHAT IS TIMED. Document construction and correctness assertions are outside
- * the timed region. Vitest exposes Tinybench's phase-level `setup`/`teardown`
- * hooks, but not its per-invocation hooks, so each phase preallocates a fixed
- * pool of fresh documents. The timed callback pays only the constant fixture
- * lookup/result capture around `applyOps`. Fixed iteration counts make the
- * pool exact, including one extra document for Tinybench's untimed async-
- * detection call in each phase.
+ * the timed region. Vitest exposes Tinybench's per-invocation `beforeEach` and
+ * `afterEach` hooks, so every invocation gets a fresh document and every
+ * result is checked after timing stops. The timed callback pays only the
+ * result capture around `applyOps`.
  *
  * DETERMINISM, AND ITS LIMIT. The INPUTS are fixed: both workflows and both op
  * batches come from one seed (`SEED`) through a small LCG, so the same
@@ -51,7 +49,7 @@
  * between an idle and a loaded host while this file was being written.
  */
 import { cpus, loadavg } from "node:os";
-import { bench, describe } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import {
   applyOps,
@@ -230,62 +228,47 @@ const SIZES = [20, 200] as const;
 
 for (const size of SIZES) {
   describe(`${size} nodes (share of a ${FRAME_MS} ms frame)`, () => {
-    const workflow = seededWorkflow(size);
+    test("apply and project", async ({ bench }) => {
+      const workflow = seededWorkflow(size);
 
-    // One op per KSampler in the document, so the batch scales with the
-    // document instead of being a fixed 10 ops that get cheaper per node as
-    // the graph grows.
-    const opCount = Math.max(1, Math.round(size / 4));
-    const ops = seededOps(workflow, opCount);
+      // One op per KSampler in the document, so the batch scales with the
+      // document instead of being a fixed 10 ops that get cheaper per node as
+      // the graph grows.
+      const opCount = Math.max(1, Math.round(size / 4));
+      const ops = seededOps(workflow, opCount);
 
-    assertReusedDocumentIsInvalid(workflow, ops, `${size}-node applyOps`);
+      assertReusedDocumentIsInvalid(workflow, ops, `${size}-node applyOps`);
 
-    let applyDocs: ReturnType<typeof mint>[] = [];
-    let applyResults: Array<ApplyResult | undefined> = [];
-    let applyCursor = 0;
+      let applyDoc: ReturnType<typeof mint>;
+      let applyResult: ApplyResult | undefined;
 
-    const invocationCount = (mode: "warmup" | "run") =>
-      (mode === "warmup" ? APPLY_WARMUP_ITERATIONS : APPLY_ITERATIONS) + 1;
+      const applyBenchmark = await bench(
+        `applyOps — ${opCount} valid set_widget ops`,
+        {
+          beforeEach: () => {
+            applyDoc = mint(workflow, catalog);
+            applyResult = undefined;
+          },
+          afterEach: () => {
+            if (!applyResult) throw new Error(`${size}-node applyOps invocation produced no result`);
+            assertAppliedSample(applyDoc, ops, applyResult, `${size}-node applyOps invocation`);
+          },
+        },
+        () => {
+          applyResult = applyOps(applyDoc, ops, catalog);
+        },
+      ).run({
+        time: 0,
+        iterations: APPLY_ITERATIONS,
+        warmupTime: 0,
+        warmupIterations: APPLY_WARMUP_ITERATIONS,
+      });
+      expect(applyBenchmark.latency.samplesCount).toBe(APPLY_ITERATIONS);
 
-    bench(`applyOps — ${opCount} valid set_widget ops`, () => {
-      const doc = applyDocs[applyCursor];
-      if (!doc) throw new Error(`applyOps fixture pool exhausted at invocation ${applyCursor}`);
-      applyResults[applyCursor] = applyOps(doc, ops, catalog);
-      applyCursor++;
-    }, {
-      time: 0,
-      iterations: APPLY_ITERATIONS,
-      warmupTime: 0,
-      warmupIterations: APPLY_WARMUP_ITERATIONS,
-      setup: (_task, mode) => {
-        applyDocs = Array.from({ length: invocationCount(mode) }, () => mint(workflow, catalog));
-        applyResults = Array.from({ length: invocationCount(mode) });
-        applyCursor = 0;
-      },
-      teardown: (_task, mode) => {
-        const expected = invocationCount(mode);
-        if (applyCursor !== expected) {
-          throw new Error(`${size}-node ${mode}: expected ${expected} invocations, got ${applyCursor}`);
-        }
-        for (let i = 0; i < expected; i++) {
-          const result = applyResults[i];
-          if (!result) throw new Error(`${size}-node ${mode}: invocation ${i} produced no result`);
-          assertAppliedSample(applyDocs[i]!, ops, result, `${size}-node ${mode} invocation ${i}`);
-        }
-      },
+      const projectDoc = mint(workflow, catalog);
+      await bench("project — full document to WorkflowJSON", () => {
+        project(projectDoc, catalog);
+      }).run();
     });
-
-    bench("project — full document to WorkflowJSON", () => {
-      project(projectDoc, catalog);
-    }, {
-      setup: () => {
-        projectDoc = mint(workflow, catalog);
-      },
-    });
-
   });
 }
-
-// Hoisted so `setup` can rebuild it without the timed closure capturing a stale
-// binding.
-let projectDoc: ReturnType<typeof mint>;
