@@ -501,11 +501,19 @@ function* pairCases(tier: string) {
   }
 }
 
-describe.each([
+const PERMUTATION_TIERS: Array<[
+  tier: string,
+  tags: string[],
+  timeout: number,
+  expectedPairs: number,
+  sampledRuns: number,
+]> = [
   // Scales as (frozen kinds)² × 32; nine kinds since `set_node_field`.
-  { tier: "representative", tags: [], timeout: 15_000, expectedPairs: 2_592, sampledRuns: 128 },
-  { tier: "exhaustive", tags: ["exhaustive"], timeout: 900_000, expectedPairs: PAIR_EXECUTIONS, sampledRuns: SAMPLED_RUNS },
-])("full op-pool permutation equivalence ($tier)", ({ tier, tags, timeout, expectedPairs, sampledRuns }) => {
+  ["representative", [], 15_000, 2_592, 128],
+  ["exhaustive", ["exhaustive"], 900_000, PAIR_EXECUTIONS, SAMPLED_RUNS],
+];
+
+describe.each(PERMUTATION_TIERS)("full op-pool permutation equivalence ('%s')", (tier, tags, timeout, expectedPairs, sampledRuns) => {
   it("covers every declared op-kind pair across representative state, stamp, actor, order, and batch dimensions", { tags, timeout }, () => {
     let executions = 0;
     let serial = 1;
