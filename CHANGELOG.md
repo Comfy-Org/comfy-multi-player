@@ -7,6 +7,23 @@ this package uses semantic versioning.
 
 ## Unreleased
 
+## 0.3.4 - 2026-09-23
+
+### Fixed
+
+- Mint genuine numeric link IDs for `insert_workflow` instead of folding them
+  into strings. Link IDs are now derived purely from immutable operation
+  content (`op_id`, graph scope, and raw link ID) via SHA-256 folded into the
+  full JavaScript safe-integer range, matching the branded-number `LinkId`
+  type ComfyUI_frontend expects and removing the reproducible collisions the
+  prior 32-bit string-folding workaround produced (ADR-033).
+
+### Changed
+
+- `insert_workflow` link-ID derivation no longer reads document state or
+  retries against already-present IDs, so replicas applying colliding
+  operations in different arrival orders still assign the same ID.
+
 ## 0.3.3 - 2026-09-22
 
 ### Fixed
