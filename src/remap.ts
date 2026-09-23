@@ -1,4 +1,4 @@
-import { OpRejectedError, type WorkflowJSON, type WorkflowNode } from "./types.js";
+import type { WorkflowJSON, WorkflowNode } from "./types.js";
 import { sha256Hex } from "./digest.js";
 
 function derivedId(opId: string, scope: string, kind: string, original: unknown): string {
@@ -14,63 +14,59 @@ function derivedDefinitionId(opId: string, scope: string, original: unknown): st
  * A newly derived link id must be a real `number` — ComfyUI_frontend's
  * `LinkId` is `number & { __brand }`, unlike `NodeId` (`string | number`), so
  * the string form `derivedId` gives every other kind cannot satisfy it
- * (ComfyUI_frontend#18458). Hex digits kept from the digest: comfortably
- * inside `Number.MAX_SAFE_INTEGER` (2^53 - 1) even after the `+1` below, so
- * the candidate is always a lossless JS integer.
+ * (ComfyUI_frontend#18458).
+ *
+ * `derivedLinkId` folds the digest into the FULL safe-integer range
+ * (`[1, Number.MAX_SAFE_INTEGER]`, i.e. `[1, 2^53 - 1]`) rather than the
+ * narrower 52-bit window an earlier revision used, so the mint spends every
+ * bit of entropy `LinkId`'s numeric type can safely hold (ADR-033 amendment,
+ * review discussion on PR #245). 32 hex characters (128 bits) are taken from
+ * the digest before the modulus is applied so the reduction to 53 bits stays
+ * close to uniform; sha256Hex's 64-character output has plenty to spare.
  */
-const LINK_ID_HEX_DIGITS = 13; // 52 bits
+const LINK_ID_HEX_DIGITS = 32; // 128 bits, folded down to 53 by SAFE_INTEGER_MODULUS below.
+
+/** `2^53 - 1` as a `BigInt`, i.e. `Number.MAX_SAFE_INTEGER` — every candidate lands in `[1, MAX_SAFE_INTEGER]`. */
+const SAFE_INTEGER_MODULUS = BigInt(Number.MAX_SAFE_INTEGER);
 
 /**
- * Bounded retries per link before minting gives up (ADR-033). Collision
- * probability per attempt is `taken.size / 2^52`; any realistic document —
- * even one with millions of live links — clears this on the first or second
- * attempt. The bound exists so a pathological/adversarial reservation set
- * (see `docs/decisions/EXCEPTIONS.md`'s KA-5 row) fails LOUDLY, byte-identically,
- * and in bounded work, rather than looping.
- */
-export const MAX_LINK_ID_MINT_ATTEMPTS = 256;
-
-/** Deterministic 52-bit candidate for the `attempt`'th try of `seed`. Never 0. */
-function candidateLinkId(seed: string, attempt: number): number {
-  const hex = sha256Hex(`${seed}#${String(attempt)}`).slice(0, LINK_ID_HEX_DIGITS);
-  return Number(BigInt(`0x${hex}`)) + 1;
-}
-
-/**
- * Mint a genuinely unique numeric id for a link `insert_workflow` carries.
+ * Mint a numeric id for a link `insert_workflow` carries — PURELY as a
+ * function of the op's own content (`opId`, `scope`, `original`), with NO
+ * document-state dependency (ADR-033 amendment, superseding the
+ * document-verified retry mint the original revision of this PR shipped).
  *
- * Deterministic given (`opId`, `scope`, `original`) and `taken`'s state at
- * the time of the call: the same inputs always retry through the same
- * candidate sequence, and the FIRST one absent from `taken` wins and is
- * immediately reserved into `taken` so a later link in the same insertion
- * (this scope or any other) can never mint the same value. This is what
- * makes the guarantee genuine rather than probabilistic — every candidate is
- * checked against every id the caller told this function about, not merely
- * assumed unlikely to collide (ComfyUI_frontend#18458's review: a 32-bit
- * hash collided at a measured ~0.01-1% rate at realistic link counts).
+ * Christian Byrne's review of the original revision (PR #245, inline on this
+ * file) found that the retry-against-`taken` design made link identity
+ * depend on LOCAL ARRIVAL ORDER: if two link seeds shared the same first
+ * candidate, applying them A-then-B minted A the natural candidate and B the
+ * next one, while applying B-then-A minted B the natural candidate and A the
+ * next one — two replicas that apply the same op set in different orders
+ * could project genuinely different link ids for the same logical links,
+ * which is exactly the class of bug KA-4 (deterministic/idempotent
+ * projection) and KA-2 (order-independent identity) exist to rule out.
  *
- * `taken` is caller-supplied rather than read here (ADR-033): this module
- * stays free of `Y.Doc`/Yjs entirely (KA-3), and the caller decides what
- * "already spoken for" means — `applier.ts` seeds it from
- * `doc.ts`'s `persistedLinkIds()` before the first call in one
- * `insert_workflow` application, so the reservation also covers ids a PRIOR
- * `insert_workflow` (or a native `connect`/`mint()`) already committed to
- * this same document, which is exactly the cross-op collision
- * ComfyUI_frontend#18458 reproduced against the interim 32-bit hash.
+ * The fix removes the retry (and the document read it required) entirely:
+ * the SAME op, applied to ANY document state, in ANY order relative to any
+ * other op, always derives the SAME numeric id — because nothing but the
+ * op's own fields feeds the hash. This restores ADR-031's "producers do not
+ * inspect document state or remap ids" for links too, at the cost of the
+ * "checked collision-free against this document" property the retry design
+ * offered: two derived ids (or a derived id and something already persisted)
+ * can now coincide, with probability bounded by the ~53 bits of entropy
+ * below (see the KA-5 row in `docs/decisions/EXCEPTIONS.md` for the exact
+ * figure and why it is an accepted residual risk rather than a defect).
+ * `applier.ts`'s existing `acceptsLink` still catches a REALIZED collision
+ * against an already-persisted link at apply time (the same LWW-gated check
+ * every other `insert_workflow` id kind already goes through) — that check
+ * is ordinary id-collision handling this package has always had, not new
+ * state-dependence introduced here, and it resolves by the op-order-
+ * independent `[base_version, actor, op_id]` stamp comparison, not by
+ * arrival order.
  */
-function derivedLinkId(opId: string, scope: string, original: unknown, taken: Set<number>): number {
+function derivedLinkId(opId: string, scope: string, original: unknown): number {
   const seed = derivedId(opId, scope, "link", original);
-  for (let attempt = 0; attempt < MAX_LINK_ID_MINT_ATTEMPTS; attempt++) {
-    const candidate = candidateLinkId(seed, attempt);
-    if (!taken.has(candidate)) {
-      taken.add(candidate);
-      return candidate;
-    }
-  }
-  throw new OpRejectedError(
-    "link_id_collision",
-    `insert_workflow: could not mint a collision-free numeric id for link '${String(original)}' (scope '${scope}') after ${String(MAX_LINK_ID_MINT_ATTEMPTS)} attempts`,
-  );
+  const hex = sha256Hex(seed).slice(0, LINK_ID_HEX_DIGITS);
+  return Number((BigInt(`0x${hex}`) % SAFE_INTEGER_MODULUS) + 1n);
 }
 
 function linkEndpoints(link: unknown): [unknown, unknown] | undefined {
@@ -179,7 +175,6 @@ function remapGraph(
   scope: string,
   definitionIds: Map<string, string>,
   dropDanglingLinks: boolean,
-  takenLinkIds: Set<number>,
   isDefinitionInterior = false,
   interiorNodeIds: (definitionId: string) => Map<string, string> | undefined = () => undefined,
 ): void {
@@ -198,7 +193,7 @@ function remapGraph(
   });
   for (const link of links) {
     const id = linkId(link);
-    linkIds.set(normalizedId(id), derivedLinkId(opId, scope, id, takenLinkIds));
+    linkIds.set(normalizedId(id), derivedLinkId(opId, scope, id));
   }
 
   for (const node of nodes) {
@@ -243,25 +238,21 @@ function remapGraph(
  * Deterministically remap every id carried by an insertion op, including
  * nested definition graphs.
  *
- * `reservedLinkIds` seeds the numeric link-id mint's exclusion set (ADR-033):
- * the caller (`applier.ts`) passes every numeric link id already persisted in
- * the target document (`doc.ts`'s `persistedLinkIds`) so a freshly minted id
- * can never land on one. It defaults to empty for callers with no document
- * to consult — direct unit tests, and any caller minting a workflow that has
- * never been merged into a doc. One `Set` is shared across the whole
- * traversal (root scope and every definition scope, at every nesting depth)
- * so two links in the SAME insertion, however they are scoped, can never
- * collide with each other either.
+ * Every id this function derives — node, link, group, and definition — is a
+ * PURE function of (`opId`, `scope`, `kind`, `original`) alone (ADR-031,
+ * amended for links by the ADR-033 revision on PR #245). No document, no
+ * caller-supplied reservation set, and no state from any other call factors
+ * into the result: the same `(wf, opId)` pair always produces byte-identical
+ * output, on any replica, regardless of what else that replica's document
+ * holds or what order concurrent ops arrive in. This is what makes the
+ * result safe to compute before touching the target document at all —
+ * `applier.ts` calls this once per `insert_workflow` application with no
+ * document in scope yet.
  */
-export function remapInsertedWorkflowIds(
-  wf: WorkflowJSON,
-  opId: string,
-  reservedLinkIds: Iterable<number> = [],
-): WorkflowJSON {
+export function remapInsertedWorkflowIds(wf: WorkflowJSON, opId: string): WorkflowJSON {
   const out = structuredClone(wf) as WorkflowJSON & Record<string, unknown>;
   out.links ??= [];
   out.groups ??= [];
-  const takenLinkIds = new Set<number>(reservedLinkIds);
   const subgraphs = (out.definitions?.subgraphs ?? []) as Array<Record<string, unknown>>;
   const definitionIdsByScope = new Map<string, Map<string, string>>();
   // Interior node id maps keyed by definition scope, computed before any
@@ -301,7 +292,6 @@ export function remapInsertedWorkflowIds(
         definitionScope,
         definitionIdsByScope.get(definitionScope)!,
         true,
-        takenLinkIds,
         true,
         interiorAt(definitionScope),
       );
@@ -309,7 +299,7 @@ export function remapInsertedWorkflowIds(
       rewrite(nested, definitionScope);
     }
   };
-  remapGraph(out, opId, "root", definitionIdsByScope.get("root")!, true, takenLinkIds, false, interiorAt("root"));
+  remapGraph(out, opId, "root", definitionIdsByScope.get("root")!, true, false, interiorAt("root"));
   rewrite(subgraphs, "root");
   return out;
 }

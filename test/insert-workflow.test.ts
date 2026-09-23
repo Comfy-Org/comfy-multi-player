@@ -11,13 +11,17 @@
  * the op_id gate, and byte-identical doc on rejection.
  *
  * ID allocation belongs to the applier and is derived from the immutable op
- * id plus each raw id, never from mutable document state — with ONE
- * documented exception (ADR-033, `docs/decisions/EXCEPTIONS.md`'s KA-5 row):
- * a link's id must be a real `number` (ComfyUI_frontend#18458 — `LinkId` is
- * a branded `number`, unlike the string-or-number `NodeId`), so
- * `remap.ts`'s `derivedLinkId` additionally consults the target document's
- * already-persisted numeric link ids to guarantee its mint never collides,
- * rather than merely hashing into a wide-enough space and hoping.
+ * id plus each raw id alone, never from mutable document state — including
+ * for links. An earlier revision of this PR made a link's numeric id
+ * (ComfyUI_frontend#18458 — `LinkId` is a branded `number`, unlike the
+ * string-or-number `NodeId`) an exception to that rule, retrying against the
+ * target document's already-persisted numeric link ids to avoid a collision.
+ * Review (Christian Byrne, PR #245) found that retry made link identity
+ * depend on local arrival order, so `remap.ts`'s `derivedLinkId` mints
+ * PURELY from the op's own content instead (ADR-033, amended), spending the
+ * full safe-integer range (53 bits) so a genuine collision is an accepted,
+ * quantified residual risk (`docs/decisions/EXCEPTIONS.md`'s KA-5 row)
+ * rather than something the mint tries to avoid by reading state.
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
@@ -37,7 +41,7 @@ import {
   type WidgetCatalog,
   type WorkflowJSON,
 } from "../src/index.js";
-import { MAX_LINK_ID_MINT_ATTEMPTS, remapInsertedWorkflowIds } from "../src/remap.js";
+import { remapInsertedWorkflowIds } from "../src/remap.js";
 import { appliedOpIds, noOpIds, rejectedOutcomeWithIndex } from "./apply-result-helpers.js";
 
 const catalog: WidgetCatalog = {
@@ -104,36 +108,17 @@ function replaySnapshot(seed: Uint8Array, ops: Op[]): WorkflowJSON {
 
 /**
  * One link's numeric id, as `remap.ts`'s `derivedLinkId` mint would produce
- * it for (`opId`, `"root"`, `rawLinkId`) given `reserved` already taken —
- * i.e. exactly what `insert_workflow` would write for a doc whose persisted
- * numeric link ids are `reserved`. Used to construct the EXACT candidate a
- * real apply will also compute (determinism), and to walk the mint's whole
- * deterministic attempt sequence for one seed (see `candidateSequence`).
+ * it for (`opId`, `"root"`, `rawLinkId`) — a pure function of those two
+ * inputs alone (ADR-033, amended), so this is exactly what a real apply of
+ * the same (opId, rawLinkId) will also compute, regardless of document
+ * state or arrival order.
  */
-function derivedLinkIdForTest(opId: string, rawLinkId: number, reserved: ReadonlySet<number> = new Set()): number {
+function derivedLinkIdForTest(opId: string, rawLinkId: number): number {
   const remapped = remapInsertedWorkflowIds(
     { nodes: [{ id: "a", type: "Src" }, { id: "b", type: "Sink" }], links: [[rawLinkId, "a", 0, "b", 0, "x"]] } as unknown as WorkflowJSON,
     opId,
-    reserved,
   ) as unknown as { links: Array<[number, ...unknown[]]> };
   return remapped.links[0]![0];
-}
-
-/**
- * The first `count` candidates `derivedLinkId` would try, in order, for
- * (`opId`, `"root"`, `rawLinkId`) — walked by feeding each prior candidate
- * back in as `reserved`, which forces the mint to skip past it to the next
- * one in its deterministic sequence.
- */
-function candidateSequence(opId: string, rawLinkId: number, count: number): number[] {
-  const sequence: number[] = [];
-  const reserved = new Set<number>();
-  for (let i = 0; i < count; i++) {
-    const next = derivedLinkIdForTest(opId, rawLinkId, reserved);
-    sequence.push(next);
-    reserved.add(next);
-  }
-  return sequence;
 }
 
 const bytes = (doc: Y.Doc): Buffer => Buffer.from(Y.encodeStateAsUpdate(doc));
@@ -643,12 +628,11 @@ describe("insert_workflow: happy path", () => {
     const op = insertOp(workflow, { op_id: opId });
     seq--;
 
-    // The doc starts with no links, so the fix's numeric mint (`remap.ts`'s
-    // `derivedLinkId`) has nothing to avoid and its first candidate for the
-    // surviving link (903, "sibling") is exactly what the real apply below
-    // will also compute — ADR-033 is deterministic given (opId, scope,
-    // original) and the reservation state, and both calls start from the
-    // same (empty) reservation.
+    // `remap.ts`'s `derivedLinkId` is a pure function of (opId, scope,
+    // original) alone (ADR-033, amended), so the candidate this direct call
+    // computes for the surviving link (903, "sibling") is exactly what the
+    // real apply below will also compute — independent of what else the
+    // target doc holds.
     const remapped = remapInsertedWorkflowIds(workflow as unknown as WorkflowJSON, opId) as unknown as {
       links: Array<[number, ...unknown[]]>;
     };
@@ -911,118 +895,55 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
     });
   }
 
-  describe("numeric link id minting (ADR-033)", () => {
-    it("mints a fresh numeric id rather than colliding with one already in the doc", () => {
+  describe("numeric link id minting (ADR-033, pure derivation)", () => {
+    it("derives the identical numeric id whether or not that id already exists in the target document", () => {
+      // The whole point of the amended design: the candidate is a function
+      // of (opId, rawLinkId) ALONE. Computing it against an empty workflow
+      // (no document in scope at all) and computing it via a real apply
+      // into a doc that starts with unrelated content must agree exactly —
+      // there is no document read left in `derivedLinkId` to make them
+      // differ.
       const opId = "d641df0c31f9440b9385ac8e01e099b2";
-      // The candidate `derivedLinkId` would pick with NO reservations — i.e.
-      // exactly what a pre-fix, doc-state-oblivious derivation would have
-      // produced, and exactly what a real apply would ALSO produce if this
-      // one id were not already occupied.
-      const wouldBeFirstCandidate = derivedLinkIdForTest(opId, 901);
+      const expected = derivedLinkIdForTest(opId, 901);
 
-      const doc = mint(
-        {
-          nodes: [{ id: 1, type: "Src" }, { id: 2, type: "Sink" }],
-          links: [[wouldBeFirstCandidate, 1, 0, 2, 0, "incumbent link"]],
-        },
-        catalog,
-      );
-      const beforeIncumbent = project(doc, catalog);
+      const doc = mint({ nodes: [{ id: 1, type: "Src" }, { id: 2, type: "Sink" }], links: [[555, 1, 0, 2, 0, "unrelated"]] }, catalog);
       const op = insertOp(
         { nodes: [{ id: 701, type: "Src" }, { id: 702, type: "Sink" }], links: [[901, 701, 0, 702, 0, "candidate link"]] },
         { op_id: opId },
       );
       seq--;
 
-      const result = applyOps(doc, [op], catalog);
-      expect(result.outcomes[0]).toMatchObject({ outcome: "applied" });
-
-      const projected = project(doc, catalog);
-      const insertedLink = (projected.links as unknown[][]).find((link) => link[5] === "candidate link")!;
-      const incumbentLink = (projected.links as unknown[][]).find((link) => link[5] === "incumbent link")!;
-      // The mint skipped the occupied candidate and moved to the next one in
-      // its deterministic sequence, rather than colliding with or rejecting
-      // over the incumbent.
-      expect(insertedLink[0]).toBe(candidateSequence(opId, 901, 2)[1]);
-      expect(insertedLink[0]).not.toBe(wouldBeFirstCandidate);
-      // The incumbent (seeded independently of this op, not via
-      // insert_workflow) is completely untouched.
-      expect(incumbentLink).toEqual(beforeIncumbent.links![0]);
-    });
-
-    it("mints distinct ids for two links in the SAME insertion that would otherwise share a candidate", () => {
-      // Two DIFFERENT raw link ids can legitimately hash to the same first
-      // candidate; `derivedLinkId`'s shared `taken` set (threaded through one
-      // whole `remapInsertedWorkflowIds` call) must still give them distinct
-      // final ids. Constructed by finding the raw id whose own first
-      // candidate collides with 901's, rather than assuming one — the
-      // reservation-set mechanism is what is under test, not luck.
-      const opId = "e641df0c31f9440b9385ac8e01e099b2";
-      const first = derivedLinkIdForTest(opId, 901);
-      let collidingRawId = -1;
-      for (let raw = 1; raw < 5000; raw++) {
-        if (raw !== 901 && derivedLinkIdForTest(opId, raw) === first) {
-          collidingRawId = raw;
-          break;
-        }
-      }
-      // No naturally-colliding raw id turned up in the search range — 52 bits
-      // of entropy makes that the overwhelmingly likely outcome, and it is
-      // itself evidence the space is wide enough that this scenario needs
-      // deliberate construction. Skip rather than assert a false positive.
-      if (collidingRawId === -1) return;
-
-      const doc = mint({ nodes: [], links: [] }, catalog);
-      const op = insertOp(
-        {
-          nodes: [
-            { id: 701, type: "Src", outputs: [{ name: "out", links: [901] }] },
-            { id: 702, type: "Sink", inputs: [{ name: "in", link: 901 }] },
-            { id: 703, type: "Src", outputs: [{ name: "out", links: [collidingRawId] }] },
-            { id: 704, type: "Sink", inputs: [{ name: "in", link: collidingRawId }] },
-          ],
-          links: [
-            [901, 701, 0, 702, 0, "x"],
-            [collidingRawId, 703, 0, 704, 0, "y"],
-          ],
-        },
-        { op_id: opId },
-      );
-      seq--;
-
       expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
-      const projected = project(doc, catalog);
-      const linkX = (projected.links as unknown[][]).find((link) => link[5] === "x")!;
-      const linkY = (projected.links as unknown[][]).find((link) => link[5] === "y")!;
-      expect(linkX[0]).not.toBe(linkY[0]);
+      const insertedLink = (project(doc, catalog).links as unknown[][]).find((link) => link[5] === "candidate link")!;
+      expect(insertedLink[0]).toBe(expected);
     });
 
-    it("rejects link_id_collision when every mint attempt is already reserved (id-space exhaustion)", () => {
-      const opId = "f641df0c31f9440b9385ac8e01e099b2";
-      const rawLinkId = 901;
-      // Occupy EVERY candidate the mint would ever try for this seed, so the
-      // bounded retry (ADR-033's `MAX_LINK_ID_MINT_ATTEMPTS`) is exhausted —
-      // the one scenario this deliberately-bounded loop is a safety valve
-      // for. This is not a realistic document; it is the adversarial worst
-      // case named in `docs/decisions/EXCEPTIONS.md`'s KA-5 row.
-      const exhausted = candidateSequence(opId, rawLinkId, MAX_LINK_ID_MINT_ATTEMPTS);
+    it("rejects, rather than avoids, a genuine collision with a numeric link id already persisted in the doc", () => {
+      // Christian Byrne's blocker on the original revision: making the mint
+      // AVOID an occupied candidate is exactly what made link identity
+      // arrival-order-dependent. The amended mint never reads the document,
+      // so an incumbent occupying the derived candidate is no longer
+      // side-stepped — it is caught by `acceptsLink`'s ordinary, pre-existing
+      // id-collision check (the same one every other `insert_workflow` id
+      // kind already goes through), which rejects the WHOLE op rather than
+      // silently reassigning a different id to the colliding link.
+      const opId = "d641df0c31f9440b9385ac8e01e099b2";
+      const occupied = derivedLinkIdForTest(opId, 901);
+
       const doc = mint(
-        {
-          nodes: exhausted.flatMap((id, i) => [{ id: `src-${String(i)}`, type: "Src" }, { id: `sink-${String(i)}`, type: "Sink" }]),
-          links: exhausted.map((id, i) => [id, `src-${String(i)}`, 0, `sink-${String(i)}`, 0, "occupied"]),
-        } as unknown as WorkflowJSON,
+        { nodes: [{ id: 1, type: "Src" }, { id: 2, type: "Sink" }], links: [[occupied, 1, 0, 2, 0, "incumbent link"]] },
         catalog,
       );
-      const beforeBytes = bytes(doc);
+      const before = bytes(doc);
       const beforeProjected = project(doc, catalog);
       const op = insertOp(
-        { nodes: [{ id: 701, type: "Src" }, { id: 702, type: "Sink" }], links: [[rawLinkId, 701, 0, 702, 0, "candidate link"]] },
+        { nodes: [{ id: 701, type: "Src" }, { id: 702, type: "Sink" }], links: [[901, 701, 0, 702, 0, "candidate link"]] },
         { op_id: opId },
       );
       seq--;
 
       expect(rejectedOutcomeWithIndex(applyOps(doc, [op], catalog))).toMatchObject({ index: 0, code: "link_id_collision" });
-      expect(bytes(doc).equals(beforeBytes)).toBe(true);
+      expect(bytes(doc).equals(before)).toBe(true);
       expect(project(doc, catalog)).toEqual(beforeProjected);
       expect(appliedMap(doc).has(op.op_id)).toBe(false);
     });

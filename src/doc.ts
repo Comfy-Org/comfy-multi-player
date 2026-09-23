@@ -285,48 +285,6 @@ export function initDoc(doc: Y.Doc, catalogVersion = ""): void {
   });
 }
 
-/**
- * Every numeric link id currently persisted in `doc`: every key of the
- * top-level `links` map, and every key of every subgraph definition's own
- * interior `links` map, at any nesting depth (mirrors
- * `definitionIdExistsOutsideRoot`'s recursive-definitions walk in
- * `applier.ts`). Non-numeric keys (an explicit string id, or a positional
- * `#0`/`base~1` key `mint.ts`'s `mintDefinitionLinks` assigns to an ID-LESS
- * interior link) are not part of the numeric-link-id space and are skipped.
- *
- * `insert_workflow`'s numeric link-id mint (`remap.ts`'s `derivedLinkId`)
- * uses this as the reservation a freshly minted link id must never land on —
- * see ADR-033 and the KA-5 exception logged in `docs/decisions/EXCEPTIONS.md`
- * for why this ONE id domain, unlike every other id `insert_workflow`
- * derives, consults mutable document state.
- */
-export function persistedLinkIds(doc: Y.Doc): Set<number> {
-  const ids = new Set<number>();
-  const addNumericKeys = (map: Y.Map<unknown>): void => {
-    map.forEach((_value, key) => {
-      // Unsigned-decimal keys only (mirrors `applier.ts`'s `numericId`): no
-      // leading zero/sign/hex/float noise from a non-numeric explicit or
-      // positional interior-link key coincidentally parsing under `Number()`.
-      if (!/^\d+$/.test(key)) return;
-      const numeric = Number(key);
-      if (Number.isSafeInteger(numeric)) ids.add(numeric);
-    });
-  };
-  addNumericKeys(linksMap(doc));
-  const walkDefinitions = (defs: Y.Map<unknown>): void => {
-    defs.forEach((definition) => {
-      if (!(definition instanceof Y.Map)) return;
-      const links = definition.get("links");
-      if (links instanceof Y.Map) addNumericKeys(links);
-      const nestedContainer = definition.get("definitions");
-      const nested = nestedContainer instanceof Y.Map ? nestedContainer.get("subgraphs") : undefined;
-      if (nested instanceof Y.Map) walkDefinitions(nested);
-    });
-  };
-  walkDefinitions(definitionsMap(doc) as unknown as Y.Map<unknown>);
-  return ids;
-}
-
 // ---------------------------------------------------------------------------
 // Mutation instrumentation (schema §11 bounded-writes conformance)
 //

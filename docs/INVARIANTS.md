@@ -43,18 +43,20 @@ The *rejection* half — "a rejected op leaves the doc untouched", stated in the
 **Why:** Offline peers must create entities without a central allocator.  
 **Enforced by:** `insert_workflow` derives every carried ID inside the applier from the immutable `op_id`, scope, kind, and raw ID (ADR-031); producers send raw workflows and perform no allocation against document state. General producer randomness remains **UNGUARDED — see roadmap**.
 
-**Logged exception (2026-09-22, ADR-033):** a link's derived id is the ONE
-carried-ID kind this rule's "no allocation against document state" clause
-does not hold for. ComfyUI_frontend's `LinkId` is a branded `number`, unlike
-the string-or-number `NodeId`, so `insert_workflow`'s usual pure string
-derivation cannot satisfy it; `remap.ts`'s `derivedLinkId` mints a 52-bit
-hash candidate and verifies it against `doc.ts`'s `persistedLinkIds` (every
-numeric link id already in the document, top-level and every subgraph
-definition interior) plus every id already minted in the same call, retrying
-past a collision up to a bounded attempt cap before failing loudly. See
-`docs/decisions/EXCEPTIONS.md`'s KA-5 row for the full reasoning and the
-residual, deliberately-accepted gap for replicas that have never exchanged
-the op in question.
+**Logged exception (2026-09-22, ADR-033; amended 2026-09-23, ratification
+PENDING):** a link's derived id is the ONE carried-ID kind whose numeric type
+this rule's "53-bit random mint" clause is worth stating explicitly for.
+ComfyUI_frontend's `LinkId` is a branded `number`, unlike the
+string-or-number `NodeId`, so `insert_workflow`'s usual pure string
+derivation cannot satisfy it; `remap.ts`'s `derivedLinkId` mints a candidate
+purely from the op's own content (SHA-256 of the ADR-031 seed, folded into
+the full `[1, Number.MAX_SAFE_INTEGER]` range) with **no document read and
+no retry** — an earlier revision retried against `doc.ts`'s
+`persistedLinkIds`, which review found made link identity depend on local
+arrival order (KA-2), so that retry and `persistedLinkIds` were both
+removed. See `docs/decisions/EXCEPTIONS.md`'s KA-5 row and ADR-033's
+"Amendment (2026-09-23)" section for the full reasoning, the quantified
+residual collision probability, and the pending ratification status.
 
 ### KA-6 — Raw struct updates flow host → follower one-way only
 **Rule:** Followers never write the shared doc.  

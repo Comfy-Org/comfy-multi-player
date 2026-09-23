@@ -1,5 +1,5 @@
 /**
- * `insert_workflow` numeric link ids (ADR-033).
+ * `insert_workflow` numeric link ids (ADR-033, amended).
  *
  * ComfyUI_frontend's `LinkId` is `number & { __brand: 'LinkId' }`, unlike the
  * string-or-number `NodeId`, so `remap.ts`'s usual string `derivedId`
@@ -13,31 +13,41 @@
  * save/reload — the saved file now contains a genuine numeric link id
  * inside that range.
  *
- * `remap.ts`'s `derivedLinkId` fixes this at the source: it hashes the same
- * op-id-derived seed to a 52-bit candidate, then verifies it against every
- * numeric link id already persisted in the target document (`doc.ts`'s
- * `persistedLinkIds` — top-level AND every subgraph-definition interior, at
- * any depth) plus every id already minted earlier in the same call, retrying
- * past a collision (bounded, `MAX_LINK_ID_MINT_ATTEMPTS`) rather than
- * accepting one. See `docs/decisions/ADR-033-insert-workflow-numeric-link-ids.md`
- * and the KA-5 row in `docs/decisions/EXCEPTIONS.md`.
+ * The FIRST revision of this PR fixed that by minting a 52-bit candidate and
+ * retrying past any collision with a numeric link id already persisted in
+ * the target document. Christian Byrne's review (PR #245, inline on
+ * `src/remap.ts:65`) found that design itself broken in a different way:
+ * checking the mint against document state made link identity depend on
+ * LOCAL ARRIVAL ORDER. If two link seeds shared the same first candidate,
+ * applying them A-then-B minted A the natural candidate and B the next one
+ * in the retry sequence, while applying B-then-A minted B the natural
+ * candidate and A the next one — two replicas that apply the same op set in
+ * different orders could project genuinely different link ids for the same
+ * logical links.
  *
- * `test/insert-workflow.test.ts`'s "numeric link id minting (ADR-033)" block
- * covers the single-op avoidance and id-space-exhaustion cases directly
- * against `occupiedIdVectors`' existing node/definition siblings. This file
- * covers the harder cross-cutting properties named in review: collision
- * avoidance that spans top-level and subgraph-interior scopes, multiple
- * `insert_workflow` ops in one session (sequential and same-batch), the
- * exact cross-op collision ComfyUI_frontend#18458 reproduced, scale within
- * one op, save/reload round-trip stability, and comfy-multi-player#230's
- * definition-interior promoted-linkIds threading with the new numeric ids.
+ * `remap.ts`'s `derivedLinkId` now mints PURELY from the op's own content —
+ * `opId`, `scope`, and the raw link — spending the full safe-integer range
+ * (53 bits, `[1, Number.MAX_SAFE_INTEGER]`) so a genuine collision is an
+ * accepted, quantified residual risk rather than something the mint tries to
+ * avoid by reading state. See
+ * `docs/decisions/ADR-033-insert-workflow-numeric-link-ids.md` and the KA-5
+ * row in `docs/decisions/EXCEPTIONS.md`.
+ *
+ * `test/insert-workflow.test.ts`'s "numeric link id minting (ADR-033, pure
+ * derivation)" block covers the single-op determinism and realized-collision
+ * cases directly against `occupiedIdVectors`' existing node/definition
+ * siblings. This file covers the harder cross-cutting properties: multiple
+ * `insert_workflow` ops in one session (sequential and same-batch), scale
+ * within one op, the project → mint round trip, comfy-multi-player#230's
+ * definition-interior promoted-linkIds threading with the new numeric ids,
+ * and — the regression this whole amendment exists for — opposite-order
+ * convergence across two independently seeded replicas.
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 
 import { applyOps, mint, project, type Op, type WidgetCatalog, type WorkflowJSON } from "../src/index.js";
-import { appliedMap, persistedLinkIds } from "../src/doc.js";
-import { remapInsertedWorkflowIds } from "../src/remap.js";
+import { appliedMap } from "../src/doc.js";
 
 const catalog: WidgetCatalog = {
   types: {
@@ -64,7 +74,7 @@ function linkNamed(wf: WorkflowJSON, label: unknown): [unknown, unknown, unknown
   return found;
 }
 
-describe("insert_workflow numeric link ids (ADR-033)", () => {
+describe("insert_workflow numeric link ids (ADR-033, pure derivation)", () => {
   it("mints a real number for a top-level link while node ids stay derived strings", () => {
     const doc = mint({ nodes: [], links: [] }, catalog);
     const op = opEnvelope({ workflow: { nodes: [{ id: 1, type: "Src" }, { id: 2, type: "Sink" }], links: [[10, 1, 0, 2, 0, "L"]] } });
@@ -75,12 +85,13 @@ describe("insert_workflow numeric link ids (ADR-033)", () => {
     for (const node of wf.nodes!) expect(typeof node.id).toBe("string");
   });
 
-  it("reproduces and fixes ComfyUI_frontend#18458's exact cross-op scenario: two independent insert_workflow ops never collide", () => {
-    // The reviewers' reproduction used two distinct 32-char op ids whose
-    // FNV-1a-folded-to-32-bit hashes collided. This package's mint uses 52
-    // bits AND actively verifies against the document, so two distinct ops —
-    // regardless of whether their raw hash candidates would have collided —
-    // can never persist the same numeric link id.
+  it("two independent insert_workflow ops with distinct op_ids derive independent link ids", () => {
+    // Distinct `op_id`s feed distinct hash seeds (`derivedId` folds `opId`
+    // into the seed), so two independently authored ops naturally land on
+    // different 53-bit candidates — not because either mint avoids the
+    // other (it reads no document state at all), but because the space is
+    // wide enough that an accidental collision between UNRELATED ops is the
+    // same order of unlikely as a UUID4 `op_id` collision (KA-2).
     const doc = mint({ nodes: [], links: [] }, catalog);
     const opA = opEnvelope({
       workflow: {
@@ -103,18 +114,18 @@ describe("insert_workflow numeric link ids (ADR-033)", () => {
     const linkA = linkNamed(wf, "op-a-link");
     const linkB = linkNamed(wf, "op-b-link");
     expect(linkA[0]).not.toBe(linkB[0]);
-    // Op A's wire must not have been replaced by op B's (the reported bug):
-    // both endpoints resolve to their OWN op's nodes.
+    // Op A's wire must not have been replaced by op B's: both endpoints
+    // resolve to their OWN op's nodes.
     const nodeIds = new Set(wf.nodes!.map((n) => n.id));
     expect(nodeIds.has(linkA[1] as string)).toBe(true);
     expect(nodeIds.has(linkB[1] as string)).toBe(true);
   });
 
-  it("avoids colliding with a numeric link id in the SAME batch's other insert_workflow op", () => {
-    // Same as the cross-op case above, but delivered as ONE `applyOps` batch
-    // rather than two sequential calls — op B's mint must see op A's
-    // already-committed link (from the earlier `doc.transact` in the same
-    // batch) even though nothing has round-tripped through a snapshot yet.
+  it("two insert_workflow ops delivered in the SAME batch still derive independent link ids", () => {
+    // Delivered as ONE `applyOps` batch rather than two sequential calls.
+    // Neither op's mint threads any state from the other — each derives its
+    // link id purely from its own (opId, scope, original) — so batching
+    // changes nothing about the result.
     const doc = mint({ nodes: [], links: [] }, catalog);
     const opA = opEnvelope({
       workflow: { nodes: [{ id: 111, type: "Src" }, { id: 112, type: "Sink" }], links: [[301, 111, 0, 112, 0, "batch-a"]] },
@@ -132,84 +143,6 @@ describe("insert_workflow numeric link ids (ADR-033)", () => {
     expect(linkNamed(wf, "batch-a")[0]).not.toBe(linkNamed(wf, "batch-b")[0]);
   });
 
-  it("a top-level insert avoids a numeric link id already used INSIDE an existing subgraph definition", () => {
-    // The reservation set spans scopes: a definition's interior links are a
-    // real collision domain for a top-level candidate too (`doc.ts`'s
-    // `persistedLinkIds` walks every definition, not just the top-level map).
-    const opId = "aa11df0c31f9440b9385ac8e01e099b2";
-    const occupied = firstCandidate(opId, 501);
-    const doc = mint(
-      {
-        nodes: [{ id: 1, type: "Def" }],
-        links: [],
-        definitions: {
-          subgraphs: [
-            {
-              id: "Def",
-              nodes: [{ id: "x", type: "Src" }, { id: "y", type: "Sink" }],
-              links: [{ id: occupied, origin_id: "x", origin_slot: 0, target_id: "y", target_slot: 0, type: "X" }],
-            },
-          ],
-        },
-      } as unknown as WorkflowJSON,
-      catalog,
-    );
-
-    const op = opEnvelope({
-      workflow: { nodes: [{ id: 701, type: "Src" }, { id: 702, type: "Sink" }], links: [[501, 701, 0, 702, 0, "top-level"]] },
-      op_id: opId,
-    });
-    expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
-    const wf = project(doc, catalog);
-    expect(linkNamed(wf, "top-level")[0]).not.toBe(occupied);
-  });
-
-  it("an inserted subgraph definition's interior link avoids a numeric link id already used at the top level", () => {
-    const opId = "bb11df0c31f9440b9385ac8e01e099b2";
-    const workflow = {
-      nodes: [{ id: 900, type: "NewDef" }],
-      links: [],
-      definitions: {
-        subgraphs: [
-          {
-            id: "NewDef",
-            nodes: [{ id: "p", type: "Src" }, { id: "q", type: "Sink" }],
-            links: [{ id: 502, origin_id: "p", origin_slot: 0, target_id: "q", target_slot: 0, type: "X" }],
-          },
-        ],
-      },
-    };
-
-    // First, discover the definition-interior candidate this exact (opId,
-    // workflow) pair mints against an EMPTY doc — nothing to avoid yet.
-    const emptyDoc = mint({ nodes: [], links: [] }, catalog);
-    const probe = opEnvelope({ workflow, op_id: opId });
-    expect(applyOps(emptyDoc, [probe], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
-    const naturalDefinition = (
-      project(emptyDoc, catalog).definitions as { subgraphs: Array<{ links: Array<{ id: unknown }> }> }
-    ).subgraphs[0]!;
-    const naturalCandidate = naturalDefinition.links[0]!.id as number;
-
-    // Now seed a FRESH doc where that exact numeric id is already a
-    // TOP-LEVEL link (never touched by insert_workflow) and re-run the
-    // IDENTICAL op. `persistedLinkIds` walks the top-level map, so the
-    // definition-interior mint below must land somewhere else.
-    const occupiedDoc = mint(
-      { nodes: [{ id: 1, type: "Src" }, { id: 2, type: "Sink" }], links: [[naturalCandidate, 1, 0, 2, 0, "top-incumbent"]] },
-      catalog,
-    );
-    const op = opEnvelope({ workflow, op_id: opId });
-    expect(applyOps(occupiedDoc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
-
-    const wf = project(occupiedDoc, catalog);
-    const definition = (wf.definitions as { subgraphs: Array<{ links: Array<{ id: unknown }> }> }).subgraphs[0]!;
-    expect(definition.links).toHaveLength(1);
-    expect(definition.links[0]!.id).not.toBe(naturalCandidate);
-    expect(typeof definition.links[0]!.id).toBe("number");
-    // The top-level incumbent is completely untouched.
-    expect(linkNamed(wf, "top-incumbent")[0]).toBe(naturalCandidate);
-  });
-
   it("mints distinct ids for a large batch of links inserted in one op", () => {
     const opId = "cc11df0c31f9440b9385ac8e01e099b2";
     const count = 200;
@@ -218,49 +151,17 @@ describe("insert_workflow numeric link ids (ADR-033)", () => {
     const doc = mint({ nodes: [], links: [] }, catalog);
     const op = opEnvelope({ workflow: { nodes, links: rawLinks }, op_id: opId });
 
+    // Each of the 200 raw link ids seeds a distinct hash input, so distinct
+    // final candidates are the overwhelmingly likely outcome at 53 bits of
+    // entropy — not a guarantee any dedup mechanism enforces (there is
+    // none left), just what the birthday bound predicts for 200 draws from
+    // a ~9-quadrillion-value space.
     expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
     const wf = project(doc, catalog);
     expect(wf.links).toHaveLength(count);
     const ids = wf.links!.map((link) => (link as unknown[])[0]);
     expect(new Set(ids).size).toBe(count);
     for (const id of ids) expect(typeof id).toBe("number");
-  });
-
-  it("survives a save/reload round trip: a re-minted doc's persisted numeric link ids are still avoided by a later insert", () => {
-    // The exact failure the second frontend reviewer identified in the
-    // interim hash fix: once an inserted link's numeric id is persisted into
-    // a saved workflow and the doc is re-minted from that JSON, a later
-    // insert must still avoid it — there is no session-local allocator state
-    // to lose here, because avoidance is grounded in the DOCUMENT itself.
-    const firstOpId = "dd11df0c31f9440b9385ac8e01e099b2";
-    const original = mint({ nodes: [], links: [] }, catalog);
-    const firstOp = opEnvelope({
-      workflow: { nodes: [{ id: 1, type: "Src" }, { id: 2, type: "Sink" }], links: [[601, 1, 0, 2, 0, "persisted"]] },
-      op_id: firstOpId,
-    });
-    expect(applyOps(original, [firstOp], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
-    const persistedWorkflow = project(original, catalog);
-    const persistedLinkId = linkNamed(persistedWorkflow, "persisted")[0];
-    expect(typeof persistedLinkId).toBe("number");
-
-    // "Save and reload": a FRESH doc, minted from nothing but the projected
-    // JSON — no memory of the first doc, no in-process allocator survives.
-    const reloaded = mint(persistedWorkflow, catalog);
-    expect(persistedLinkIds(reloaded).has(persistedLinkId as number)).toBe(true);
-
-    // A raw id that happens to derive to the SAME candidate the first op
-    // used (found deterministically, not by chance) must still avoid it.
-    const secondOpId = "ee11df0c31f9440b9385ac8e01e099b2";
-    const collidingRaw = firstCandidate(secondOpId, 601) === persistedLinkId ? 601 : findCollidingRawId(secondOpId, persistedLinkId as number);
-    if (collidingRaw === undefined) return; // 52 bits: no natural collision is the expected outcome.
-
-    const secondOp = opEnvelope({
-      workflow: { nodes: [{ id: 3, type: "Src" }, { id: 4, type: "Sink" }], links: [[collidingRaw, 3, 0, 4, 0, "after-reload"]] },
-      op_id: secondOpId,
-    });
-    expect(applyOps(reloaded, [secondOp], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
-    const after = project(reloaded, catalog);
-    expect(linkNamed(after, "after-reload")[0]).not.toBe(persistedLinkId);
   });
 
   it("round-trips numeric link ids byte-for-byte through project → mint with no duplication or corruption", () => {
@@ -413,21 +314,99 @@ describe("insert_workflow numeric link ids (ADR-033)", () => {
     const afterReplay = project(doc, catalog);
     expect(linkNamed(afterReplay, "L")[0]).toBe(mintedId);
   });
+
+  describe("opposite-order convergence (the regression Christian Byrne's review found)", () => {
+    /**
+     * Apply `ops` in order to a FRESH `Y.Doc` forked from `seed` via
+     * `Y.applyUpdate` (KA-10: independent replicas fork from one common
+     * snapshot, never re-seed independently) and return the projection.
+     */
+    function applyToFreshReplica(seed: Uint8Array, ops: Op[]): WorkflowJSON {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, seed);
+      for (const op of ops) {
+        expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+      }
+      return project(doc, catalog);
+    }
+
+    it("two concurrent insert_workflow ops project byte-identically in either arrival order", () => {
+      // This is the exact shape of Christian's blocker: two CONCURRENT ops
+      // (never exchanged with each other's replica before either is
+      // applied), each carrying links, replayed on two independent replicas
+      // in opposite order. Under the retry-against-`taken` design this PR's
+      // first revision shipped, a shared first candidate between a link in
+      // opA and a link in opB would resolve to opA=x/opB=y on one replica
+      // and opB=x/opA=y on the other — a genuine, silent projection
+      // divergence between two replicas that applied the identical op set.
+      // Pure derivation makes that impossible by construction: neither op's
+      // mint reads anything but its own content, so its result cannot
+      // depend on which replica, or which order, it is evaluated in.
+      const seed = Y.encodeStateAsUpdate(mint({ nodes: [], links: [] }, catalog));
+      const opA = opEnvelope({
+        workflow: {
+          nodes: [{ id: 101, type: "Src" }, { id: 102, type: "Sink" }, { id: 103, type: "Sink" }],
+          links: [
+            [201, 101, 0, 102, 0, "a1"],
+            [202, 101, 0, 103, 0, "a2"],
+          ],
+        },
+      });
+      const opB = opEnvelope({
+        workflow: {
+          nodes: [{ id: 501, type: "Src" }, { id: 502, type: "Sink" }],
+          links: [[601, 501, 0, 502, 0, "b1"]],
+        },
+      });
+
+      const forward = applyToFreshReplica(seed, [opA, opB]);
+      const reverse = applyToFreshReplica(seed, [opB, opA]);
+
+      // Not merely "both applied successfully" -- the WHOLE projected
+      // document, including every link's numeric id, is byte-for-byte
+      // identical regardless of order (`project()` sorts by id, so this
+      // equality is meaningful even though the two replicas wrote their
+      // Y.Map entries in opposite orders).
+      expect(forward).toEqual(reverse);
+      expect(linkNamed(forward, "a1")[0]).toBe(linkNamed(reverse, "a1")[0]);
+      expect(linkNamed(forward, "a2")[0]).toBe(linkNamed(reverse, "a2")[0]);
+      expect(linkNamed(forward, "b1")[0]).toBe(linkNamed(reverse, "b1")[0]);
+    });
+
+    it("two insert_workflow ops sharing a definition converge identically in either order", () => {
+      // Extends the same property to a subgraph-definition interior scope
+      // (this PR's other cross-cutting surface): opA inserts a definition
+      // and an instance of it; opB is an unrelated top-level insert. Both
+      // the top-level and the definition-interior link ids must agree
+      // across orders.
+      const seed = Y.encodeStateAsUpdate(mint({ nodes: [], links: [] }, catalog));
+      const opA = opEnvelope({
+        workflow: {
+          nodes: [{ id: 900, type: "Def" }],
+          links: [],
+          definitions: {
+            subgraphs: [
+              {
+                id: "Def",
+                nodes: [{ id: "x", type: "Src" }, { id: "y", type: "Sink" }],
+                links: [{ id: 41, origin_id: "x", origin_slot: 0, target_id: "y", target_slot: 0, type: "X" }],
+              },
+            ],
+          },
+        },
+      });
+      const opB = opEnvelope({
+        workflow: { nodes: [{ id: 701, type: "Src" }, { id: 702, type: "Sink" }], links: [[801, 701, 0, 702, 0, "top-level"]] },
+      });
+
+      const forward = applyToFreshReplica(seed, [opA, opB]);
+      const reverse = applyToFreshReplica(seed, [opB, opA]);
+      expect(forward).toEqual(reverse);
+
+      const defLinkId = (wf: WorkflowJSON): unknown =>
+        (wf.definitions as { subgraphs: Array<{ links: Array<{ id: unknown }> }> }).subgraphs[0]!.links[0]!.id;
+      expect(defLinkId(forward)).toBe(defLinkId(reverse));
+      expect(linkNamed(forward, "top-level")[0]).toBe(linkNamed(reverse, "top-level")[0]);
+    });
+  });
 });
-
-/** The candidate `derivedLinkId` would pick at root scope for (`opId`, `rawLinkId`) with no reservations. */
-function firstCandidate(opId: string, rawLinkId: number): number {
-  const remapped = remapInsertedWorkflowIds(
-    { nodes: [{ id: "a", type: "Src" }, { id: "b", type: "Sink" }], links: [[rawLinkId, "a", 0, "b", 0, "x"]] } as unknown as WorkflowJSON,
-    opId,
-  ) as unknown as { links: Array<[number, ...unknown[]]> };
-  return remapped.links[0]![0];
-}
-
-/** Search a small range of raw link ids for one whose first candidate (given `opId`) equals `target`. */
-function findCollidingRawId(opId: string, target: number): number | undefined {
-  for (let raw = 1; raw < 5000; raw++) {
-    if (firstCandidate(opId, raw) === target) return raw;
-  }
-  return undefined;
-}

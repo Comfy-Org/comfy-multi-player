@@ -98,7 +98,6 @@ import {
   mset,
   nodesMap,
   nodeIncarnation,
-  persistedLinkIds,
   resolveDefinition,
   stampsMap,
   widgetStorageOf,
@@ -986,7 +985,7 @@ function validateDefinitionInputs(subgraphs: unknown[], path = "workflow.definit
   });
 }
 
-function prepareInsertedWorkflow(doc: Y.Doc, op: InsertWorkflowOp): Record<string, unknown> {
+function prepareInsertedWorkflow(op: InsertWorkflowOp): Record<string, unknown> {
   const workflow = scrubPrivateKeys(op.workflow) as unknown;
   if (typeof workflow !== "object" || workflow === null || Array.isArray(workflow)) {
     throw new OpRejectedError("malformed_op", "insert_workflow: workflow must be an object");
@@ -1008,21 +1007,20 @@ function prepareInsertedWorkflow(doc: Y.Doc, op: InsertWorkflowOp): Record<strin
   }
   validateRawGraphIds(wf["nodes"] as unknown[], (wf["links"] as unknown[] | undefined) ?? [], "workflow");
   validateDefinitionInputs((subgraphs as unknown[] | undefined) ?? []);
-  // ADR-033 / KA-5 exception (docs/decisions/EXCEPTIONS.md): unlike every
-  // other id this op derives, a link's numeric id must not collide with
-  // anything already persisted in THIS document, so the mint reads doc state
-  // here — see `remap.ts`'s `derivedLinkId` for why the type constraint
-  // (`LinkId` is a branded `number`, unlike the string-or-number `NodeId`)
-  // makes that unavoidable.
+  // ADR-033 (amended): every id this op derives, including a link's numeric
+  // id, is a PURE function of the op's own content — no document state is
+  // read here. See `remap.ts`'s `derivedLinkId` for why `LinkId` (a branded
+  // `number`, unlike the string-or-number `NodeId`) needed a numeric mint at
+  // all, and for why the mint no longer checks the target document (KA-5
+  // exception, `docs/decisions/EXCEPTIONS.md`).
   return remapInsertedWorkflowIds(
     wf as unknown as import("./types.js").WorkflowJSON,
     op.op_id,
-    persistedLinkIds(doc),
   ) as unknown as Record<string, unknown>;
 }
 
 function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetCatalog): SuccessfulOutcome {
-  const wf = prepareInsertedWorkflow(doc, op);
+  const wf = prepareInsertedWorkflow(op);
   const remappedDefinitions = wf["definitions"] as { subgraphs?: unknown[] } | undefined;
   const remappedSubgraphs = remappedDefinitions?.subgraphs ?? [];
 
