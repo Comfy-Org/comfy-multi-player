@@ -49,7 +49,7 @@
  * between an idle and a loaded host while this file was being written.
  */
 import { cpus, loadavg } from "node:os";
-import { describe, test } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import {
   applyOps,
@@ -242,7 +242,7 @@ for (const size of SIZES) {
       let applyDoc: ReturnType<typeof mint>;
       let applyResult: ApplyResult | undefined;
 
-      await bench(
+      const applyBenchmark = await bench(
         `applyOps — ${opCount} valid set_widget ops`,
         {
           beforeEach: () => {
@@ -263,6 +263,7 @@ for (const size of SIZES) {
         warmupTime: 0,
         warmupIterations: APPLY_WARMUP_ITERATIONS,
       });
+      expect(applyBenchmark.latency.samplesCount).toBe(APPLY_ITERATIONS);
 
       const projectDoc = mint(workflow, catalog);
       await bench("project — full document to WorkflowJSON", () => {
