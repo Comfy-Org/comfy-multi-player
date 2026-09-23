@@ -215,6 +215,14 @@ const CASES: Row[] = [
     },
   },
   {
+    // ADR-033 (amended): `derivedLinkId` is now a PURE function of the op's
+    // own content, with no retry against document state (removing the
+    // arrival-order dependence Christian Byrne's review of the original
+    // revision found — see `remap.ts`'s `derivedLinkId` doc comment). A
+    // single occupied candidate is therefore sufficient to reach this code,
+    // exactly like the node/definition rows above: no id-space-exhaustion
+    // construction is needed or possible anymore, since there is no retry
+    // sequence to exhaust.
     kind: "insert_workflow",
     why: "remapped link id collides with the live tree",
     code: "link_id_collision",
@@ -222,13 +230,16 @@ const CASES: Row[] = [
       ({
         op: "insert_workflow",
         ...env(),
-        workflow: { nodes: [{ id: 2, type: "Src" }, { id: 3, type: "Sink" }], links: [[7, 2, 0, 3, 0, "X"]] },
+        workflow: { nodes: [{ id: 2, type: "Src" }, { id: 3, type: "Sink" }], links: [[901, 2, 0, 3, 0, "X"]] },
       }) as Op,
     seed: (op) => {
       const workflow = baseWorkflow();
-      const remapped = remapInsertedWorkflowIds((op as { workflow: WorkflowJSON }).workflow, op.op_id);
-      const [remappedLinkId] = remapped.links![0] as [string, number, number, number, number, string];
-      workflow.links!.push([remappedLinkId, 2, 0, 3, 0, "X"]);
+      const remapped = remapInsertedWorkflowIds((op as { workflow: WorkflowJSON }).workflow, op.op_id) as unknown as {
+        links: Array<[number, ...unknown[]]>;
+      };
+      const remappedLinkId = remapped.links[0]![0];
+      workflow.nodes!.push({ id: 50, type: "Src" }, { id: 51, type: "Sink" });
+      workflow.links!.push([remappedLinkId, 50, 0, 51, 0, "incumbent"]);
       return workflow;
     },
   },

@@ -11,7 +11,17 @@
  * the op_id gate, and byte-identical doc on rejection.
  *
  * ID allocation belongs to the applier and is derived from the immutable op
- * id plus each raw id, never from mutable document state.
+ * id plus each raw id alone, never from mutable document state — including
+ * for links. An earlier revision of this PR made a link's numeric id
+ * (ComfyUI_frontend#18458 — `LinkId` is a branded `number`, unlike the
+ * string-or-number `NodeId`) an exception to that rule, retrying against the
+ * target document's already-persisted numeric link ids to avoid a collision.
+ * Review (Christian Byrne, PR #245) found that retry made link identity
+ * depend on local arrival order, so `remap.ts`'s `derivedLinkId` mints
+ * PURELY from the op's own content instead (ADR-033, amended), spending the
+ * full safe-integer range (53 bits) so a genuine collision is an accepted,
+ * quantified residual risk (`docs/decisions/EXCEPTIONS.md`'s KA-5 row)
+ * rather than something the mint tries to avoid by reading state.
  */
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
@@ -94,6 +104,21 @@ function replaySnapshot(seed: Uint8Array, ops: Op[]): WorkflowJSON {
   Y.applyUpdate(doc, seed);
   for (const op of ops) applyOps(doc, [op], catalog);
   return project(doc, catalog);
+}
+
+/**
+ * One link's numeric id, as `remap.ts`'s `derivedLinkId` mint would produce
+ * it for (`opId`, `"root"`, `rawLinkId`) — a pure function of those two
+ * inputs alone (ADR-033, amended), so this is exactly what a real apply of
+ * the same (opId, rawLinkId) will also compute, regardless of document
+ * state or arrival order.
+ */
+function derivedLinkIdForTest(opId: string, rawLinkId: number): number {
+  const remapped = remapInsertedWorkflowIds(
+    { nodes: [{ id: "a", type: "Src" }, { id: "b", type: "Sink" }], links: [[rawLinkId, "a", 0, "b", 0, "x"]] } as unknown as WorkflowJSON,
+    opId,
+  ) as unknown as { links: Array<[number, ...unknown[]]> };
+  return remapped.links[0]![0];
 }
 
 const bytes = (doc: Y.Doc): Buffer => Buffer.from(Y.encodeStateAsUpdate(doc));
@@ -408,7 +433,10 @@ describe("insert_workflow: happy path", () => {
     const wf = project(doc, catalog);
     expect(ids(wf).slice(0, 5)).toEqual([1, 2, 3, 4, 6]);
     expect(ids(wf).slice(5).every((id) => typeof id === "string" && id.includes(op.op_id))).toBe(true);
-    expect(linkIds(wf)[1]).toEqual(expect.stringContaining(op.op_id));
+    // Link ids are minted numeric (ADR-033 — `remap.ts`'s `derivedLinkId`),
+    // unlike the op-id-embedding derived STRING every other insert_workflow
+    // id keeps: ComfyUI_frontend's `LinkId` is a branded `number`.
+    expect(typeof linkIds(wf)[1]).toBe("number");
     expect(defIds(wf).find((id) => id !== "def-1")).toMatch(/^[0-9a-f-]{36}$/);
     // Inserted nodes project with their widgets resolved through the catalog.
     const n100 = wf.nodes!.find((n) => n.pos?.[0] === 0)!;
@@ -583,30 +611,38 @@ describe("insert_workflow: happy path", () => {
 
   it("drops both boundary directions and retains only the sibling link and its exact slot references", () => {
     const opId = "0123456789abcdef0123456789abcdef";
-    const siblingLinkId = "insert:0123456789abcdef0123456789abcdef:root:link:903";
     const sourceNodeId = "insert:0123456789abcdef0123456789abcdef:root:node:701";
     const sinkNodeId = "insert:0123456789abcdef0123456789abcdef:root:node:702";
+    const workflow = {
+      nodes: [
+        { id: 701, type: "Src", title: "boundary source", outputs: [{ name: "out", links: [901, 903] }] },
+        { id: 702, type: "Sink", title: "boundary sink", inputs: [{ name: "in", link: 902 }, { name: "sibling", link: 903 }] },
+      ],
+      links: [
+        [901, 701, 0, 999, 0, "inserted-to-external"],
+        [902, 999, 0, 702, 0, "external-to-inserted"],
+        [903, 701, 0, 702, 1, "sibling"],
+      ],
+    };
     const doc = mint({ nodes: [], links: [] }, catalog);
-    const op = insertOp(
-      {
-        nodes: [
-          { id: 701, type: "Src", title: "boundary source", outputs: [{ name: "out", links: [901, 903] }] },
-          { id: 702, type: "Sink", title: "boundary sink", inputs: [{ name: "in", link: 902 }, { name: "sibling", link: 903 }] },
-        ],
-        links: [
-          [901, 701, 0, 999, 0, "inserted-to-external"],
-          [902, 999, 0, 702, 0, "external-to-inserted"],
-          [903, 701, 0, 702, 1, "sibling"],
-        ],
-      },
-      { op_id: opId },
-    );
+    const op = insertOp(workflow, { op_id: opId });
     seq--;
 
+    // `remap.ts`'s `derivedLinkId` is a pure function of (opId, scope,
+    // original) alone (ADR-033, amended), so the candidate this direct call
+    // computes for the surviving link (903, "sibling") is exactly what the
+    // real apply below will also compute — independent of what else the
+    // target doc holds.
+    const remapped = remapInsertedWorkflowIds(workflow as unknown as WorkflowJSON, opId) as unknown as {
+      links: Array<[number, ...unknown[]]>;
+    };
+    const siblingLinkId = remapped.links.find((link) => link[5] === "sibling")![0];
+    expect(typeof siblingLinkId).toBe("number");
+
     expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
-    const workflow = project(doc, catalog);
-    expect(workflow.links).toEqual([[siblingLinkId, sourceNodeId, 0, sinkNodeId, 1, "sibling"]]);
-    expect(workflow.nodes).toEqual([
+    const projected = project(doc, catalog);
+    expect(projected.links).toEqual([[siblingLinkId, sourceNodeId, 0, sinkNodeId, 1, "sibling"]]);
+    expect(projected.nodes).toEqual([
       expect.objectContaining({ id: sourceNodeId, outputs: [{ name: "out", links: [siblingLinkId] }] }),
       expect.objectContaining({
         id: sinkNodeId,
@@ -823,14 +859,6 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
       },
     },
     {
-      kind: "link",
-      code: "link_id_collision",
-      seed: {
-        nodes: [{ id: 1, type: "Src" }, { id: 2, type: "Sink" }],
-        links: [["insert:c641df0c31f9440b9385ac8e01e099b2:root:link:901", 1, 0, 2, 0, "incumbent link"]],
-      },
-    },
-    {
       kind: "definition",
       code: "definition_conflict",
       seed: {
@@ -866,6 +894,60 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
       expect(appliedMap(doc).has(op.op_id)).toBe(false);
     });
   }
+
+  describe("numeric link id minting (ADR-033, pure derivation)", () => {
+    it("derives the identical numeric id whether or not that id already exists in the target document", () => {
+      // The whole point of the amended design: the candidate is a function
+      // of (opId, rawLinkId) ALONE. Computing it against an empty workflow
+      // (no document in scope at all) and computing it via a real apply
+      // into a doc that starts with unrelated content must agree exactly —
+      // there is no document read left in `derivedLinkId` to make them
+      // differ.
+      const opId = "d641df0c31f9440b9385ac8e01e099b2";
+      const expected = derivedLinkIdForTest(opId, 901);
+
+      const doc = mint({ nodes: [{ id: 1, type: "Src" }, { id: 2, type: "Sink" }], links: [[555, 1, 0, 2, 0, "unrelated"]] }, catalog);
+      const op = insertOp(
+        { nodes: [{ id: 701, type: "Src" }, { id: 702, type: "Sink" }], links: [[901, 701, 0, 702, 0, "candidate link"]] },
+        { op_id: opId },
+      );
+      seq--;
+
+      expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({ outcome: "applied" });
+      const insertedLink = (project(doc, catalog).links as unknown[][]).find((link) => link[5] === "candidate link")!;
+      expect(insertedLink[0]).toBe(expected);
+    });
+
+    it("rejects, rather than avoids, a genuine collision with a numeric link id already persisted in the doc", () => {
+      // Christian Byrne's blocker on the original revision: making the mint
+      // AVOID an occupied candidate is exactly what made link identity
+      // arrival-order-dependent. The amended mint never reads the document,
+      // so an incumbent occupying the derived candidate is no longer
+      // side-stepped — it is caught by `acceptsLink`'s ordinary, pre-existing
+      // id-collision check (the same one every other `insert_workflow` id
+      // kind already goes through), which rejects the WHOLE op rather than
+      // silently reassigning a different id to the colliding link.
+      const opId = "d641df0c31f9440b9385ac8e01e099b2";
+      const occupied = derivedLinkIdForTest(opId, 901);
+
+      const doc = mint(
+        { nodes: [{ id: 1, type: "Src" }, { id: 2, type: "Sink" }], links: [[occupied, 1, 0, 2, 0, "incumbent link"]] },
+        catalog,
+      );
+      const before = bytes(doc);
+      const beforeProjected = project(doc, catalog);
+      const op = insertOp(
+        { nodes: [{ id: 701, type: "Src" }, { id: 702, type: "Sink" }], links: [[901, 701, 0, 702, 0, "candidate link"]] },
+        { op_id: opId },
+      );
+      seq--;
+
+      expect(rejectedOutcomeWithIndex(applyOps(doc, [op], catalog))).toMatchObject({ index: 0, code: "link_id_collision" });
+      expect(bytes(doc).equals(before)).toBe(true);
+      expect(project(doc, catalog)).toEqual(beforeProjected);
+      expect(appliedMap(doc).has(op.op_id)).toBe(false);
+    });
+  });
 
   it("routes dangling link endpoints through the existing unknown-node no-op path", () => {
     const doc = mint(baseWorkflow(), catalog);

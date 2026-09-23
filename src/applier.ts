@@ -1007,7 +1007,16 @@ function prepareInsertedWorkflow(op: InsertWorkflowOp): Record<string, unknown> 
   }
   validateRawGraphIds(wf["nodes"] as unknown[], (wf["links"] as unknown[] | undefined) ?? [], "workflow");
   validateDefinitionInputs((subgraphs as unknown[] | undefined) ?? []);
-  return remapInsertedWorkflowIds(wf as unknown as import("./types.js").WorkflowJSON, op.op_id) as unknown as Record<string, unknown>;
+  // ADR-033 (amended): every id this op derives, including a link's numeric
+  // id, is a PURE function of the op's own content — no document state is
+  // read here. See `remap.ts`'s `derivedLinkId` for why `LinkId` (a branded
+  // `number`, unlike the string-or-number `NodeId`) needed a numeric mint at
+  // all, and for why the mint no longer checks the target document (KA-5
+  // exception, `docs/decisions/EXCEPTIONS.md`).
+  return remapInsertedWorkflowIds(
+    wf as unknown as import("./types.js").WorkflowJSON,
+    op.op_id,
+  ) as unknown as Record<string, unknown>;
 }
 
 function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetCatalog): SuccessfulOutcome {
@@ -1177,9 +1186,16 @@ function updateInsertedWorkflowMeta(
   const currentNode = numericId(meta.get("last_node_id")) ?? 0;
   const maxNode = Math.max(currentNode, ...nodeWrites.map(([, id]) => numericId(id) ?? currentNode));
   if (maxNode > currentNode) mset(meta, "last_node_id", maxNode);
-  const currentLink = numericId(meta.get("last_link_id")) ?? 0;
-  const maxLink = Math.max(currentLink, ...linkWrites.map((link) => numericId(link[0]) ?? currentLink));
-  if (maxLink > currentLink) mset(meta, "last_link_id", maxLink);
+  // `last_link_id` is deliberately NOT advanced from `linkWrites` (KA-5:
+  // "document high-water marks are advisory, never allocators"). Every
+  // inserted link's own id is now a large, arbitrary-looking derived number
+  // (ADR-033 — `remap.ts`'s `derivedLinkId`, needed only because ComfyUI_
+  // frontend's `LinkId` is a branded `number`), not a small sequential one,
+  // so folding it into the high-water mark would pin the doc's bookkeeping
+  // field to that value forever after the FIRST insert_workflow — a new,
+  // surprising side effect this line never had before (the pre-fix STRING
+  // derived id already failed `numericId` and left this a no-op for every
+  // inserted link).
 }
 
 // ---------------------------------------------------------------------------
