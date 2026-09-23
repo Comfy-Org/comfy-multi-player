@@ -7,11 +7,24 @@ this package uses semantic versioning.
 
 ## Unreleased
 
+## 0.3.6 - 2026-09-23
+
 ### Added
 
 - Support `add_node` inside a subgraph definition via a non-empty instance
   `path`, with path-scoped LWW identity, deterministic interior node ordering,
   shared-definition protection, and explicit missing-container rejection.
+
+### Fixed
+
+- Resolve a definition's own interior node `type` (and `properties.proxyWidgets`
+  interior-id references) against its sibling scope when the nested-children
+  scope has no match, so a subgraph instance nested inside another subgraph's
+  own type — the flat-sibling shape litegraph's real serializer
+  (`LGraph.asSerialisable()` / `findUsedSubgraphIds()`) actually emits — now
+  remaps correctly instead of leaving the raw blueprint id un-remapped and
+  falling back to a plain, widget-less node in ComfyUI_frontend's materializer
+  (#253).
 
 ## 0.3.5 - 2026-09-23
 
