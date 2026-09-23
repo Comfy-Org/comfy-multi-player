@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -90,5 +90,25 @@ describe("verify-corpus fail-closed guards", () => {
     const run = runAgainst(dir);
     expect(run.status).toBe(0);
     expect(run.stdout).toBe("corpus verification PASSED (1 files)\n");
+  });
+
+  it("verifies explicitly pinned nested golden vectors", () => {
+    const relativePath = "golden-vectors/conformance.json";
+    const body = '{"format_version":1}';
+    const sha = createHash("sha256").update(body).digest("hex");
+    mkdirSync(join(dir, "golden-vectors"));
+    writeFileSync(join(dir, relativePath), `${body}\n`);
+    writeFileSync(
+      join(dir, "MANIFEST.json"),
+      JSON.stringify({ files: { [relativePath]: { sha256: sha } } }),
+    );
+
+    const run = runAgainst(dir);
+    const actualSha = createHash("sha256").update(`${body}\n`).digest("hex");
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toBe(
+      corpusFail(`${relativePath}: expected ${sha}, got ${actualSha}`),
+    );
   });
 });

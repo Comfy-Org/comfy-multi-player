@@ -17,6 +17,14 @@
       "notes": "Historical probe capture, not regenerated. The clear-scope prose was manually corrected on 2026-09-18 against test/clear-empty-removed-nodes.test.ts and the current applier; source request: https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#discussion_r3914401872. Executable vectors are unchanged.",
       "sha256": "d1462ed6786745e843f651dea8889b189f875f41358d14fa3cb7fca1b18d691e"
     },
+    "golden-vectors/conformance.json": {
+      "generator": "hand-authored package-local conformance manifest",
+      "sha256": "0c6ec927025ed8f7c66e99b4f73a1d6df2d6e65bc29162396b3e5977e8447c24"
+    },
+    "golden-vectors/definition-payload-rejections.json": {
+      "generator": "hand-authored package-local N1-N8 rejection fixtures",
+      "sha256": "d77b5608988440393eeee1bb620ddfc18f5bde3a54d4ea991d6a025caeb16639"
+    },
     "lww-vectors.json": {
       "generator": "crdt-spike/gen_fixtures.py: workflow_ops.apply_op both-order vectors",
       "sha256": "77404f9a5698b721e0a3eefc7c83ab112588db50d209567fd65f1f780f5d1f1b"
