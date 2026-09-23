@@ -32,7 +32,8 @@ import {
   type WorkflowJSON,
   type WorkflowNode,
 } from "../src/index.js";
-import { canonicalize, loadCatalog, loadLwwVectors, loadSession, sessionFiles } from "./helpers.js";
+import { noOpIds, rejectedOutcome } from "./apply-result-helpers.js";
+import { loadCatalog, loadLwwVectors, loadSession, sessionFiles } from "./helpers.js";
 
 const catalog = loadCatalog();
 const lww = loadLwwVectors();
@@ -47,19 +48,8 @@ function envelope(actor: string, baseVersion: number) {
   return { op_id: testOpId(), actor, base_version: baseVersion, stamp: [baseVersion, actor] as [number, string] };
 }
 
-function rejectedOutcome(result: ReturnType<typeof applyOps>) {
-  return result.outcomes.find(
-    (outcome): outcome is Extract<(typeof result.outcomes)[number], { outcome: "rejected" }> =>
-      outcome.outcome === "rejected" && outcome.reason.code !== "batch_aborted",
-  );
-}
-
 function processedOpIds(result: ReturnType<typeof applyOps>): string[] {
   return result.outcomes.filter((outcome) => outcome.outcome !== "rejected").map((outcome) => outcome.op_id);
-}
-
-function noOpIds(result: ReturnType<typeof applyOps>): string[] {
-  return result.outcomes.filter((outcome) => outcome.outcome === "no-op").map((outcome) => outcome.op_id);
 }
 
 describe("idempotency (byte-identical re-apply)", () => {
@@ -197,7 +187,7 @@ describe("delete-wins (silent no-ops that consume the op_id)", () => {
     const doc = mint(lww.base_workflow, catalog);
     const del: DeleteNodeOp = { op: "delete_node", ...envelope("alice", 1), node_id: 42, removed_links: [] };
     expect(rejectedOutcome(applyOps(doc, [del], catalog))).toBeUndefined();
-    expect(project(doc, catalog).nodes.length).toBe(2);
+    expect(project(doc, catalog).nodes).toHaveLength(2);
   });
 });
 
@@ -360,7 +350,7 @@ describe("inputcount two-register grow (freeze §8.4)", () => {
       const node = project(doc, multiCatalog).nodes.find((n) => n.id === 1)!;
       expect(node.widgets_values, order.map((o) => o.op).join("→")).toEqual([7]);
       // Both orders still grow the slot — only the count register is contested.
-      expect((node.inputs as unknown[]).length).toBe(3);
+      expect(node.inputs as unknown[]).toHaveLength(3);
     }
   });
 });
@@ -481,6 +471,113 @@ describe("opaque widgets (frontend-only classes)", () => {
     const projected = project(doc, catalog).nodes[0]!;
     expect(JSON.stringify(projected.widgets_values)).toBe(JSON.stringify(node.widgets_values));
   });
+
+  // The exact op comfy-cli `add_node` mints for the two authorable annotation
+  // nodes (op-vocabulary v1.6, comfy-cli PR #916; Linear PM-983 "agent cannot
+  // add Note"). Captured verbatim from `workflow_ops.add_node(..., text=...)`:
+  // no sockets, no title/color, `size` from `layout.note_size`, and exactly one
+  // positional widget — the text. This is the shape the cloud agent will send
+  // once its comfy-cli pin moves, so the applier must take it on the opaque
+  // path, keep the text byte-for-byte, and survive a persist → reload cycle.
+  const agentMintedNotes = [
+    {
+      op: "add_node",
+      op_id: "8b723482b9ca4915a3a53d62d06d8972",
+      actor: "agent:comfy-agent",
+      base_version: 2,
+      stamp: [2, "agent:comfy-agent"],
+      node_id: 1190924688544577,
+      class_type: "Note",
+      pos: [440.0, 720.0],
+      node: {
+        id: 1190924688544577,
+        type: "Note",
+        pos: [440.0, 720.0],
+        size: [400.0, 216.0],
+        flags: {},
+        order: 0,
+        mode: 0,
+        inputs: [],
+        outputs: [],
+        properties: {},
+        widgets_values: ["Agent note: check VAE choice"],
+      },
+    },
+    {
+      op: "add_node",
+      op_id: "7191b4a20be44281ac4fbf5ef23bfece",
+      actor: "agent:comfy-agent",
+      base_version: 2,
+      stamp: [2, "agent:comfy-agent"],
+      node_id: 465971679169381,
+      class_type: "MarkdownNote",
+      pos: [440.0, 720.0],
+      node: {
+        id: 465971679169381,
+        type: "MarkdownNote",
+        pos: [440.0, 720.0],
+        size: [400.0, 216.0],
+        flags: {},
+        order: 0,
+        mode: 0,
+        inputs: [],
+        outputs: [],
+        properties: {},
+        widgets_values: ["# Agent plan\n\n- step one"],
+      },
+    },
+  ] as unknown as Op[];
+
+  for (const op of agentMintedNotes) {
+    const cls = (op as { class_type: string }).class_type;
+    const nodeId = (op as { node_id: number }).node_id;
+    const text = ((op as { node: WorkflowNode }).node.widgets_values as string[])[0]!;
+
+    it(`applies the comfy-cli-minted ${cls} op onto a note-bearing doc and keeps the text through persist → reload`, () => {
+      expect(catalog.types[cls]).toBeUndefined();
+      const doc = mint(notes, catalog);
+      const before = project(doc, catalog).nodes.length;
+      const res = applyOps(doc, [op], catalog);
+      expect(rejectedOutcome(res)).toBeUndefined();
+      expect(processedOpIds(res)).toEqual([op.op_id]);
+
+      const projected = project(doc, catalog);
+      expect(projected.nodes).toHaveLength(before + 1);
+      const added = projected.nodes.find((n) => String(n.id) === String(nodeId))!;
+      expect(added.type).toBe(cls);
+      // Text is the single positional widget, byte-for-byte. A wrong
+      // implementation that name-keys it (or drops an "unknown" widget) fails
+      // here, not in the frontend follower.
+      expect(added.widgets_values).toEqual([text]);
+      expect(added.inputs ?? []).toEqual([]);
+      expect(added.outputs ?? []).toEqual([]);
+      expect(added.size).toEqual([400, 216]);
+
+      // Persist → reload: a fresh replica built only from the encoded state
+      // projects the same node with the same text.
+      const replica = new Y.Doc();
+      Y.applyUpdate(replica, Y.encodeStateAsUpdate(doc));
+      const reloaded = project(replica, catalog).nodes.find((n) => String(n.id) === String(nodeId))!;
+      expect(reloaded.widgets_values).toEqual([text]);
+      expect(reloaded.type).toBe(cls);
+    });
+
+    it(`a later set_widget on the agent-added ${cls} is refused, not silently no-oped`, () => {
+      const doc = mint(notes, catalog);
+      expect(rejectedOutcome(applyOps(doc, [op], catalog))).toBeUndefined();
+      const bytes = Buffer.from(Y.encodeStateAsUpdate(doc));
+      const edit: SetWidgetOp = {
+        op: "set_widget",
+        ...envelope("agent:comfy-agent", 3),
+        node_id: nodeId,
+        widget: "text",
+        value: "rewritten",
+      };
+      const res = applyOps(doc, [edit], catalog);
+      expect(res.outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "opaque_widgets" } });
+      expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(bytes)).toBe(true);
+    });
+  }
 
   it("a catalog-LESS host still refuses positional widgets_values (catalog_required)", () => {
     // No catalog at all cannot distinguish "unknown class" from "class I just

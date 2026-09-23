@@ -18,6 +18,7 @@
  * the document; `test/invalid-op-states.test.ts` is the matching runtime
  * audit, including the states the wire still accepts.
  */
+import type * as Y from "yjs";
 import type {
   AddNodeOp,
   ClearOp,
@@ -25,12 +26,16 @@ import type {
   ConnectOp,
   DeleteNodeOp,
   GrowConnectOp,
+  InsertWorkflowOp,
   InteriorSetWidgetOp,
   Op,
+  OpKind,
   ResetDocOp,
+  SetNodeFieldOp,
   SetWidgetOp,
   TopLevelSetWidgetOp,
   WireOp,
+  applyOps,
 } from "../../src/index.js";
 
 const env = {
@@ -192,9 +197,38 @@ const reset: ResetDocOp = {
 // @ts-expect-error #17: `reset_doc` is deferred; it is a `WireOp`, not an `Op`.
 const resetAsOp: Op = reset;
 
-declare function applyOpsSignature(ops: Op[]): void;
+declare const applyOpsSignature: typeof applyOps;
+declare const doc: Y.Doc;
 // @ts-expect-error #17: the applier cannot be handed an op it always refuses.
-applyOpsSignature([reset]);
+applyOpsSignature(doc, [reset]);
+
+const insertWorkflow: InsertWorkflowOp = {
+  op: "insert_workflow",
+  ...env,
+  workflow: { nodes: [], links: [], definitions: { subgraphs: [] } },
+};
+const insertWorkflowAsOp: Op = insertWorkflow;
+// Positive control: the real public arity plus a valid op must compile, so the
+// reset assertion cannot pass merely because every call has the wrong arity.
+applyOpsSignature(doc, [insertWorkflow]);
+
+// The public vocabulary projection accepts every declared kind and no value
+// outside the wire union. This is an external-consumer check through index.ts.
+const okImplementedKind: OpKind = "add_node";
+const okDeferredKind: OpKind = "reset_doc";
+// @ts-expect-error #21: undeclared operation kinds are not public OpKind values.
+const unknownKind: OpKind = "unknown_op";
+
+// ---------------------------------------------------------------------------
+// set_node_field couples each closed field name to its wire value type
+// ---------------------------------------------------------------------------
+
+// @ts-expect-error node-field contract: titles are strings or null.
+const titleWithNumber: SetNodeFieldOp = { op: "set_node_field", ...env, node_id: 1, field: "title", value: 1 };
+// @ts-expect-error node-field contract: modes are numbers or null.
+const modeWithString: SetNodeFieldOp = { op: "set_node_field", ...env, node_id: 1, field: "mode", value: "4" };
+// @ts-expect-error node-field contract: flags are booleans or null.
+const collapsedWithNumber: SetNodeFieldOp = { op: "set_node_field", ...env, node_id: 1, field: "flags.collapsed", value: 1 };
 
 // ---------------------------------------------------------------------------
 // Positive controls — these MUST compile, or the gate above is vacuous
@@ -288,6 +322,11 @@ const okInteriorSetWidget: Op = {
   inner_widget: "text",
 };
 
+const okSetTitle: SetNodeFieldOp = { op: "set_node_field", ...env, node_id: 1, field: "title", value: "Renamed" };
+const okSetMode: SetNodeFieldOp = { op: "set_node_field", ...env, node_id: 1, field: "mode", value: 4 };
+const okSetCollapsed: SetNodeFieldOp = { op: "set_node_field", ...env, node_id: 1, field: "flags.collapsed", value: true };
+const okClearPinned: SetNodeFieldOp = { op: "set_node_field", ...env, node_id: 1, field: "flags.pinned", value: null };
+
 const okDeleteNode: Op = { op: "delete_node", ...env, node_id: 1, removed_links: [4, 5] };
 const okClear: Op = { op: "clear", ...env, removed_nodes: [1, 2] };
 
@@ -296,7 +335,7 @@ const okResetAsWireOp: WireOp = reset;
 
 // Keep every binding used so `noUnusedLocals` (if ever enabled) stays quiet and
 // nothing here is dead.
-export const checked = [
+export const checked: (WireOp | ClearOp | DeleteNodeOp)[] = [
   growWithConcreteSlot,
   growWithConcreteSlotUnion,
   nullSlotWithoutGrow,
@@ -308,6 +347,9 @@ export const checked = [
   topLevelWithPath,
   unprovenInteriorPath,
   resetAsOp,
+  titleWithNumber,
+  modeWithString,
+  collapsedWithNumber,
   okAddNode,
   okConcreteConnect,
   okGrowConnectExplicitNull,
@@ -316,7 +358,11 @@ export const checked = [
   okTopLevelSetWidget,
   okTopLevelSetWidgetExplicitNulls,
   okInteriorSetWidget,
+  okSetTitle,
+  okSetMode,
+  okSetCollapsed,
+  okClearPinned,
   okDeleteNode,
   okClear,
   okResetAsWireOp,
-] satisfies (WireOp | ClearOp | DeleteNodeOp)[];
+];

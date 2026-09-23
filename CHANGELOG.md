@@ -5,6 +5,79 @@ All notable changes to `@comfyorg/comfy-multi-player` are documented in this fil
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package uses semantic versioning.
 
+## Unreleased
+
+## 0.3.3 - 2026-09-22
+
+### Fixed
+
+- Keep nodes inserted by `insert_workflow` editable and remap promoted-widget
+  references to their renamed interior nodes, preserving reserved IO sentinels.
+- Measure benchmark apply operations against fresh documents rather than
+  already-applied operations.
+
+### Added
+
+- Typed per-field node metadata operations with independent conflict ordering.
+- `readApplied()` for inspecting the applied-operation ledger.
+- `compact()` for creating a fresh document lineage while retaining conflict
+  stamps, node incarnations, link state and clock reservations. Hosts still own
+  replica cutover; publishing this helper does not enable compaction in consumers.
+- Regression coverage for duplicate-create convergence and CLI-created Note
+  nodes, plus a document-growth benchmark matrix.
+
+## 0.3.2 - 2026-09-21
+
+### Fixed
+
+- Republishes the 0.3.1 release, which never reached npm: the tag was never
+  pushed, so the version bump landed on `main` without a corresponding package
+  publish. 0.3.2 carries the same `insert_workflow` fix as 0.3.1 (see below)
+  and is published through the new label-gated release automation.
+
+## 0.3.1 - 2026-09-21
+
+### Fixed
+
+- Fixed `insert_workflow` remap dropping a pasted subgraph definition's
+  promoted-input and exposed-output `linkIds`. The synthetic IO node
+  sentinels a promoted input resolves against were being treated as missing
+  nodes during dangling-link dropping, so every sentinel-fed link was
+  discarded and the promoted widget silently stopped being recognized after
+  an insert.
+
+## 0.3.0 - 2026-09-19
+
+### Changed
+
+- Breaking: advances the published package from document schema 2 to schema 4.
+  Durable link state lives in `__link_state`, and Lamport reservations now live
+  in `__clock_reservations`, separate from the winning write-target stamps
+  returned by `readStamps()`.
+- Old document layouts are refused without mutation. `migrate()` validates the
+  current layout; it does not upgrade or relabel schemas 1–3. Hosts must
+  re-mint source workflows into a new lineage and settle or discard old pending
+  queues before a coordinated consumer cutover. Publication alone does not
+  authorize that cutover or establish frontend rollout sign-off.
+
+### Added
+
+- Added the standalone `insert_workflow` op for atomic workflow-template
+  insertion. The applier derives every carried node, link, group, and
+  definition ID from the operation ID and graph scope, avoiding allocation
+  against mutable document state.
+- Recovered standalone link, definition, scoped interior-connect, operation
+  inspection, and checked public operation-type surfaces.
+
+### Fixed
+
+- Hardened stamp admission, opaque-widget projection, hostile snapshot keys,
+  definition identities, interior link preservation, and draft-07 event-schema
+  compatibility.
+- Restored standalone package gates and release retry verification. Existing
+  npm versions are reused only when artifact integrity and verified provenance
+  match the tagged source; different bytes must use a new version.
+
 ## 0.2.0 - 2026-08-30
 
 ### Changed

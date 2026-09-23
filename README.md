@@ -1,13 +1,5 @@
 # @comfyorg/comfy-multi-player
 
-> [!IMPORTANT]
-> Active development and releases have moved to
-> [`ComfyUI_frontend/packages/comfy-multi-player`](https://github.com/Comfy-Org/ComfyUI_frontend/tree/main/packages/comfy-multi-player).
-> This repository is retained as a read-only record of the standalone package's
-> history, tags, and releases through 0.2.1. Open source changes and issues in
-> [`ComfyUI_frontend`](https://github.com/Comfy-Org/ComfyUI_frontend); do not
-> create a second implementation here. Migration: [ComfyUI_frontend #16644](https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644).
-
 One implementation of what an edit does to a workflow document, used
 identically by the ComfyUI frontend and by the server that hosts the document.
 It exists so that an agent and a human can edit the same workflow at the same
@@ -117,9 +109,28 @@ names in the catalog.
 
 ### `applyOps(doc, ops, catalog?, context?): ApplyResult`
 
-Applies a batch, one Yjs transaction per op, in the given order. Never throws
-for a rejected op — every outcome comes back in the result. See
+Applies a batch, one Yjs transaction per op, in the given order. For inert
+decoded operations on a valid current-schema document, operation rejections
+come back in the result. See
 [outcomes](#what-applyops-returns) below.
+
+**Input trust boundary (KA-3 / KA-4 / FC-3).** Hosts must bound untrusted wire
+bytes before parsing, decode JSON text with `JSON.parse` without a reviver,
+and validate the batch shape before calling `applyOps`. The package then
+validates operation envelopes and bounds their depth, breadth and approximate
+cost before applying them. These are payload bounds, not an execution sandbox
+or a bound on the host's parsing/allocation cost.
+
+In-process callers must supply trusted objects: getters, Proxies, custom
+iterators and callbacks can execute arbitrary code, throw, change values
+between reads, or never return. The no-mutation-on-rejection contract covers
+package writes, not mutations made by caller code that already holds the
+document. `structuredClone` is not a sanitizer for arbitrary objects: it
+rejects Proxies but reads getters. `JSON.stringify` also invokes getters and
+`toJSON`; stringifying an untrusted object is not equivalent to receiving JSON
+text. See the [structured-clone specification](https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal).
+`test/op-bounds.test.ts` exercises the decoded-data boundary, refusal without
+document mutation, and retry with the same operation identity.
 
 `catalog` is optional but effectively required for a real host: without it, an
 `add_node` carrying positional widget values is rejected `catalog_required`,
@@ -145,12 +156,12 @@ unrecognized workflow key passed through untouched.
 workflow content it throws `SchemaVersionError` when `meta.schema_version` is
 absent, is not a positive integer, or is not this package's `SCHEMA_VERSION`. A document
 NEWER than this package is refused rather than best-effort projected; a
-document OLDER is refused too, and the message names the remedy — run
-`migrate(doc, storedVersion)` on the **host** first, then read. `project()`
+document OLDER is refused too. Re-mint an old document from its source workflow
+with the current package; `migrate()` does not provide a compatibility reader.
+`project()`
 never migrates, because it is a read any replica may call — a browser follower
-included — and a follower must not write the shared document (KA-6/FC-5). No
-follower calls it today (the frontend does not depend on this package at all),
-so this is a rule about the API, not an observation about callers.
+included — and a follower must not write the shared document (KA-6/FC-5). This
+is an API rule independent of which consumers currently call it.
 
 This refusal is byte-exact: `encodeStateAsUpdate(doc)` and the `doc.share` key
 set are both unchanged. It is also strictly *less* mutating than the old
@@ -178,18 +189,21 @@ the accept path.
 
 ### `migrate(doc, fromVersion): void`
 
-Document-layout versioning, and the **migration path** a host runs before it
-reads a document it did not mint. `SCHEMA_VERSION` is `1`, so today there is
-nothing to step: the call validates and no-ops at v1, and throws
-`SchemaVersionError` for everything else. A host never best-effort reads a
-layout it does not know.
+Document-layout version validation for the private-alpha current format.
+`SCHEMA_VERSION` is `4`: the call validates and no-ops only at v4, and throws
+`SchemaVersionError` for every older or newer layout without relabelling it.
+Old layouts must be re-minted at their source; there is no compatibility reader.
+Schema v4 separates Lamport reservations into `__clock_reservations`;
+`readStamps()` contains only winning write-target stamps. Clock admissions
+require a current-schema caller document and recover their floor from both
+ledgers, including after snapshot restart (ADR-021, Amendment CLK-3).
 
 `migrate()` is **no longer the only fail-closed read gate** — it was, and
 nothing forced a caller through it, which is the fail-open gap #38 closed by
 putting the same check inside `project()`. Both entrypoints share one
 definition of the read (`readSchemaVersion`), so they agree on exactly which
 documents are unreadable. `migrate()` remains **host-only**: followers receive
-a migrated document over the struct stream or as a new epoch (schema §10).
+a current-format document over the struct stream or as a new epoch (schema §10).
 
 `fromVersion` is your *claim* about the document, and it is checked against the
 document's own `meta.schema_version`. It throws when:
@@ -231,6 +245,10 @@ receives the migrated document over the struct stream and must not call this.
 `stampKey(op)`, `compareStampKeys(a, b)`, `writeTarget(op)`,
 `stampTargetKey(op)`, `codePointCompare(a, b)`. You need these only if you are
 building conflict UI or your own bookkeeping — `applyOps` uses them internally.
+Stamp counters are non-negative safe integers; `stampKey` and
+`compareStampKeys` throw `RangeError` when a direct caller supplies a counter
+outside that domain. An absent stamp still falls back to the envelope's
+`base_version` and `actor`, including the existing `0`/empty-string defaults.
 
 ### Follower read surface and document internals
 
@@ -342,16 +360,21 @@ Every op carries the same envelope, minted by its creator before dispatch:
 }
 ```
 
-Six kinds, frozen:
+Nine kinds, frozen. Eight mirror comfy-cli's pinned vocabulary;
+`set_node_field` is the package-local, provisional addition recorded by
+ADR-032 and schema Amendment A21.
 
 | Kind | Payload beyond the envelope | Batchable (authoring) |
 |---|---|---|
 | `add_node` | `node_id`, `class_type`, `pos`, `node` (the complete node object, inserted verbatim) | yes |
+| `define_subgraph` | `subgraph_id`, `subgraph_definition` (the complete initial definition, inserted once) | yes |
 | `connect` | `link_id`, `from_node`, `from_slot`, `to_node`, `link_type`, then EITHER a numeric `to_slot` (`ConcreteConnectOp`) OR a `grow` payload with `to_slot` null/absent (`GrowConnectOp`); `grow.promoted: true` names a subgraph instance's DECLARED input, materialized on the instance and LWW-gated as one register (schema Amendment A15) | yes |
 | `disconnect` | `link_id`, `to_node`, `to_slot`; claims the same concrete input register as `connect` and removes the winning slot occupant | yes |
 | `set_widget` | `node_id`, `widget` (name, never index), `value`, optional `old`; an interior write adds `path` AND `inner_widget` together (`InteriorSetWidgetOp`); a promoted HOST write adds `promoted: {value_index, instance_path, host_widgets_values}` instead — a positional write into a subgraph instance's opaque array (schema Amendment A15) | yes |
+| `set_node_field` | `node_id`, `field` (one of `title`, `mode`, `flags.collapsed`, `flags.pinned` — exported as `WRITABLE_NODE_FIELDS`), and a field-typed `value`: string for `title`, non-negative integer for `mode`, boolean for flags, or `null` to delete. One LWW register per `(node lifetime, field)`, so two fields of one node never contend and neither disturbs that node's widget stamps. Package-local and provisional (ADR-032) | yes |
 | `delete_node` | `node_id`, `removed_links` | yes |
 | `clear` | `removed_nodes` | no |
+| `insert_workflow` | `workflow` containing required raw-ID `nodes` plus optional `links`, `groups`, and `definitions`; the applier remaps IDs deterministically from `op_id` | no |
 | `reset_doc` | see [open questions](docs/api-contract-proposal.md) — currently rejected `op_deferred` by this package | no |
 
 `FROZEN_OPS`, `DEFERRED_OPS`, and `BATCHABLE_OPS` are exported so you can check
@@ -362,7 +385,20 @@ Compile-time assertions in `src/types.ts` pin that `FROZEN_OPS` is exactly
 is exactly `WireOp["op"]`, and that `BATCHABLE_OPS ⊆ FROZEN_OPS`, so the lists
 and the unions cannot drift apart silently.
 
-**`Op` vs `WireOp`.** `Op` is what `applyOps` implements — the six kinds it
+For `insert_workflow`, submit raw node, link, group, and definition ids without
+inspecting document state. The applier owns deterministic, tree-wide remapping;
+each derived id incorporates the envelope `op_id`, graph scope, id kind, and
+original id. Numeric and string aliases with the same normalized id refer to
+the same node, including in link endpoints. Definition ids are scoped to their
+containing graph, so repeated nested ids in separate branches derive distinct
+ids. A remapped definition id that collides anywhere in the stored
+definition tree rejects the operation with `definition_conflict`. Duplicate or
+missing raw ids reject it atomically with `malformed_op` at every definition
+depth. Links with a missing origin or target node are dropped individually at
+every depth, while valid sibling links remain. Private keys beginning with
+`__` are recursively removed and never appear in the projected workflow.
+
+**`Op` vs `WireOp`.** `Op` is what `applyOps` implements — the eight kinds it
 can actually apply. `WireOp` is `Op` plus the deferred kinds a conforming peer
 may legally put on the wire, and it is what `ApplyFailure.op` and the stamp
 helpers take: a rejected `reset_doc` really does land in `failed.op`, so typing
@@ -417,11 +453,14 @@ implementation to replay it with no failures. If you are building a submission
 surface in front of the applier, that admission layer is where `BATCHABLE_OPS`
 belongs. `test/batch-policy.test.ts` pins all of this.
 
-The normative definition of the op envelope and the six kinds is
+The historical op envelope and six-kind base vocabulary are defined by
 `docs/op-vocabulary-v1.md` in
-[comfy-cli](https://github.com/Comfy-Org/comfy-cli), which mints these ops on
-the agent side. The `Op` types here mirror those minted shapes field for field;
-a divergence is a bug here.
+[comfy-cli](https://github.com/Comfy-Org/comfy-cli), with the adopted connect
+amendment pinned separately below. The complete current eight-kind implemented
+surface is defined locally by `src/types.ts` and
+[`docs/multiplayer-schema.md`](docs/multiplayer-schema.md): `define_subgraph`
+and ADR-031's standalone `insert_workflow` are local extensions, not claims
+about the historical comfy-cli pin.
 
 This package tracks that document at comfy-cli commit
 `7e732242d971daf0d2d30f22f997abfacd78986e`, plus amendment v1.2 (§11) at
@@ -482,7 +521,7 @@ arrives on the update stream, not when the ack lists it as applied.
 
 **Batches abort the remainder.** If op *k* fails, ops 0..*k*-1 stay applied and
 ops *k*..*n* are not applied at all. Fix the failing op and resend the whole
-batch with the **same** `op_id`s: the prefix comes back in `skipped`, the
+batch with the **same** `op_id`s: the prefix comes back with `outcome: "no-op"`, the
 remainder applies. Rejected ops consume no `op_id`, so a batch is retryable.
 
 **The four `connect` rejections that used to break this are fixed (#34).**
@@ -499,8 +538,8 @@ Rejection codes: `malformed_op`, `unknown_op`, `op_deferred`,
 `catalog_required`, `invalid_node_payload`, `unknown_widget`,
 `uncatalogued_widget_write`, `opaque_widgets`, `widget_out_of_range`,
 `input_slot_missing`, `output_slot_missing`, `not_a_subgraph`,
-`interior_node_not_found`, `shared_definition_unforked`, and `apply_failed` for
-anything unexpected. Match on `code`, never on `message`.
+`interior_node_not_found`, `shared_definition_unforked`, `batch_aborted`, and
+`apply_failed` for anything unexpected. Match on `code`, never on `message`.
 
 `uncatalogued_widget_write` means a NAME-KEYED widget write named a class the
 pinned catalog does not describe. `add_node` and `set_widget` (and `connect`'s
@@ -635,10 +674,17 @@ way.
 Published to npm as [`@comfyorg/comfy-multi-player`](https://www.npmjs.com/package/@comfyorg/comfy-multi-player):
 
 ```bash
-npm install @comfyorg/comfy-multi-player
+npm install --save-exact @comfyorg/comfy-multi-player@0.3.0
 ```
 
-Pin an **exact** version in both the frontend and the server. Conflict
+Use this exact version after the 0.3.0 release is published; unreleased main
+changes are not included in earlier npm versions. Version 0.3.0 requires schema
+4, while 0.2.1 used schema 2. Old layouts are refused, not migrated in place.
+Coordinate version upgrades and new-lineage cutover across consumers as
+described in [`docs/release-handoff.md`](docs/release-handoff.md).
+
+The server and frontend must pin the same **exact** published version. Package
+development stays in the standalone repository; consumers do not vendor its source. Conflict
 resolution is a cross-process agreement about which write wins; two peers
 running different versions of these rules can disagree about the outcome.
 
@@ -651,7 +697,7 @@ superseded) remains documented for historical context.
 ## Develop
 
 ```bash
-npm install
+npm ci
 npm run build         # tsc → dist/
 npm test              # vitest: schema, purity, replay, lww, convergence, roundtrip, applier
 npm run check:purity  # dependency-tree + bare-Node import gate
@@ -661,6 +707,12 @@ npm run verify:corpus # conformance fixtures match their pinned SHAs
 npm run check:profile-claims # .agents/checks prose still matches the code it restates
 npm run check:coderabbit     # .coderabbit.yaml still matches the profiles that generate it
 ```
+
+The canonical writable source is
+[`Comfy-Org/comfy-multi-player`](https://github.com/Comfy-Org/comfy-multi-player).
+Run these commands from this repository's root. Target package code, tests, docs,
+and release tooling at standalone `main`. Frontend adapters belong on frontend
+`main`; the deferred frontend migration is not a development base.
 
 `fixtures/` holds the replay corpus: recorded op sessions with their starting
 and final workflows, six conflict-resolution vectors, and the pinned catalog.

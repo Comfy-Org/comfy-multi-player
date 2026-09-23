@@ -32,7 +32,7 @@ Every PR description must include these three sections — the PR template
 
 ## Local gate sequence
 
-Run all nine commands before requesting review — this is the set CI runs:
+Run these ten commands before requesting review, including both CI test tiers:
 
 ```sh
 npm ci
@@ -44,6 +44,7 @@ npm run check:profile-claims
 npm run check:coderabbit
 npm run verify:corpus
 npm test
+npm run test:exhaustive
 ```
 
 `check:purity` asserts the production dependency roots are exactly `{yjs}` and
@@ -56,6 +57,33 @@ the owning profile and run `npm run gen:coderabbit`, never the YAML directly.
 `verify:corpus` checks that conformance fixtures match their pinned SHAs.
 
 Add a fixture in `fixtures/` with any change to op semantics.
+
+## Permutation test tiers
+
+`npm test` retains representative full-op-pool coverage: 64 frozen-kind pairs ×
+8 states × 2 arrival orders × 2 batch modes = 2,048 executions, rotating the
+actor/stamp classes across pairs, plus 128 fixed-seed length-3-to-6 streams
+(256 executions). Both tests keep the rejection, idempotency, taxonomy, and
+measured-count assertions; coverage guards require every kind/state, actor
+class, stamp class, batch mode, and sampled declared kind to be exercised.
+
+Also run `npm run test:exhaustive` before review. This selects the `exhaustive`
+Vitest tag and preserves the full current domain: 16,384 pair executions
+(the same dimensions × 2 actor classes × 4 stamp classes) and 1,696 fixed-seed
+streams (3,392 executions). The independent `exhaustive op-pool permutations`
+CI job runs on every PR and main push, and its failures fail the workflow.
+Neither command claims exhaustive coverage of arbitrary workflows or streams.
+
+This separation carries the `coderabbitai[bot]` request from
+[the September 2, 2026 frontend review](https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#pullrequestreview-5089967939):
+“Isolate the exhaustive permutation tests in the suite containing the
+900,000 ms timeouts and 200,000-operation matrix by assigning them a dedicated
+job or test tag, while retaining a reduced representative sample in the default
+test run.” The matrix was already reduced before this scheduling change.
+That closed frontend migration PR and its QA records are historical recovery
+evidence, not current standalone-package QA or authorization to migrate,
+publish, or deploy. Historical mutation scores likewise do not measure this
+new default selection; no new mutation score is claimed here.
 
 ## Purity and portability
 
@@ -70,6 +98,38 @@ Any change to the `Y.Doc` layout or to `SCHEMA_VERSION` requires frontend
 sign-off — the browser is a co-equal host of this document. Contract changes
 are amendments appended to the schema document with reasoning, never silent
 edits to a decided section.
+
+## Cutting a release
+
+Releases are cut from a **version-bump-only PR**: `package.json`,
+`package-lock.json`, and a `CHANGELOG.md` entry, nothing else. Apply the
+**`release` label** to that PR before merging it. The label is the deliberate
+publish decision — see the 2026-09-21 amendment in
+[`docs/decisions/ADR-006-publish-to-npm-pin-exact-versions.md`](docs/decisions/ADR-006-publish-to-npm-pin-exact-versions.md).
+
+When a labelled PR merges, `.github/workflows/auto-tag-release.yml` creates
+`v<version>` at the merge commit and starts `release.yml` at that tag, which
+runs the full gate suite and publishes to npm with provenance. There is no
+manual `git tag` / `git push` step any more.
+
+Merging **without** the label publishes nothing, which is the intended default
+for every other change. To release such a merge afterwards, tag it by hand:
+
+```sh
+git tag "v$(node -p "require('./package.json').version")" <merge-sha>
+git push origin "v$(node -p "require('./package.json').version")"
+```
+
+A tag pushed by a human still triggers `release.yml` on its own. If a tag
+already exists but the release never ran, start it without re-tagging:
+
+```sh
+gh workflow run release.yml --ref v<version>
+```
+
+Dispatch `release.yml` at the **tag**, never at a branch: the run's ref is
+checked against `package.json` and is recorded in the published npm
+provenance, so a branch dispatch fails the first gate by design.
 
 ## Where to send things that are not pull requests
 

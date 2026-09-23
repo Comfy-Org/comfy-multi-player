@@ -18,7 +18,7 @@
  * trimmed to the nodes the cases touch.
  */
 import * as Y from "yjs";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { OPAQUE_WIDGETS_KEY, _getMutationCount, _resetMutationCount, appliedMap, nodesMap, stampsMap } from "../src/doc.js";
 import {
   applyOps,
@@ -167,10 +167,14 @@ function nested(): WorkflowJSON {
 // Op builders
 // ---------------------------------------------------------------------------
 
-let seq = 0;
-function opId(prefix = "p"): string {
-  return (prefix + String(seq++).padStart(4, "0")).padEnd(32, "0");
+function createOperationIdFactory() {
+  let seq = 0;
+  return (prefix = "p"): string => (prefix + String(seq++).padStart(4, "0")).padEnd(32, "0");
 }
+
+let opId: ReturnType<typeof createOperationIdFactory>;
+beforeEach(() => { opId = createOperationIdFactory(); });
+
 function env(actor = "cli", base = 0) {
   return { op_id: opId(), actor, base_version: base, stamp: [base, actor] as [number, string] };
 }
@@ -314,7 +318,7 @@ describe("promoted host write: `set_widget` with `promoted` lands on the instanc
     const wv = node(project(doc, catalog), 57).widgets_values as unknown[];
     expect(wv[1]).toBe(768);
     expect(wv[2]).toBe(512);
-    expect(wv.length).toBe(8);
+    expect(wv).toHaveLength(8);
     expect([wv[0], ...wv.slice(3)]).toEqual([HOST_DEFAULTS[0], ...HOST_DEFAULTS.slice(3)]);
   });
 

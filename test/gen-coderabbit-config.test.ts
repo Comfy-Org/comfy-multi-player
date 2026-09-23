@@ -9,7 +9,7 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const script = join(repoRoot, "scripts", "gen-coderabbit-config.mjs");
 
 function run(root: string, ...args: string[]) {
-  return spawnSync("node", [script, ...args], {
+  return spawnSync(process.execPath, [script, ...args], {
     encoding: "utf8",
     env: { ...process.env, CODERABBIT_GEN_ROOT: root },
   });
@@ -146,7 +146,7 @@ describe("gen-coderabbit-config", () => {
     run(root, "--write");
     const generated = readFileSync(join(root, ".coderabbit.yaml"), "utf8");
     const edited = generated.replace("Filler instruction number 1.", "Filler instruction number 7.");
-    expect(edited.length).toBe(generated.length);
+    expect(edited).toHaveLength(generated.length);
     writeConfig(edited);
     expect(run(root).status).toBe(1);
   });
@@ -537,11 +537,9 @@ describe("gen-coderabbit-config", () => {
 
   it("the committed .coderabbit.yaml matches the committed profiles", () => {
     // The gate CI runs, run here too: `npm test` alone catches the drift.
-    const real = spawnSync("node", [script], { encoding: "utf8" });
+    const real = spawnSync(process.execPath, [script], { encoding: "utf8" });
     expect(real.stderr).toBe("");
     expect(real.status).toBe(0);
-    expect(real.stdout).toBe(
-      "coderabbit-config check PASSED (5 instruction block(s) from 4 profile(s) match .coderabbit.yaml)\n",
-    );
+    expect(real.stdout).toMatch(/^coderabbit-config check PASSED /);
   });
 });

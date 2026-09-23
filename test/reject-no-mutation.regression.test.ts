@@ -1,14 +1,7 @@
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
-import {
-  applyOps,
-  mint,
-  project,
-  type ConnectOp,
-  type Op,
-  type WidgetCatalog,
-  type WorkflowJSON,
-} from "../src/index.js";
+import { applyOps, mint, project } from "../src/index.js";
+import type { ConnectOp, Op, WidgetCatalog, WorkflowJSON } from "../src/index.js";
 import { appliedMap } from "../src/doc.js";
 import { loadCatalog } from "./helpers.js";
 import { checkGraphInvariants } from "./graph-invariant-oracle.js";
@@ -557,21 +550,52 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
    * the schema list to be updated, which is what the header sentence claims.
    */
   it("§2.5 item 4 (source axis) still diverges — pinning the carve-out", () => {
-    const projections = [[
-      { op: "connect", op_id: opId("cv4a"), actor: "human:x", base_version: 5, stamp: [5, "human:x"],
-        link_id: 9707, from_node: 300, from_slot: 5, to_node: 700, to_slot: 0, link_type: "IMAGE" },
-      { op: "delete_node", op_id: opId("cv4d"), actor: "human:d", base_version: 4, stamp: [4, "human:d"], node_id: 300 },
-    ], [
-      { op: "delete_node", op_id: opId("cv4d"), actor: "human:d", base_version: 4, stamp: [4, "human:d"], node_id: 300 },
-      { op: "connect", op_id: opId("cv4a"), actor: "human:x", base_version: 5, stamp: [5, "human:x"],
-        link_id: 9707, from_node: 300, from_slot: 5, to_node: 700, to_slot: 0, link_type: "IMAGE" },
-    ]].map((order) => {
-      const doc = mint(convergenceWorkflow, catalog);
-      for (const op of order) applyOps(doc, [op as unknown as Op], catalog);
-      return JSON.stringify(project(doc, catalog));
+    const bad = {
+      op: "connect", op_id: opId("cv4a"), actor: "human:x", base_version: 5, stamp: [5, "human:x"],
+      link_id: 9707, from_node: 300, from_slot: 5, to_node: 700, to_slot: 0, link_type: "IMAGE",
+    };
+    const tail = {
+      op: "add_node", op_id: opId("cv4t"), actor: "human:x", base_version: 5, stamp: [5, "human:x"],
+      node_id: 904, class_type: "LoadImage", pos: [0, 0],
+      node: { id: 904, type: "LoadImage", inputs: [], outputs: [], widgets_values: [], pos: [0, 0] },
+    };
+    const del = {
+      op: "delete_node", op_id: opId("cv4d"), actor: "human:d", base_version: 4,
+      stamp: [4, "human:d"], node_id: 300,
+    };
+    const seed = mint(convergenceWorkflow, catalog);
+    const snapshot = Y.encodeStateAsUpdate(seed);
+    const runs = [[[bad, tail], [del]], [[del], [bad, tail]]].map((batches, runIndex) => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      const outcomes = batches.flatMap((batch, batchIndex) => {
+        const beforeRejectedBatch = runIndex === 0 && batchIndex === 0
+          ? Buffer.from(Y.encodeStateAsUpdate(doc))
+          : null;
+        const batchOutcomes = applyOps(doc, batch as unknown as Op[], catalog).outcomes;
+        if (beforeRejectedBatch !== null) {
+          expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(beforeRejectedBatch)).toBe(true);
+          expect(appliedMap(doc).has(bad.op_id)).toBe(false);
+          expect(appliedMap(doc).has(tail.op_id)).toBe(false);
+        }
+        return batchOutcomes;
+      });
+      return { outcomes, projection: project(doc, catalog) };
     });
-    // NOT equal — this is the documented residual, not a passing property.
-    expect(projections[0]).not.toEqual(projections[1]);
+    const sourcePresent = runs[0]!;
+    const sourceDeleted = runs[1]!;
+
+    // Behavioral witnesses: while the source exists the state-dependent slot
+    // check rejects and aborts the tail; after source deletion the same connect
+    // is an accepted delete-wins no-op and the tail applies.
+    expect(sourcePresent.outcomes.map(({ outcome }) => outcome)).toEqual(["rejected", "rejected", "applied"]);
+    expect(sourcePresent.outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "output_slot_missing" } });
+    expect(sourcePresent.outcomes[1]).toMatchObject({ outcome: "rejected", reason: { code: "batch_aborted" } });
+    expect(sourceDeleted.outcomes.map(({ outcome }) => outcome)).toEqual(["applied", "no-op", "applied"]);
+    expect(sourcePresent.projection.nodes.some((node) => node.id === 904)).toBe(false);
+    expect(sourceDeleted.projection.nodes.some((node) => node.id === 904)).toBe(true);
+    // NOT equal — abort-remainder exposes the documented residual.
+    expect(sourcePresent.projection).not.toEqual(sourceDeleted.projection);
   });
 
   it("§2.5 item 5 (destination axis) still diverges — pinning the carve-out", () => {
@@ -835,7 +859,7 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
       op: "set_widget", op_id: opId("uncloneable-sw"), actor: "human:z", base_version: 9,
       stamp: [9, "human:z"], node_id: 700, widget: "inputcount",
       value: (() => undefined) as unknown,
-    } as unknown as ConnectOp;
+    } as unknown as Op;
     expect(rejected(applyOps(doc, [op], catalog))).toMatchObject({ code: "malformed_op" });
     expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
   });

@@ -1,0 +1,150 @@
+name: Auto-tag release PR
+
+# Removes the manual `git tag && git push` step that used to follow a merged
+# release PR. It does NOT make merging a release: the deliberate act is the
+# maintainer applying the `release` label to a version-bump PR and approving
+# it. Nothing here fires without that label. See the amendment in
+# docs/decisions/ADR-006-publish-to-npm-pin-exact-versions.md.
+#
+# WHY IT DISPATCHES INSTEAD OF RELYING ON THE TAG PUSH: a ref created with the
+# default GITHUB_TOKEN never raises `push`, so Release would not start from the
+# tag alone. The job therefore creates the tag AND calls Release's
+# `workflow_dispatch` — which the same token is allowed to do.
+#
+# WHY IT DISPATCHES AT THE TAG REF, NOT AT main: the dispatched run must be
+# byte-for-byte the run a tag push would have produced. scripts/release-retry.mjs
+# requires GITHUB_REF/GITHUB_REF_NAME/GITHUB_WORKFLOW_REF to be the release tag,
+# and npm records that same ref inside the SLSA provenance it verifies. Passing
+# a version as a dispatch input instead would run on refs/heads/main and fail
+# that check, so the tag ref is the input.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # One release PR at a time; never cancel a run that may already have tagged.
+  group: auto-tag-release-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: tag and dispatch release
+    # Label-only on purpose. A title convention (`chore: release <x.y.z>`) was
+    # considered and rejected as a fallback: a PR titled "chore: release process
+    # cleanup" would match it, and the whole point of this gate is that it cannot
+    # be satisfied by accident. Forgetting the label degrades to the old manual
+    # process, which is the safe direction to fail.
+    #
+    # The head-repo check is a TOKEN guard, not a trust judgement: a fork's
+    # `pull_request` run gets a read-only GITHUB_TOKEN whatever the permissions
+    # block below says, so tagging would 403. Releases are cut from in-repo
+    # branches; skipping beats a confusing red run.
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'release')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create refs/tags/v<version>
+      actions: write # dispatch release.yml
+    steps:
+      - name: Resolve the released version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+
+          # Read package.json at a commit without a checkout. `-e` on jq turns a
+          # null/absent version into a non-zero exit rather than the string "null".
+          read_version() {
+            gh api "repos/$REPO/contents/package.json?ref=$1" --jq '.content' | base64 -d | jq -er '.version'
+          }
+
+          test -n "$MERGE_SHA" || { echo "::error::no merge_commit_sha on the merged PR payload"; exit 1; }
+
+          merged_version="$(read_version "$MERGE_SHA")"
+          base_version="$(read_version "$BASE_SHA")"
+
+          # The label says "this is a release PR"; this says "and it really did
+          # bump the version". A mislabelled PR stops here having tagged nothing.
+          if [ "$merged_version" = "$base_version" ]; then
+            echo "::error::PR carries the 'release' label but package.json version is unchanged at $merged_version. Nothing tagged."
+            exit 1
+          fi
+
+          # Refuse to build a ref out of anything that is not a plain semver.
+          if ! printf '%s' "$merged_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::refusing to tag unexpected version string '$merged_version'"
+            exit 1
+          fi
+
+          echo "version=$merged_version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$merged_version" >> "$GITHUB_OUTPUT"
+          echo "Release PR bumped $base_version -> $merged_version at $MERGE_SHA"
+
+      - name: Create the release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # Create first, inspect second. POST /git/refs is the atomic operation:
+          # GitHub rejects it with 422 "Reference already exists" if the tag was
+          # created between a check and a write, so there is no check-then-create
+          # window to lose. This step never moves or deletes an existing tag.
+          if output="$(gh api --method POST "repos/$REPO/git/refs" \
+              -f "ref=refs/tags/$TAG" -f "sha=$MERGE_SHA" 2>&1)"; then
+            echo "Created refs/tags/$TAG at $MERGE_SHA"
+          else
+            case "$output" in
+              *"Reference already exists"*) ;;
+              *) echo "$output" >&2; exit 1 ;;
+            esac
+
+            existing="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq '.object.sha')"
+            existing_type="$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq '.object.type')"
+            if [ "$existing_type" = "tag" ]; then
+              existing="$(gh api "repos/$REPO/git/tags/$existing" --jq '.object.sha')"
+            fi
+
+            if [ "$existing" != "$MERGE_SHA" ]; then
+              echo "::error::$TAG already exists at $existing, not $MERGE_SHA. Refusing to touch it; resolve by hand."
+              exit 1
+            fi
+            echo "refs/tags/$TAG already points at $MERGE_SHA; leaving it alone"
+          fi
+
+      - name: Run the release workflow at the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # Retried only for ref propagation right after the tag was created.
+          # release.yml re-verifies everything and scripts/release-retry.mjs is
+          # idempotent, so a duplicate run cannot double-publish.
+          for attempt in 1 2 3; do
+            if gh workflow run release.yml --repo "$REPO" --ref "$TAG"; then
+              echo "Dispatched release.yml at $TAG"
+              exit 0
+            fi
+            echo "dispatch attempt $attempt failed; retrying"
+            sleep 10
+          done
+
+          echo "::error::$TAG was created but release.yml could not be dispatched. Start it by hand: gh workflow run release.yml --ref $TAG"
+          exit 1

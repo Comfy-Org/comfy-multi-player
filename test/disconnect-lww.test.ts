@@ -99,7 +99,7 @@ function connect(
 function projected(ops: Op[]): WorkflowJSON {
   const doc = mint(wiredWorkflow(), catalog, "sha");
   const result = applyOps(doc, ops, catalog);
-  expect(result.outcomes.every((outcome) => outcome.outcome !== "rejected")).toBe(true);
+  expect(result.outcomes.filter((outcome) => outcome.outcome === "rejected")).toEqual([]);
   return canonicalize(project(doc, catalog));
 }
 
@@ -146,7 +146,7 @@ describe("disconnect", () => {
   it("converges when the named link and claimed input are different registers", () => {
     const run = (ops: Op[]) => {
       const doc = mint(withSecondTargetSlot(), catalog, "sha");
-      expect(applyOps(doc, ops, catalog).outcomes.every((outcome) => outcome.outcome !== "rejected")).toBe(true);
+      expect(applyOps(doc, ops, catalog).outcomes.filter((outcome) => outcome.outcome === "rejected")).toEqual([]);
       return canonicalize(project(doc, catalog));
     };
     const reconnect = { ...connect("c1", AGENT, 5, 9001), to_slot: 1 };

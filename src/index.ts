@@ -2,7 +2,8 @@
  * @comfyorg/comfy-multi-player — shared workflow-document package.
  *
  * One implementation of op→doc semantics, used identically by the browser
- * and the server doc host. The op vocabulary is frozen at six kinds; the
+ * and the server doc host. The public vocabulary declares nine operation
+ * kinds: eight implemented kinds plus the deferred `reset_doc` kind. The
  * normative contract is comfy-cli's `docs/op-vocabulary-v1.md` and the stamp
  * shapes minted by `comfy_cli/workflow_ops.py` (`_new_op`), both pinned at
  * comfy-cli commit `7e732242d971daf0d2d30f22f997abfacd78986e` — by SHA and
@@ -16,8 +17,14 @@
  * Public surface:
  *  - `mint(workflow, catalog)` — workflow JSON → fresh Y.Doc (the bootstrap
  *    snapshot every replica forks from — schema §9);
+ *  - `compact(doc, catalog)` — fresh-checkpoint re-mint (schema §4 rule 2):
+ *    a new-lineage Y.Doc with the same projection, live stamps, incarnations,
+ *    link state and clock reservations but an empty `__applied` ledger and no
+ *    tombstone history; the host owns the replica cutover;
  *  - `applyOps(doc, ops, catalog?)` — idempotent, LWW-gated, abort-remainder
  *    op application (schema §2–§4);
+ *  - `inspectOps(ops)` — pure validation and canonical bytes/digest/stamp
+ *    extraction for storage preflight (ADR-022);
  *  - `project(doc, catalog)` — canonical workflow JSON projection (schema §7),
  *    fail-closed on a schema this package cannot read (KA-11);
  *  - `migrate(doc, fromVersion)` — layout versioning, fail-closed (schema §10);
@@ -33,7 +40,8 @@
  *  - the ADR-004 follower read surface (`nodesMap`, `linksMap`,
  *    `OPAQUE_WIDGETS_KEY`) for consuming the wire layout without applying ops;
  *  - the safer snapshot surface (`readGraph`, `readMeta`, `docCatalogPin`,
- *    `hasNode`, `hasAppliedOp`, `appliedOpIds`, `readStamps`) for consumers
+ *    `hasNode`, `hasAppliedOp`, `appliedOpIds`, `readApplied`, `readStamps`) for
+ *    consumers
  *    that do not need ADR-004's live follower handles — see src/read.ts;
  *  - operation, workflow, catalog, and result types.
  *
@@ -71,9 +79,10 @@ export {
   nodesMap,
   type EncodingLoss,
 } from "./doc.js";
-export { applyOps } from "./applier.js";
+export { applyOps, inspectOps } from "./applier.js";
 export { project } from "./project.js";
 export { mint } from "./mint.js";
+export { compact } from "./compact.js";
 export { migrate } from "./migrate.js";
 export { assertReadableSchema, readSchemaVersion } from "./schema-version.js";
 export {
@@ -81,7 +90,9 @@ export {
   docCatalogPin,
   hasAppliedOp,
   hasNode,
+  readApplied,
   readGraph,
+  readLinkState,
   readMeta,
   readStamps,
   type GraphSnapshot,

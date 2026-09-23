@@ -50,6 +50,7 @@ import {
   type WorkflowJSON,
 } from "../src/index.js";
 import { appliedMap } from "../src/doc.js";
+import { remapInsertedWorkflowIds } from "../src/remap.js";
 
 const catalog: WidgetCatalog = {
   types: {
@@ -109,6 +110,7 @@ interface Row {
   /** The rejected outcome code the applier must return. */
   code: string;
   build: () => Op;
+  seed?: (op: Op) => WorkflowJSON;
 }
 
 const CASES: Row[] = [
@@ -188,6 +190,71 @@ const CASES: Row[] = [
       }) as unknown as Op,
   },
 
+  // ---- insert_workflow ----------------------------------------------------
+  {
+    kind: "insert_workflow",
+    why: "duplicate raw node ids are ambiguous before deterministic remapping",
+    code: "malformed_op",
+    build: () => ({ op: "insert_workflow", ...env(), workflow: { nodes: [{ id: 1, type: "Src" }, { id: 1, type: "Src" }] } }) as Op,
+  },
+  {
+    kind: "insert_workflow",
+    why: "duplicate raw link ids are ambiguous before deterministic remapping",
+    code: "malformed_op",
+    build: () => ({ op: "insert_workflow", ...env(), workflow: { nodes: [], links: [[7, 2, 0, 3, 0, "X"], [7, 2, 0, 3, 0, "X"]] } }) as Op,
+  },
+  {
+    kind: "insert_workflow",
+    why: "remapped node id collides with the live tree",
+    code: "node_id_collision",
+    build: () => ({ op: "insert_workflow", ...env(), workflow: { nodes: [{ id: 1, type: "Src" }], links: [] } }) as Op,
+    seed: (op) => {
+      const workflow = baseWorkflow();
+      const remapped = remapInsertedWorkflowIds((op as { workflow: WorkflowJSON }).workflow, op.op_id);
+      workflow.nodes!.push({ id: remapped.nodes![0]!.id, type: "Src" });
+      return workflow;
+    },
+  },
+  {
+    // ADR-033 (amended): `derivedLinkId` is now a PURE function of the op's
+    // own content, with no retry against document state (removing the
+    // arrival-order dependence Christian Byrne's review of the original
+    // revision found — see `remap.ts`'s `derivedLinkId` doc comment). A
+    // single occupied candidate is therefore sufficient to reach this code,
+    // exactly like the node/definition rows above: no id-space-exhaustion
+    // construction is needed or possible anymore, since there is no retry
+    // sequence to exhaust.
+    kind: "insert_workflow",
+    why: "remapped link id collides with the live tree",
+    code: "link_id_collision",
+    build: () =>
+      ({
+        op: "insert_workflow",
+        ...env(),
+        workflow: { nodes: [{ id: 2, type: "Src" }, { id: 3, type: "Sink" }], links: [[901, 2, 0, 3, 0, "X"]] },
+      }) as Op,
+    seed: (op) => {
+      const workflow = baseWorkflow();
+      const remapped = remapInsertedWorkflowIds((op as { workflow: WorkflowJSON }).workflow, op.op_id) as unknown as {
+        links: Array<[number, ...unknown[]]>;
+      };
+      const remappedLinkId = remapped.links[0]![0];
+      workflow.nodes!.push({ id: 50, type: "Src" }, { id: 51, type: "Sink" });
+      workflow.links!.push([remappedLinkId, 50, 0, 51, 0, "incumbent"]);
+      return workflow;
+    },
+  },
+  {
+    kind: "insert_workflow",
+    why: "duplicate remapped definition ids violate define_subgraph tree uniqueness",
+    code: "malformed_op",
+    build: () => ({
+      op: "insert_workflow",
+      ...env(),
+      workflow: { nodes: [], definitions: { subgraphs: [{ id: "d", nodes: [], links: [] }, { id: "d", nodes: [], links: [] }] } },
+    }) as Op,
+  },
+
   // ---- set_widget ----------------------------------------------------------
   {
     kind: "set_widget",
@@ -207,6 +274,21 @@ const CASES: Row[] = [
     why: "widget name the pinned catalog does not know",
     code: "unknown_widget",
     build: () => ({ op: "set_widget", ...env(), node_id: 4, widget: "nope", value: 1 }) as unknown as Op,
+  },
+  {
+    kind: "set_widget",
+    why: "dotted name with a catalogued prefix is not itself catalogued",
+    code: "unknown_widget",
+    build: () => ({ op: "set_widget", ...env(), node_id: 4, widget: "seed.typo", value: 9 }) as unknown as Op,
+  },
+  {
+    kind: "set_widget",
+    why: "interior dotted name with a catalogued prefix is not itself catalogued",
+    code: "unknown_widget",
+    build: () => ({
+      op: "set_widget", ...env(), node_id: 6, widget: "text.typo", value: 9,
+      path: ["6", "27"], inner_widget: "text.typo",
+    }) as unknown as Op,
   },
   {
     kind: "set_widget",
@@ -459,10 +541,10 @@ const CASES: Row[] = [
 
 describe("KA-4: a rejected op leaves the doc byte-identical and does not consume its op_id", () => {
   it.each(CASES.map((c) => [`${c.kind}: ${c.why} → ${c.code}`, c] as const))("%s", (_name, row) => {
-    const doc = mint(baseWorkflow(), catalog);
+    const op = row.build();
+    const doc = mint(row.seed?.(op) ?? baseWorkflow(), catalog);
     const before = bytes(doc);
     const beforeProjection = project(doc, catalog);
-    const op = row.build();
 
     const res = applyOps(doc, [op], catalog);
 
@@ -580,11 +662,35 @@ function sharedDefinitionCase(): { doc: Y.Doc; op: Op; catalog?: WidgetCatalog; 
   };
 }
 
+function definitionConflictCase(): { doc: Y.Doc; op: Op; catalog?: WidgetCatalog; code: string } {
+  const id = "12345678-1234-4123-8123-123456789abc";
+  const nested = "abcdefab-cdef-4abc-8def-abcdefabcdef";
+  const doc = mint({
+    nodes: [],
+    links: [],
+    definitions: { subgraphs: [{ id, name: "outer", nodes: [], links: [], definitions: {
+      subgraphs: [{ id: nested, name: "nested", nodes: [], links: [] }],
+    } }] },
+  } as unknown as WorkflowJSON, catalog);
+  return {
+    doc,
+    op: {
+      op: "define_subgraph",
+      ...env(),
+      subgraph_id: nested,
+      subgraph_definition: { id: nested, name: "different", nodes: [], links: [] },
+    } as unknown as Op,
+    catalog,
+    code: "definition_conflict",
+  };
+}
+
 const FIXTURE_CASES = [
   ["add_node without a catalog", catalogRequiredCase],
   ["promoted host write without a catalog", promotedCatalogRequiredCase],
   ["interior set_widget past the positional length", widgetOutOfRangeCase],
   ["interior set_widget into a definition two nodes instantiate", sharedDefinitionCase],
+  ["define_subgraph whose root id collides with a nested definition", definitionConflictCase],
 ] as const;
 
 describe("KA-4: the rejection codes that need their own fixture", () => {
@@ -593,7 +699,7 @@ describe("KA-4: the rejection codes that need their own fixture", () => {
     const before = bytes(doc);
     const beforeProjection = project(doc, cat ?? catalog);
 
-    const res = applyOps(doc, [op], cat as WidgetCatalog);
+    const res = applyOps(doc, [op], cat);
 
     expect(res.outcomes.find((outcome) => outcome.outcome === "rejected")?.reason.code).toBe(code);
     expect(bytes(doc).equals(before), "encodeStateAsUpdate must be byte-identical").toBe(true);
@@ -621,6 +727,9 @@ const ALL_REJECTION_CODES = [
   "op_deferred",
   "catalog_required",
   "invalid_node_payload",
+  "node_id_collision",
+  "link_id_collision",
+  "definition_conflict",
   "unknown_widget",
   "opaque_widgets",
   "widget_out_of_range",
@@ -630,11 +739,49 @@ const ALL_REJECTION_CODES = [
   "not_a_subgraph",
   "interior_node_not_found",
   "shared_definition_unforked",
+  "definition_conflict",
 ] as const;
 
 // These require an already-consumed op_id or an intentionally deep payload;
 // their byte-identity rows live in the focused issue-#12 regression suite.
 const OP_ID_REJECTION_CODES = ["op_id_reuse", "payload_too_deep"] as const;
+
+/**
+ * The census below is a STATIC read of the authored `src/applier.ts` text, not a
+ * behavioural test, so it is only meaningful when the file on disk is the file
+ * this repository wrote.
+ *
+ * Under Stryker that is not true. Stryker copies the project into a sandbox and
+ * rewrites every file in the `mutate` glob — which includes `src/applier.ts` —
+ * before the initial dry run, so each authored
+ *
+ *     new OpRejectedError("unknown_node")
+ *
+ * becomes `new OpRejectedError(stryMutAct_9fa48("67") ? … : …)`. The census
+ * regex then matches nothing: 68 codes in the authored file, 0 in the sandbox
+ * copy. That emptied the census, tripped its own non-empty assertion, failed
+ * the dry run and took the whole scheduled Mutation testing workflow red
+ * (cifix-16989).
+ *
+ * Detect the instrumentation and skip, rather than loosening the regex to
+ * tolerate it. Loosening would be worse than the red: a census that fails for
+ * every mutant reports every mutant as killed, so it would inflate the mutation
+ * score — the exact class of measurement corruption `stryker.config.mjs` pins
+ * `timeoutMS`, `concurrency` and `coverageAnalysis` to avoid. Skipping costs no
+ * kill power either, because a static text scan can never distinguish one
+ * applier mutant from another.
+ *
+ * `npm test` is unaffected. That is where this guard runs, and where a newly
+ * added rejection code is still caught.
+ */
+const APPLIER_SRC = readFileSync(new URL("../src/applier.ts", import.meta.url), "utf8");
+
+/** Stryker's instrumenter emits `stryMutAct_<hash>` switch calls into every mutated file. */
+const isStrykerInstrumented = (src: string): boolean => src.includes("stryMutAct_");
+
+/** Rejection codes named by a literal `new OpRejectedError("…")` in authored source. */
+const rejectionCodeCensus = (src: string): Set<string> =>
+  new Set(Array.from(src.matchAll(/new OpRejectedError\(\s*"([a-z_]+)"/g), (m) => m[1] as string));
 
 describe("KA-4 sweep completeness", () => {
   it("has a row for every rejection code the applier can reach", () => {
@@ -644,17 +791,43 @@ describe("KA-4 sweep completeness", () => {
     }
   });
 
-  it("names every code the applier actually throws, so a new one cannot be added silently", () => {
-    const src = readFileSync(new URL("../src/applier.ts", import.meta.url), "utf8");
-    const thrown = new Set(Array.from(src.matchAll(/new OpRejectedError\(\s*"([a-z_]+)"/g), (m) => m[1] as string));
-    const known = new Set<string>([
-      ...ALL_REJECTION_CODES,
-      ...OP_ID_REJECTION_CODES,
-      "apply_failed",
-    ]);
-    for (const code of thrown) {
-      expect(known.has(code), `src/applier.ts throws '${code}', which this sweep does not know about`).toBe(true);
-    }
+  it.skipIf(isStrykerInstrumented(APPLIER_SRC))(
+    "names every code the applier actually throws, so a new one cannot be added silently",
+    () => {
+      const thrown = rejectionCodeCensus(APPLIER_SRC);
+      expect(thrown.size, "the applier rejection-code census must not be empty").toBeGreaterThan(0);
+      const known = new Set<string>([
+        ...ALL_REJECTION_CODES,
+        ...OP_ID_REJECTION_CODES,
+        "apply_failed",
+      ]);
+      for (const code of thrown) {
+        expect(known.has(code), `src/applier.ts throws '${code}', which this sweep does not know about`).toBe(true);
+      }
+    },
+  );
+});
+
+describe("KA-4 census skip predicate (cifix-16989 regression)", () => {
+  // The exact shapes Stryker produced for `src/applier.ts`, taken from the
+  // sandbox copy of run 35418675352.
+  const authored = 'throw new OpRejectedError("unknown_node", op);';
+  const instrumented = 'throw new OpRejectedError(stryMutAct_9fa48("67") ? "" : "unknown_node", op);';
+
+  it("recognises instrumented source and leaves authored source alone", () => {
+    expect(isStrykerInstrumented(authored)).toBe(false);
+    expect(isStrykerInstrumented(instrumented)).toBe(true);
+  });
+
+  it("reproduces the empty census that took the workflow red, so the skip is load-bearing", () => {
+    expect(rejectionCodeCensus(authored)).toEqual(new Set(["unknown_node"]));
+    // Without the skip this emptiness reaches `toBeGreaterThan(0)` and fails the dry run.
+    expect(rejectionCodeCensus(instrumented).size).toBe(0);
+  });
+
+  it("still censuses the authored applier in an uninstrumented run", ({ skip }) => {
+    if (isStrykerInstrumented(APPLIER_SRC)) skip();
+    expect(rejectionCodeCensus(APPLIER_SRC).size).toBeGreaterThan(0);
   });
 });
 

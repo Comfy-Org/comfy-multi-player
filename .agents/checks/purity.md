@@ -50,7 +50,8 @@ steps. Required named CI steps (exact): `Install`, `Verify conformance corpus`,
 `Build`, `Type-check gate`, `Purity gate`, `Statelessness gate`,
 `Profile-claim staleness gate`, `CodeRabbit config drift gate`,
 `Import-graph gate`, `Citation-pin gate (FC-10)`, `Tests`, and
-`Clock ordering matrix`.
+`Clock ordering matrix`. Both CI and release must also run the shared
+`Verify package contents` step after `Build` and propagate its failure.
 ```
 <!-- /coderabbit-instructions -->
 

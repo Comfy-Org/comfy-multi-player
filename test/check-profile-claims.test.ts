@@ -10,7 +10,7 @@ const script = join(repoRoot, "scripts", "check-profile-claims.mjs");
 
 /** Run the gate against an isolated fixture root (its own checks dir + targets). */
 function runAgainst(root: string) {
-  return spawnSync("node", [script], {
+  return spawnSync(process.execPath, [script], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -80,44 +80,34 @@ describe("check-profile-claims staleness gate", () => {
     expect(run.stdout).toBe(claimsPass(1));
   });
 
-  it("fails when a claimed export has been renamed away", () => {
-    writeFileSync(join(root, "src", "index.ts"), 'export { renamed } from "./mint.js";\n');
-    writeFileSync(
-      join(checks, "a.md"),
-      '<!-- claim: export { mint } from "./mint.js" :: src/index.ts -->\n',
-    );
+  it.each([
+    {
+      name: "a claimed export has been renamed away",
+      target: ["src/index.ts", 'export { renamed } from "./mint.js";\n'] as const,
+      marker: '<!-- claim: export { mint } from "./mint.js" :: src/index.ts -->\n',
+      message: 'a.md: STALE claim — not found in src/index.ts:\n      export { mint } from "./mint.js"',
+    },
+    {
+      name: "the claim target file does not exist",
+      marker: "<!-- claim: anything :: src/gone.ts -->\n",
+      message: "a.md: claim target does not exist: src/gone.ts\n      claim: anything",
+    },
+    {
+      name: "the claim target escapes the repo root",
+      marker: "<!-- claim: root: :: ../../../../etc/passwd -->\n",
+      message: "a.md: claim target escapes the repo root: ../../../../etc/passwd\n      claim: root:",
+    },
+    {
+      name: "the claim target is a directory, not a file",
+      marker: "<!-- claim: anything :: src -->\n",
+      message: "a.md: claim target is not a regular file: src\n      claim: anything",
+    },
+  ])("fails when $name", ({ target, marker, message }) => {
+    if (target) writeFileSync(join(root, target[0]), target[1]);
+    writeFileSync(join(checks, "a.md"), marker);
     const run = runAgainst(root);
     expect(run.status).toBe(1);
-    expect(run.stderr).toBe(
-      claimsFail('a.md: STALE claim — not found in src/index.ts:\n      export { mint } from "./mint.js"', 1),
-    );
-  });
-
-  it("fails when the claim target file does not exist", () => {
-    writeFileSync(join(checks, "a.md"), "<!-- claim: anything :: src/gone.ts -->\n");
-    const run = runAgainst(root);
-    expect(run.status).toBe(1);
-    expect(run.stderr).toBe(
-      claimsFail("a.md: claim target does not exist: src/gone.ts\n      claim: anything", 1),
-    );
-  });
-
-  it("fails when the claim target escapes the repo root", () => {
-    writeFileSync(join(checks, "a.md"), "<!-- claim: root: :: ../../../../etc/passwd -->\n");
-    const run = runAgainst(root);
-    expect(run.status).toBe(1);
-    expect(run.stderr).toBe(
-      claimsFail("a.md: claim target escapes the repo root: ../../../../etc/passwd\n      claim: root:", 1),
-    );
-  });
-
-  it("fails when the claim target is a directory, not a file", () => {
-    writeFileSync(join(checks, "a.md"), "<!-- claim: anything :: src -->\n");
-    const run = runAgainst(root);
-    expect(run.status).toBe(1);
-    expect(run.stderr).toBe(
-      claimsFail("a.md: claim target is not a regular file: src\n      claim: anything", 1),
-    );
+    expect(run.stderr).toBe(claimsFail(message, 1));
   });
 
   // ---- claim-absent ------------------------------------------------------

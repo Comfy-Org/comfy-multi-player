@@ -66,6 +66,17 @@ function fork(): Y.Doc {
   return doc;
 }
 
+// Preserve the historical migration counterexamples as refusal cases. Schema
+// v3 deliberately has no compatibility reader; refusing must not rewrite even
+// a malformed or colliding legacy register before reporting the error.
+function assertOldSchemaRefused(doc: Y.Doc): void {
+  const before = Y.encodeStateAsUpdate(doc);
+  const roots = [...doc.share.keys()];
+  expect(() => migrate(doc, 1)).toThrow(/private-alpha no-compat-reader policy/);
+  expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+  expect([...doc.share.keys()]).toEqual(roots);
+}
+
 describe("incarnation-namespaced widget stamps (DQ-11)", () => {
   it("converges when a life-1 write arrives before or after delete/re-add", () => {
     const replacement = readd();
@@ -84,7 +95,7 @@ describe("incarnation-namespaced widget stamps (DQ-11)", () => {
       .toBeUndefined();
   });
 
-  it("migrates v1 node lifetimes and widget stamp keys to legacy life 0", () => {
+  it("refuses to relabel a v1 document as the current schema", () => {
     const doc = mint(base(), catalog);
     const node = doc.getMap<Y.Map<unknown>>("nodes").get("1")!;
     node.delete(NODE_INCARNATION_KEY);
@@ -93,15 +104,110 @@ describe("incarnation-namespaced widget stamps (DQ-11)", () => {
     stamps.set(oldKey, [7, "human:a", id("old")]);
     doc.getMap("meta").set("schema_version", 1);
 
-    migrate(doc, 1);
+    const before = Y.encodeStateAsUpdate(doc);
+    expect(() => migrate(doc, 1)).toThrow(/private-alpha no-compat-reader policy/);
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+    expect(doc.getMap("meta").get("schema_version")).toBe(1);
+    expect(node.has(NODE_INCARNATION_KEY)).toBe(false);
+    expect(stamps.has(oldKey)).toBe(true);
+  });
 
-    expect(doc.getMap("meta").get("schema_version")).toBe(2);
-    expect(node.get(NODE_INCARNATION_KEY)).toBe(LEGACY_NODE_INCARNATION);
-    expect(stamps.get(JSON.stringify(["widget", "1", LEGACY_NODE_INCARNATION, "text"]))).toEqual([
-      7,
-      "human:a",
-      id("old"),
-    ]);
-    expect(stamps.has(oldKey)).toBe(false);
+  for (const legacyOrder of ["numeric-first", "string-first"] as const) {
+    for (const winnerForm of ["numeric", "string"] as const) {
+      it(`refuses legacy numeric/string collisions without choosing the ${winnerForm} LWW winner (${legacyOrder})`, () => {
+        const doc = mint(base(), catalog);
+        const stamps = doc.getMap<unknown>("__stamps");
+        const numericKey = JSON.stringify(["widget", 1, "text"]);
+        const stringKey = JSON.stringify(["widget", "1", "text"]);
+        const migratedKey = JSON.stringify(["widget", "1", LEGACY_NODE_INCARNATION, "text"]);
+        const winner = [8, "human:b", id("winner")] as const;
+        const loser = [7, "human:a", id("loser")] as const;
+        const entries = legacyOrder === "numeric-first"
+          ? [[numericKey, winnerForm === "numeric" ? winner : loser], [stringKey, winnerForm === "string" ? winner : loser]] as const
+          : [[stringKey, winnerForm === "string" ? winner : loser], [numericKey, winnerForm === "numeric" ? winner : loser]] as const;
+        for (const [key, stamp] of entries) stamps.set(key, stamp);
+        doc.getMap("meta").set("schema_version", 1);
+
+        assertOldSchemaRefused(doc);
+
+        expect(stamps.has(migratedKey)).toBe(false);
+        expect(stamps.get(numericKey)).toEqual(winnerForm === "numeric" ? winner : loser);
+        expect(stamps.get(stringKey)).toEqual(winnerForm === "string" ? winner : loser);
+      });
+    }
+  }
+
+  for (const insertionOrder of ["legacy-first", "incumbent-first"] as const) {
+    it.each([
+      ["counter", [9, "human:a", id("aaa")], [8, "human:z", id("zzz")]],
+      ["actor", [8, "human:z", id("aaa")], [8, "human:a", id("zzz")]],
+      ["op_id", [8, "human:a", id("zzz")], [8, "human:a", id("aaa")]],
+      ["counter (legacy wins)", [8, "human:z", id("zzz")], [9, "human:a", id("aaa")]],
+      ["actor (legacy wins)", [8, "human:a", id("zzz")], [8, "human:z", id("aaa")]],
+      ["op_id (legacy wins)", [8, "human:a", id("aaa")], [8, "human:a", id("zzz")]],
+    ] as const)(`refuses legacy/normalized collisions without rewriting either stamp at the %s tier (${insertionOrder})`, (_tier, incumbent, legacy) => {
+      const doc = mint(base(), catalog);
+      const stamps = doc.getMap<unknown>("__stamps");
+      const oldKey = JSON.stringify(["widget", 1, "text"]);
+      const migratedKey = JSON.stringify(["widget", "1", LEGACY_NODE_INCARNATION, "text"]);
+      const entries = insertionOrder === "legacy-first"
+        ? [[oldKey, legacy], [migratedKey, incumbent]] as const
+        : [[migratedKey, incumbent], [oldKey, legacy]] as const;
+      for (const [key, stamp] of entries) stamps.set(key, stamp);
+      doc.getMap("meta").set("schema_version", 1);
+
+      assertOldSchemaRefused(doc);
+
+      expect(stamps.get(migratedKey)).toEqual(incumbent);
+      expect(stamps.get(oldKey)).toEqual(legacy);
+    });
+  }
+
+  it.each([
+    ["null node id", ["widget", null, "text"]],
+    ["boolean node id", ["widget", true, "text"]],
+    ["object node id", ["widget", { id: 1 }, "text"]],
+    ["non-string widget name", ["widget", 1, false]],
+  ])("does not normalize a malformed legacy widget key with %s", (_label, target) => {
+    const doc = mint(base(), catalog);
+    const stamps = doc.getMap<unknown>("__stamps");
+    const malformedKey = JSON.stringify(target);
+    const value = [9, "human:z", id("malformed")] as const;
+    stamps.set(malformedKey, value);
+    doc.getMap("meta").set("schema_version", 1);
+
+    assertOldSchemaRefused(doc);
+
+    expect(stamps.get(malformedKey)).toEqual(value);
+    expect(stamps.has(JSON.stringify(["widget", String(target[1]), LEGACY_NODE_INCARNATION, target[2]]))).toBe(false);
+  });
+
+  it("keeps a malformed legacy stamp at its original key instead of comparing or deleting it", () => {
+    const doc = mint(base(), catalog);
+    const stamps = doc.getMap<unknown>("__stamps");
+    const oldKey = JSON.stringify(["widget", 1, "text"]);
+    stamps.set(oldKey, ["not-a-counter", "human:a", id("malformed")]);
+    doc.getMap("meta").set("schema_version", 1);
+
+    assertOldSchemaRefused(doc);
+
+    expect(stamps.get(oldKey)).toEqual(["not-a-counter", "human:a", id("malformed")]);
+    expect(stamps.has(JSON.stringify(["widget", "1", LEGACY_NODE_INCARNATION, "text"]))).toBe(false);
+  });
+
+  it("refuses a malformed colliding target without replacing it with a valid legacy stamp", () => {
+    const doc = mint(base(), catalog);
+    const stamps = doc.getMap<unknown>("__stamps");
+    const oldKey = JSON.stringify(["widget", 1, "text"]);
+    const migratedKey = JSON.stringify(["widget", "1", LEGACY_NODE_INCARNATION, "text"]);
+    const valid = [8, "human:b", id("valid")] as const;
+    stamps.set(migratedKey, ["not-a-counter"]);
+    stamps.set(oldKey, valid);
+    doc.getMap("meta").set("schema_version", 1);
+
+    assertOldSchemaRefused(doc);
+
+    expect(stamps.get(migratedKey)).toEqual(["not-a-counter"]);
+    expect(stamps.get(oldKey)).toEqual(valid);
   });
 });

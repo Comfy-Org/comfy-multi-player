@@ -94,8 +94,10 @@ import {
   type WorkflowJSON,
 } from "../src/index.js";
 import {
+  ROOT_CLOCK_RESERVATIONS,
   appliedMap,
   definitionsMap,
+  linkStateMap,
   metaMap,
   stampsMap,
 } from "../src/doc.js";
@@ -140,8 +142,20 @@ const env = () => {
  */
 const richWorkflow: WorkflowJSON = {
   nodes: [
-    { id: 1, type: "Inner", inputs: [], outputs: [], widgets_values: ["v"] },
-    { id: 2, type: "UnknownClass", inputs: [], outputs: [], widgets_values: [7, 8] },
+    {
+      id: 1,
+      type: "Inner",
+      inputs: [{ name: "in", type: "X", link: 12 }],
+      outputs: [{ name: "out", type: "X", links: [11] }],
+      widgets_values: ["v"],
+    },
+    {
+      id: 2,
+      type: "UnknownClass",
+      inputs: [{ name: "in", type: "X", link: 11 }],
+      outputs: [{ name: "out", type: "X", links: [12] }],
+      widgets_values: [7, 8],
+    },
   ],
   links: [
     [11, 1, 0, 2, 0, "X"],
@@ -192,6 +206,10 @@ function minted(wf: WorkflowJSON): Y.Doc {
   expect(
     applyOps(doc, [op], catalog).outcomes.find((outcome) => outcome.outcome === "rejected"),
   ).toBeUndefined();
+  // Empty roots emit no structs. Clock tests exercise the admission writer;
+  // this fixture supplies a reservation to pin its separate wire location.
+  const key = '["__lamport_clock","wire-workflow","wire-lineage","wire-producer"]';
+  doc.getMap(ROOT_CLOCK_RESERVATIONS).set(key, [2, "wire-producer", key]);
   return doc;
 }
 
@@ -333,6 +351,8 @@ describe("layer 2: a replica forked from the snapshot recovers exactly the §1 r
     expect(replica.getMap(golden.roots["meta"]!).get("schema_version")).toBe(SCHEMA_VERSION);
     expect(replica.getMap(golden.roots["applied"]!).size).toBe(1);
     expect(replica.getMap(golden.roots["stamps"]!).size).toBe(1);
+    const key = '["__lamport_clock","wire-workflow","wire-lineage","wire-producer"]';
+    expect(replica.getMap(golden.roots["clock_reservations"]!).toJSON()).toEqual({ [key]: [2, "wire-producer", key] });
   });
 
   it("carries no structural or comfy-cli bookkeeping key inside the meta root (schema §6, §4)", () => {
@@ -375,7 +395,7 @@ describe("layer 3: the code, the golden vector and the schema documents agree (K
 
   it("uses the supported wire-layout vector format", () => {
     expect(golden.format_version).toBe(1);
-    expect(goldenRootNames.length).toBe(6);
+    expect(goldenRootNames).toHaveLength(8);
   });
 
   it("is reachable from the conformance manifest, so a second implementation finds it", () => {
@@ -401,6 +421,8 @@ describe("layer 3: the code, the golden vector and the schema documents agree (K
       meta: metaMap(doc),
       applied: appliedMap(doc),
       stamps: stampsMap(doc),
+      link_state: linkStateMap(doc),
+      clock_reservations: doc.getMap(ROOT_CLOCK_RESERVATIONS),
     };
     for (const [role, wireName] of Object.entries(golden.roots)) {
       expect(rootNameOf(doc, byRole[role]), `role '${role}' must live under wire name '${wireName}'`).toBe(wireName);

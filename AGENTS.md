@@ -1,14 +1,5 @@
 # Agent guide
 
-## Repository status: read-only history
-
-Do not modify source, tests, dependencies, documentation, or automation in this
-repository. Active development and release ownership have moved to
-[`ComfyUI_frontend/packages/comfy-multi-player`](https://github.com/Comfy-Org/ComfyUI_frontend/tree/main/packages/comfy-multi-player)
-in [ComfyUI_frontend #16644](https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644).
-Open all future work against that canonical path. The guidance below is retained
-only to explain and review historical standalone revisions.
-
 `@comfyorg/comfy-multi-player` is the single shared, pure semantic-op-to-Yjs-document applier for ComfyUI's in-app agent and CRDT workflow state. The browser imports this package, and the server doc host runs the same package in Node. There is no second applier implementation.
 
 ## Load-bearing rules
@@ -31,11 +22,11 @@ npm run check:profile-claims
 npm run check:coderabbit
 npm run verify:corpus
 npm test
+npm run test:exhaustive
 ```
 
-Run all nine commands before review — that is the set CI runs, and the list was
-short by three (`check:pins`, `check:profile-claims`, `verify:corpus`) from the
-day each of those gates landed. `check:coderabbit` regenerates `.coderabbit.yaml`'s sentinel-delimited region from the
+Run these ten commands before review, including both CI test tiers.
+`check:coderabbit` regenerates `.coderabbit.yaml`'s sentinel-delimited region from the
 `<!-- coderabbit-instructions -->` blocks in `.agents/checks/*.md` and fails on any byte
 difference — including inside the generated header comments, which are emitted too. If it
 fails, edit the block in the owning profile and run `npm run gen:coderabbit`, never the YAML

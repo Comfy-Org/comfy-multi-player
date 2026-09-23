@@ -5,7 +5,7 @@
     "generator_commit": "7e732242d971daf0d2d30f22f997abfacd78986e",
     "generator_command": "cd <comfy-cli-checkout> && uv run <crdt-spike-checkout>/gen_fixtures.py",
     "runtime": "Python via uv on Linux; comfy_cli.workflow_ops from the pinned checkout; prod object_info.json from services/ingest/data/",
-    "notes": "The historical generator lived in the V1-007 crdt-spike workspace and was not graduated into either repository. session-frontend-only-notes.session.jsonl was hand-authored later; see fixtures/README.md."
+    "notes": "The historical generator lived in the V1-007 crdt-spike workspace and was not graduated into either repository. session-frontend-only-notes.session.jsonl was hand-authored later; see fixtures/README.md. Package-local conformance vectors live under golden-vectors/ and are verified by the parity suite."
   },
   "files": {
     "catalog.json": {
@@ -14,7 +14,8 @@
     },
     "findings.json": {
       "generator": "crdt-spike/gen_fixtures.py: workflow_ops probe capture",
-      "sha256": "c9015f64f66e5fe842671cc808c363ddb007abb78f9e5919c339cd2c35297efe"
+      "notes": "Historical probe capture, not regenerated. The clear-scope prose was manually corrected on 2026-09-18 against test/clear-empty-removed-nodes.test.ts and the current applier; source request: https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644#discussion_r3914401872. Executable vectors are unchanged.",
+      "sha256": "d1462ed6786745e843f651dea8889b189f875f41358d14fa3cb7fca1b18d691e"
     },
     "lww-vectors.json": {
       "generator": "crdt-spike/gen_fixtures.py: workflow_ops.apply_op both-order vectors",

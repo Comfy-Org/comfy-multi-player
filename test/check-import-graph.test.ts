@@ -24,9 +24,9 @@ const script = join(repoRoot, "scripts", "check-import-graph.mjs");
 
 /** Run the gate against a fixture root, with an optional floor override. */
 function runAgainst(root: string, minModules?: number) {
-  const env: Record<string, string> = { ...process.env, IMPORT_GRAPH_ROOT: root };
+  const env: NodeJS.ProcessEnv = { ...process.env, IMPORT_GRAPH_ROOT: root };
   if (minModules !== undefined) env.IMPORT_GRAPH_MIN_MODULES = String(minModules);
-  return spawnSync("node", [script], { encoding: "utf8", env });
+  return spawnSync(process.execPath, [script], { encoding: "utf8", env });
 }
 
 describe("check-import-graph gate", () => {
@@ -128,6 +128,33 @@ describe("check-import-graph gate", () => {
     expect(run.status).toBe(2);
     expect(run.stderr).toContain("could not parse");
   });
+
+  it.each([
+    "{}",
+    "null",
+    '{"summary":null}',
+    '{"summary":{"totalCruised":"2","totalDependenciesCruised":1,"violations":[]}}',
+    '{"summary":{"totalCruised":2,"totalDependenciesCruised":-1,"violations":[]}}',
+    '{"summary":{"totalCruised":2,"totalDependenciesCruised":1,"violations":[{}]}}',
+  ])(
+    "is INCONCLUSIVE (exit 2) when dependency-cruiser returns malformed report %s",
+    (output) => {
+      writeCleanFixture();
+      rmSync(join(root, "node_modules", ".bin"), { recursive: true, force: true });
+      mkdirSync(join(root, "node_modules", ".bin"), { recursive: true });
+      const fake = join(root, "node_modules", ".bin", "depcruise");
+      writeFileSync(fake, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`);
+      chmodSync(fake, 0o755);
+
+      const run = runAgainst(root, 2);
+
+      expect(run.status).toBe(2);
+      expect(run.stderr).toContain(
+        "import-graph check INCONCLUSIVE: dependency-cruiser report has no valid summary",
+      );
+      expect(run.stderr).not.toContain("TypeError");
+    },
+  );
 
   // --- one mutant per rule -------------------------------------------------
 

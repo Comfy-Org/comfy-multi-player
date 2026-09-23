@@ -309,7 +309,7 @@ describe("schema §5.3: instances addressed by the definition's NAME count too (
     const res = applyOps(doc, [aliasWrite(100, "MUST_NOT_LAND")], catalog);
     expect(res.outcomes.find((o) => o.outcome === "rejected")?.reason.code).toBe("apply_failed");
     expect(res.outcomes.filter((o) => o.outcome === "applied").map((o) => o.op_id)).toEqual([]);
-    expect(res.outcomes.filter((o) => o.outcome !== "rejected").length).toBe(0);
+    expect(res.outcomes.filter((o) => o.outcome !== "rejected")).toHaveLength(0);
     expect(bytes(doc).equals(before)).toBe(true);
   });
 
@@ -465,7 +465,7 @@ describe("schema §1 doc layout: root-map names and the reserved opaque key are 
     expect(doc.getMap("nodes").has("1")).toBe(true);
     expect(doc.getMap("links").has("7")).toBe(true);
     expect(doc.getMap("definitions").has("d")).toBe(true);
-    expect(doc.getMap("meta").get("schema_version")).toBe(2);
+    expect(doc.getMap("meta").get("schema_version")).toBe(4);
     // The bookkeeping roots are named too — `__applied` is the idempotency
     // gate (§4) and `__stamps` the LWW register file (§3).
     const op = { op: "set_widget", ...env(), node_id: 1, widget: "text", value: "w" } as SetWidgetOp;

@@ -1,9 +1,9 @@
 /**
  * The KA-11 read gate: schema-version discipline enforced ON READ.
  *
- * KA-11's rule is "fail closed on unreadable schema and provide a `migrate()`
- * path". `migrate()` is the *provided path*; it is not the gate, because
- * nothing forces a caller through it. `project()` is what actually turns a
+ * KA-11 requires fail-closed reads. Under the private-alpha policy, `migrate()`
+ * validates current layouts and refuses older ones; it is not a compatibility
+ * reader. Nothing forces a caller through it. `project()` actually turns a
  * document into the graph every consumer reads, so the gate has to live there
  * too — a guard a low-context caller can skip is documentation, not
  * enforcement (issue #38).
@@ -86,10 +86,9 @@ export function readSchemaVersion(doc: Y.Doc): number | undefined {
  *
  * NOT re-exported from the entrypoint, deliberately: a caller free to choose
  * `expected` could pass the document's own version and switch the gate off.
- * It is exported from this module so the "document is OLDER than the reader"
- * arm is reachable by test today — at `SCHEMA_VERSION = 1` no older version
- * exists to construct, and an arm no test can turn red is dead code, which is
- * the vacuous-coverage trap this repo keeps hitting.
+ * It is exported from this module to test explicit reader-version comparisons.
+ * Older layouts can also be tested through the public reader now that
+ * `SCHEMA_VERSION` is greater than 1; this helper grants no compatibility path.
  */
 export function assertSchemaVersionAgainst(doc: Y.Doc, context: string, expected: number): void {
   const stored = readSchemaVersion(doc);
@@ -105,7 +104,7 @@ export function assertSchemaVersionAgainst(doc: Y.Doc, context: string, expected
   }
   if (stored < expected) {
     throw new SchemaVersionError(
-      `${context}: doc schema v${stored} is older than this package's v${expected} — call migrate(doc, ${stored}) first, then read (fail-closed, schema §10)`,
+      `${context}: doc schema v${stored} is older than this package's v${expected} — re-mint from the source workflow on the host (fail-closed, schema §10)`,
     );
   }
 }
@@ -116,26 +115,20 @@ export function assertSchemaVersionAgainst(doc: Y.Doc, context: string, expected
  *
  * WHY AN OLDER DOCUMENT IS REFUSED RATHER THAN MIGRATED IN PLACE. `project()`
  * is a pure read: it takes a `Y.Doc` and returns JSON, and it is a read ANY
- * replica may call — a browser follower included. Stated precisely, because
- * the looser version is false today: no follower calls it. The frontend does
- * not depend on this package at all (`@comfyorg/comfy-multi-player` is absent
- * from its `package.json` on every branch), and ADR-004 records that the
- * follower deliberately consumes only the doc-layout helpers, since it holds
- * no catalog for the document it renders. That is exactly why the rule is
- * written as a rule: `follower-boundary.md` says to treat an API that permits
+ * replica may call — a browser follower included. This is an API rule, not a
+ * claim about current consumers: `follower-boundary.md` treats an API permitting
  * unrestricted document mutation across this boundary as a blocking violation
  * "even if current callers behave correctly". Migrating inside a read would
  * make a read WRITE the shared document. The direct rule that breaks is
- * KA-6 / FC-5: followers never write the shared doc, and schema §10 puts
- * migration on the host precisely so followers receive the migrated document
- * via the struct stream or a new epoch. A follower that self-migrated would
+ * KA-6 / FC-5: followers never write the shared doc. A host must re-mint an old
+ * layout from its source workflow under the private-alpha policy, then deliver
+ * the new lineage through the host's reset protocol. A follower that self-migrated would
  * become an independently edited replica, which is then the FC-1 raw-struct
  * divergence path (KA-1 says such replicas must exchange semantic ops, and an
  * in-place upgrade is not one — it is neither stamped nor in the op log). So
- * the version transition stays where it can be audited: the caller runs
- * `migrate(doc, storedVersion)` on the host, and only then reads. Projecting
- * an older layout as-is is not an option either — that IS the mis-projection
- * KA-11 names.
+ * the version transition stays host-owned. `migrate()` does not convert old
+ * layouts. Projecting an older layout as-is is not an option either — that IS
+ * the mis-projection KA-11 names.
  *
  * Consistent with `migrate()` by construction, and by construction is meant
  * literally — both call {@link readSchemaVersion}, so there is no second
