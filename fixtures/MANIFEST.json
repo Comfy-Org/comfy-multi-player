@@ -27,7 +27,7 @@
     },
     "golden-vectors/session-interior-add-node.session.jsonl": {
       "generator": "hand-authored package-local interior add_node conformance vector (D-E2 / ecw337-4)",
-      "sha256": "ca396e6fa40f03e35d35f0c3683be4829eb0abfac4b3e3be2f4343b7982e14c3"
+      "sha256": "1f17513439a3cb222c5d218309faf976b3d55d39737425364199d7cee2db9492"
     },
     "lww-vectors.json": {
       "generator": "crdt-spike/gen_fixtures.py: workflow_ops.apply_op both-order vectors",

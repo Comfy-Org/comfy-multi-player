@@ -657,8 +657,10 @@ package also supports `connect` with a non-empty instance `path`:
   including when the path happens to name a definition. It does not edit that
   definition; it is not a rejected operation with a byte-identity guarantee.
 - Interior `add_node` resolves the definition owned by a non-empty instance
-  `path`, rejects writes to shared unforked definitions, and inserts the node
-  into that definition's deterministic `node_order`. A missing container is a
+  `path`; `container_incarnation` carries the head instance lifetime (legacy
+  life 0 when absent), independently of the new node's `node_incarnation`.
+  It rejects writes to shared unforked definitions and inserts the node into
+  that definition's deterministic `node_order`. A missing container is a
   rejected `interior_container_not_found`; it never synthesizes a definition.
   `delete_node` still cannot address interior nodes.
 

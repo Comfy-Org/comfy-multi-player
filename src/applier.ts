@@ -1243,6 +1243,9 @@ function requireAddNodeValid(op: AddNodeOp): void {
   if (op.path !== undefined && (!Array.isArray(op.path) || op.path.length === 0)) {
     throw new OpRejectedError("malformed_op", "add_node: path must be a non-empty array when present");
   }
+  if (op.container_incarnation !== undefined && (typeof op.container_incarnation !== "string" || op.container_incarnation.length === 0)) {
+    throw new OpRejectedError("malformed_op", "add_node: container_incarnation must be a non-empty string");
+  }
   if (op.node_incarnation !== undefined && (typeof op.node_incarnation !== "string" || op.node_incarnation.length === 0)) {
     throw new OpRejectedError("malformed_op", "add_node: node_incarnation must be a non-empty string");
   }
@@ -1280,8 +1283,17 @@ function createAddedNode(op: AddNodeOp, catalog?: WidgetCatalog): Y.Map<unknown>
 
 function applyAddNode(doc: Y.Doc, op: AddNodeOp, catalog?: WidgetCatalog): SuccessfulOutcome {
   requireAddNodeValid(op);
+  const route: Pick<AddNodeOp, "path" | "node_incarnation"> = op.path ? { path: op.path } : {};
+  if (op.container_incarnation !== undefined) route.node_incarnation = op.container_incarnation;
   const interiorScope = op.path
-    ? resolveInteriorGraphScope(doc, op, catalog, "add_node", true)
+    ? resolveInteriorGraphScope(
+      doc,
+      route,
+      catalog,
+      "add_node",
+      true,
+      true,
+    )
     : null;
   const nodes = interiorScope?.nodes ?? nodesMap(doc);
   const key = String(op.node_id);
@@ -1301,7 +1313,11 @@ function applyAddNode(doc: Y.Doc, op: AddNodeOp, catalog?: WidgetCatalog): Succe
   // case: the class is unknown to object_info (frontend-only nodes always are),
   // and `createNodeMap` stores its values opaquely (schema §1.2).
   const nodeMap = createAddedNode(op, catalog);
-  clearObsoleteWidgetStamps(stamps, key, op.path);
+  clearObsoleteWidgetStamps(
+    stamps,
+    key,
+    interiorScope ? String(interiorScope.definition.get("id") ?? "") : undefined,
+  );
   mset(nodeMap, NODE_INCARNATION_KEY, op.node_incarnation ?? LEGACY_NODE_INCARNATION);
   mset(nodes, key, nodeMap);
   mset(stamps, targetKey, stamp);
@@ -1342,9 +1358,9 @@ function applyAddNode(doc: Y.Doc, op: AddNodeOp, catalog?: WidgetCatalog): Succe
 function clearObsoleteWidgetStamps(
   stamps: Y.Map<unknown>,
   nodeKey: string,
-  path?: readonly string[],
+  definitionId?: string,
 ): void {
-  const interiorNodePath = path ? [...path.map(String), nodeKey] : null;
+  const interiorNodePath = definitionId === undefined ? null : [definitionId, nodeKey];
   for (const targetKey of [...stamps.keys()]) {
     let target: unknown;
     try {
@@ -2073,6 +2089,18 @@ interface InteriorGraphScope {
   definition: Y.Map<unknown>;
 }
 
+function resolveVisibleInteriorHost(
+  doc: Y.Doc,
+  nodeKey: string,
+  routeIncarnation: string,
+  requireMatchingIncarnation: boolean,
+): Y.Map<unknown> | undefined {
+  const host = nodesMap(doc).get(nodeKey);
+  if (!(host instanceof Y.Map)) return undefined;
+  if (requireMatchingIncarnation && nodeIncarnation(host) !== routeIncarnation) return undefined;
+  return host;
+}
+
 /** Resolve the definition owned by an instance route for an interior graph edit. */
 function resolveInteriorGraphScope(
   doc: Y.Doc,
@@ -2080,17 +2108,19 @@ function resolveInteriorGraphScope(
   catalog?: WidgetCatalog,
   operation = "connect",
   rejectMissingHead = false,
+  requireMatchingHeadIncarnation = false,
 ): InteriorGraphScope | null {
   if (!op.path || op.path.length === 0) return null;
   const path = op.path.map(String);
-  let host = nodesMap(doc).get(path[0]!);
+  const routeIncarnation = op.node_incarnation ?? LEGACY_NODE_INCARNATION;
+  let host = resolveVisibleInteriorHost(doc, path[0]!, routeIncarnation, requireMatchingHeadIncarnation);
   if (!(host instanceof Y.Map)) {
     // Connect accepts instance routes only. A missing head must have been a
     // real instance in this incarnation; unlike set_widget, a definition id
     // is never a direct addressing alias for this operation.
     const retainedDefinitionId = stampsMap(doc).get(interiorRouteKey(
       path[0]!,
-      op.node_incarnation ?? LEGACY_NODE_INCARNATION,
+      routeIncarnation,
     ));
     if (typeof retainedDefinitionId !== "string") return missingInteriorHead(operation, path[0]!, rejectMissingHead);
     const retainedDefinition = resolveDefinition(doc, retainedDefinitionId);
