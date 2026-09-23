@@ -2,8 +2,8 @@
 /** Verify that every checked-in conformance fixture matches its manifest hash. */
 
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -31,16 +31,31 @@ if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
   fail(["MANIFEST.json must contain a files object"]);
 }
 
-// Only hash regular top-level fixture files. Subdirectories (e.g.
-// golden-vectors/, owned by the parity conformance suite) are verified by their
-// own tests, not this corpus manifest — a flat readdir would otherwise try to
-// hash a directory and crash (EISDIR) or spuriously flag it as unlisted.
-const fixtureFiles = readdirSync(fixturesDir)
+// Every regular top-level fixture must be listed. Nested fixtures remain owned
+// by their conformance suites, but MANIFEST.json may opt specific nested files
+// into this SHA gate by listing their relative paths.
+const topLevelFixtureFiles = readdirSync(fixturesDir)
   .filter((name) => name !== "README.md" && name !== "MANIFEST.json")
   .filter((name) => statSync(join(fixturesDir, name)).isFile())
   .sort();
 const manifestFiles = Object.keys(entries).sort();
 const errors = [];
+
+const safeManifestPath = (file) =>
+  !file.includes("\\") &&
+  !posix.isAbsolute(file) &&
+  posix.normalize(file) === file &&
+  file !== ".." &&
+  !file.startsWith("../");
+const fixtureFiles = [...topLevelFixtureFiles];
+for (const file of manifestFiles.filter((name) => name.includes("/") || name.includes("\\"))) {
+  if (!safeManifestPath(file)) {
+    errors.push(`${file} is not a safe relative fixture path`);
+    continue;
+  }
+  const path = join(fixturesDir, file);
+  if (existsSync(path) && statSync(path).isFile()) fixtureFiles.push(file);
+}
 
 // Fail closed on an empty corpus: a manifest that lists zero fixtures makes
 // every downstream check vacuous (it would otherwise print "PASSED (0 files)"),
@@ -50,7 +65,7 @@ if (manifestFiles.length === 0) {
   fail(["MANIFEST.json lists zero fixtures — the conformance corpus must not be empty"]);
 }
 
-for (const file of fixtureFiles) {
+for (const file of topLevelFixtureFiles) {
   if (!(file in entries)) errors.push(`${file} is not listed in MANIFEST.json`);
 }
 for (const file of manifestFiles) {
