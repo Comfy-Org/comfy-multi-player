@@ -513,7 +513,8 @@ const PERMUTATION_TIERS: Array<[
   ["exhaustive", ["exhaustive"], 900_000, PAIR_EXECUTIONS, SAMPLED_RUNS],
 ];
 
-describe.each(PERMUTATION_TIERS)("full op-pool permutation equivalence ('%s')", (tier, tags, timeout, expectedPairs, sampledRuns) => {
+for (const [tier, tags, timeout, expectedPairs, sampledRuns] of PERMUTATION_TIERS) {
+  describe(`full op-pool permutation equivalence ('${tier}')`, () => {
   it("covers every declared op-kind pair across representative state, stamp, actor, order, and batch dimensions", { tags, timeout }, () => {
     let executions = 0;
     let serial = 1;
@@ -631,4 +632,5 @@ describe.each(PERMUTATION_TIERS)("full op-pool permutation equivalence ('%s')", 
       firstR69, firstInputcountLinkReuse, firstRemovedLinkAlias,
     });
   });
-});
+  });
+}
