@@ -1,8 +1,8 @@
 # ADR-033: numeric link ids for `insert_workflow`
 
-- **Status:** Amended, ratification PENDING — see "Amendment (2026-09-23)" below. The original decision (2026-09-22, below) shipped a document-state-verified retry mint; Christian Byrne's review of that revision (PR #245) found it broke link identity's order-independence and asked for either a fix plus explicit sign-off on the residual risk, or a return to pure derivation. This amendment takes the pure-derivation path. **The "Accepted" disposition below describes the ORIGINAL decision only** and is superseded by the amendment; the amended design has not yet been reviewed by Christian and this ADR does not claim his approval for it.
+- **Status:** Amended and accepted — see "Amendment (2026-09-23)" below. The original decision (2026-09-22, below) shipped a document-state-verified retry mint; Christian Byrne's review of that revision (PR #245) found it broke link identity's order-independence and asked for either a fix plus explicit sign-off on the residual risk, or a return to pure derivation. This amendment takes the pure-derivation path and was ratified after exact-head review of that fix and its opposite-order convergence coverage. **The "Accepted" disposition below describes the ORIGINAL decision only** and is superseded by this accepted amendment.
 - **Date:** 2026-09-22 (original), amended 2026-09-23
-- **Decider:** Christian Byrne (original decision). The amendment's decider is UNASSIGNED pending his review of the amended design.
+- **Decider:** Christian Byrne
 - **Source:** ComfyUI_frontend#18458 (interim 32-bit-hash review) and the Slack thread it was raised in; the amendment's source is Christian Byrne's PR #245 review (inline comment on `src/remap.ts:65`, review summary "Not merge-ready: link identity becomes arrival-order-dependent").
 
 ## Context
