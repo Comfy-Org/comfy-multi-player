@@ -127,7 +127,6 @@ import {
   type DefineSubgraphOp,
   type DisconnectOp,
   type GrowConnectOp,
-  type GrowSpec,
   type ImportedLinkState,
   type InteriorSetWidgetOp,
   LINK_STATE_DESCRIPTOR_VERSION,
@@ -2386,16 +2385,21 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
   // impossible (opaque destination, or a widget the catalogue cannot describe)
   // the whole op is refused HERE, before the slot append, so a rejected op
   // still leaves the doc untouched. Both checks read `dst`, so unlike the
-  // op-only set above they cannot move any earlier.
+  // op-only set above they cannot move any earlier. The widget's type is
+  // settled HERE too, not coerced: `String(["inputcount"])` names a real
+  // widget, and a guard left to the bump would fire only after
+  // `growInputSlot` had written the slot and the grow ledgers (KA-4). The
+  // validated name is what the bump writes.
+  let count: InputcountWrite | null = null;
   if (op.grow?.inputcount != null) {
-    rejectIfOpaqueWidgets(dst, String(op.grow.inputcount.widget));
-    validateWidgetName(
-      catalog,
-      String(dst.get("type") ?? ""),
-      String(op.grow.inputcount.widget),
-      dst,
-    );
+    const widget: unknown = op.grow.inputcount.widget;
+    if (typeof widget !== "string") {
+      throw new OpRejectedError("malformed_op", "connect: grow.inputcount needs a widget name");
+    }
+    rejectIfOpaqueWidgets(dst, widget);
+    validateWidgetName(catalog, String(dst.get("type") ?? ""), widget, dst);
     assertWritableValue(op.grow.inputcount.value, "connect: grow.inputcount");
+    count = { widget, value: op.grow.inputcount.value };
   }
 
   // `link_id` is written THREE ways — the links-map key (via String()), the
@@ -2437,7 +2441,7 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
       // is nothing to gate (vocabulary §1.2 / amendment v1.2's carve-out).
       if (!claimLinkIdentity(doc, op)) return "lww-dropped";
       if (!src) return "no-op"; // source concurrently deleted → no-op (delete wins)
-      return growInputSlot(doc, dst, op, catalog);
+      return growInputSlot(doc, dst, op, count, catalog);
     }
     // `to_slot`'s type was settled by `requireOpOnlyValid`.
     const toIdx = op.to_slot as number;
@@ -2661,6 +2665,7 @@ function growInputSlot(
   doc: Y.Doc,
   dst: Y.Map<unknown>,
   op: GrowConnectOp,
+  count: InputcountWrite | null,
   catalog?: WidgetCatalog,
 ): number {
   const grow = op.grow;
@@ -2722,8 +2727,8 @@ function growInputSlot(
     insArr.length - 1,
   );
 
-  if (grow.inputcount != null) {
-    applyInputcountBump(doc, dst, op, grow.inputcount, catalog);
+  if (count !== null) {
+    applyInputcountBump(doc, dst, op, count);
   }
   return toIdx;
 }
@@ -2836,6 +2841,12 @@ function normalizeGrowFamily(
   return wantedRank >= 0 ? positions[wantedRank]! : appendedIndex;
 }
 
+/** A `grow.inputcount` whose widget name `applyConnect` validated before any write. */
+interface InputcountWrite {
+  widget: string;
+  value: unknown;
+}
+
 /**
  * §8.4 second register: a stamped write of the family's count widget, sharing
  * the connect's op_id/stamp, through the SAME LWW gate as an explicit
@@ -2850,19 +2861,14 @@ function applyInputcountBump(
   doc: Y.Doc,
   dst: Y.Map<unknown>,
   op: GrowConnectOp,
-  ic: NonNullable<GrowSpec["inputcount"]>,
-  catalog?: WidgetCatalog,
+  ic: InputcountWrite,
 ): void {
-  if (typeof ic.widget !== "string") {
-    throw new OpRejectedError("malformed_op", "connect: grow.inputcount needs a widget name");
-  }
   const stamps = stampsMap(doc);
   if (nodeIncarnation(dst) !== (op.node_incarnation ?? LEGACY_NODE_INCARNATION)) return;
   const targetKey = widgetTargetKey(op.to_node, op.node_incarnation ?? LEGACY_NODE_INCARNATION, ic.widget);
   const prior = stamps.get(targetKey) as StampKey | undefined;
   const key = stampKey(op);
   if (prior != null && compareStampKeys(key, prior) <= 0) return; // lww-dropped
-  validateWidgetName(catalog, String(dst.get("type") ?? ""), ic.widget, dst);
   mset(widgetsOf(dst), ic.widget, structuredClone(ic.value));
   mset(stamps, targetKey, key);
 }

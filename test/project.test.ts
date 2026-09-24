@@ -265,8 +265,9 @@ describe("set_widget applies the same catalog rules as add_node (#13)", () => {
   });
 
   it("refuses the same write arriving through connect's grow.inputcount bump", () => {
-    // `applyInputcountBump` reuses `validateWidgetName`, so the rule has to
-    // hold on this route too or the guard is one op-kind wide.
+    // `applyConnect` runs `validateWidgetName` on the bump's widget before the
+    // slot grows, so the rule has to hold on this route too or the guard is
+    // one op-kind wide.
     const doc = mint(
       { nodes: [{ id: 1, type: "KSampler", widgets_values: [], outputs: [{ name: "LATENT", type: "LATENT", links: [] }] }], links: [] } as unknown as WorkflowJSON,
       catalog,
