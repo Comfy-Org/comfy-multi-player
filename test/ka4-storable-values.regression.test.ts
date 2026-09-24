@@ -25,14 +25,38 @@ const countingCatalog: WidgetCatalog = {
 };
 const opId = (tag: string) => (tag + "0".repeat(32)).slice(0, 32);
 
-/** The shared rejection oracle (`test/rejection-oracle.ts`), defaulting to this file's catalog. */
+/**
+ * A trailing op that is valid on its own against every fixture in this file:
+ * a fresh node id no fixture or rejected row uses, of a catalogued type.
+ */
+const trailingOp: Op = {
+  op: "add_node", op_id: opId("trailing"), actor: "human:z", base_version: 9,
+  stamp: [9, "human:z"], node_id: 990, class_type: "LoadImage", pos: [],
+  node: {
+    id: 990, type: "LoadImage", inputs: [],
+    outputs: [{ name: "IMAGE", type: "IMAGE", links: [] }], widgets_values: [],
+  },
+};
+
+/**
+ * The shared rejection oracle (`test/rejection-oracle.ts`), defaulting to this
+ * file's catalog, with abort-remainder evidence: `trailingOp` is first shown
+ * to apply alone on a fresh copy of the same fixture, so the `batch_aborted`
+ * it gets behind the rejected op is caused by that rejection and nothing else.
+ */
 function assertRejectedWithoutMutation(
   workflow: WorkflowJSON,
   op: Op,
   code: string,
   withCatalog: WidgetCatalog = catalog,
 ): void {
-  expect(rejectionEvidence(workflow, op, withCatalog)).toEqual(cleanRejection(code));
+  const alone = mint(workflow, withCatalog);
+  try {
+    expect(applyOps(alone, [trailingOp], withCatalog).outcomes.map((outcome) => outcome.outcome)).toEqual(["applied"]);
+  } finally {
+    alone.destroy();
+  }
+  expect(rejectionEvidence(workflow, op, withCatalog, trailingOp)).toEqual(cleanRejection(code, true));
 }
 
 describe("regression: rejected connect ops leave document bytes unchanged (#10)", () => {
