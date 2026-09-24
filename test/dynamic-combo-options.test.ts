@@ -13,9 +13,11 @@
  * the selection removes the old option's slots and seeds the new option's from
  * spec defaults.
  */
+import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
 
 import { applyOps, mint, project, type Op, type WidgetCatalog, type WorkflowJSON } from "../src/index.js";
+import { cleanRejection, rejectionEvidence } from "./rejection-oracle.js";
 
 // The shape comfy-cli publishes (comfy-cli#920), verbatim for this class.
 const catalog = {
@@ -100,12 +102,16 @@ describe("dynamic combos: every option is addressable", () => {
     expect(values(doc)).toEqual([0, 2, "flexible", "improve_lighting"]);
   });
 
-  it("still refuses a name no option of the class has", () => {
-    const doc = mint(canvas([0, 2, "faithful", 55]), catalog);
-    expect(applyOps(doc, [setWidget("mode.no_such_widget", 1)], catalog).outcomes[0]).toMatchObject({
-      outcome: "rejected",
-      reason: { code: "unknown_widget" },
-    });
+  it("still refuses a name no option of the class has, leaving the document untouched", () => {
+    // KA-4 rejection oracle: byte identity, unconsumed op_id, and a trailing
+    // valid op reported batch_aborted.
+    const evidence = rejectionEvidence(
+      canvas([0, 2, "faithful", 55]),
+      setWidget("mode.no_such_widget", 1),
+      catalog,
+      setWidget("mode.skin_detail", 60),
+    );
+    expect(evidence).toEqual(cleanRejection("unknown_widget", true));
   });
 
   it.each(["child-first", "child-last"] as const)(
@@ -117,6 +123,12 @@ describe("dynamic combos: every option is addressable", () => {
       const ops = arrival === "child-first" ? [child, selector] : [selector, child];
       const outcomes = ops.map((op) => applyOps(doc, [op], catalog).outcomes[0]!.outcome);
       expect(outcomes).toEqual(["applied", "applied"]);
+      expect(values(doc)).toEqual([0, 2, "faithful", 63]);
+
+      // Double-apply: a duplicate op_id is a true no-op, bytes and projection.
+      const before = Buffer.from(Y.encodeStateAsUpdate(doc));
+      expect(applyOps(doc, ops, catalog).outcomes.map((outcome) => outcome.outcome)).toEqual(["no-op", "no-op"]);
+      expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
       expect(values(doc)).toEqual([0, 2, "faithful", 63]);
     },
   );

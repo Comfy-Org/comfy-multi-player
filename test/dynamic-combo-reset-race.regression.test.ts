@@ -61,6 +61,13 @@ describe("dynamic combo reset preserves a newer concurrent child write", () => {
       // The child stamp (30) wins over both reset stamps (10 and 20).
       // A receiver-side delete/default write must not replace it with 80.
       expect(project(doc, catalog).nodes[0]?.widgets_values).toEqual([0, 2, "faithful", 63]);
+
+      // Double-apply: replaying the completed batch is a true no-op.
+      const before = Buffer.from(Y.encodeStateAsUpdate(doc));
+      const replay = applyOps(doc, ops, catalog);
+      expect(replay.outcomes.map((outcome) => outcome.outcome)).toEqual(["no-op", "no-op", "no-op"]);
+      expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
+      expect(project(doc, catalog).nodes[0]?.widgets_values).toEqual([0, 2, "faithful", 63]);
     } finally {
       doc.destroy();
     }
