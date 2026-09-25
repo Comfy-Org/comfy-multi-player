@@ -15,7 +15,11 @@
  *      dynamic-combo selection the value-blind pinned catalog cannot
  *      describe, `doc.ts`'s `overflowWidgetName`) projects back to its
  *      original positional index rather than throwing, so `mint()`'s round
- *      trip promise holds for this case too;
+ *      trip promise holds for this case too. When a dynamic-combo selection
+ *      later gives that index to a real name, the real name owns it and the
+ *      overflow value is shadowed (kept, not projected) until the position
+ *      is free again. A selected option's slot nothing wrote shows that
+ *      option's default (read-time defaults, `dynamic-combos.ts`);
  *   3. numbers serialize as JS numbers;
  *   4. `outputs[].links: null` preserved verbatim; an empty Y.Array → `[]`;
  *   5. meta passthrough keys project unmodified (schema §6). Doc-internal
@@ -43,7 +47,7 @@ import { assertNever } from "./exhaustive.js";
 import { projectInteriorLinkOrder } from "./interior-link-order.js";
 import { assertReadableSchema } from "./schema-version.js";
 import { NODE_INCARNATION_KEY, type WidgetCatalog, type WorkflowJSON, type WorkflowNode } from "./types.js";
-import { optionOwnedWidgets, projectedLength, widgetLayoutForWidgets } from "./dynamic-combos.js";
+import { hasDynamicCombos, optionOwnedWidgets, projectedLength, widgetLayoutForWidgets } from "./dynamic-combos.js";
 
 /** Sorted-by-id comparator: numeric when both ids are numbers, else string order. */
 function idCompare(a: unknown, b: unknown): number {
@@ -123,12 +127,20 @@ function widgetsToPositional(
   const layout = widgetLayoutForWidgets(entry, widgets);
   const order = layout.order;
   const inactive = optionOwnedWidgets(entry);
+  const selectionDependent = hasDynamicCombos(entry);
   let max = -1;
   widgets.forEach((_v, name) => {
     const i = positionalIndexOf(order, name);
     // A sub-widget of an option the node does not select owns no slot; its
     // value is kept for when that option is selected again.
     if (i < 0 && inactive.has(name)) return;
+    // A legacy overflow slot (`_extra_N`) whose position the CURRENT selection
+    // gives to a real name is shadowed: the real name owns that position (its
+    // written value, else its read-time default) and the overflow value stays
+    // in the document, projecting again once the selection frees the position.
+    // Only a selection-dependent order can move under a stored overflow slot;
+    // for a fixed order this state is catalog drift and still throws.
+    if (i < 0 && selectionDependent && parseOverflowWidgetName(name) !== null) return;
     if (i < 0) {
       throw new TypeError(`project: widget '${name}' is not in widget_order for ${nodeType}`);
     }

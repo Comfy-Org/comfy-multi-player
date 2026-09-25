@@ -31,6 +31,11 @@ function combosOf(entry: WidgetCatalogEntry | undefined): Combos | undefined {
   return combos && Object.keys(combos).length > 0 ? combos : undefined;
 }
 
+/** Whether `entry` carries dynamic-combo options, so its order depends on the selection. */
+export function hasDynamicCombos(entry: WidgetCatalogEntry | undefined): boolean {
+  return combosOf(entry) !== undefined;
+}
+
 /** Every name some option of some selector owns (any selection, any depth). */
 export function optionOwnedWidgets(entry: WidgetCatalogEntry | undefined): Set<string> {
   const owned = new Set<string>();

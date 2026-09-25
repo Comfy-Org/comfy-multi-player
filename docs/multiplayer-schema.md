@@ -738,6 +738,15 @@ Pinned semantics:
 `project(doc, catalog)` is a pure read producing ComfyUI workflow JSON;
 `project(mint(w, catalog), catalog)` must deep-equal `canonical(w)`.
 
+`canonical(w)` is `w` after the rules below. For a node whose catalog entry
+carries `dynamic_combos`, that includes the frontend's load normalization: a
+selected option's slot that `w` does not carry (the array ends before it)
+shows that option's default, exactly as the frontend fills it when it builds
+the option's widgets on load and then saves. So an imported `["a"]` whose
+option `a` owns `mode.detail` (default 41) projects as `["a", 41]`. Every
+value `w` does carry is kept, `null` included, and the canonical form is a
+fixed point: `canonical(canonical(w))` equals `canonical(w)`.
+
 **Rule 0, which runs before any of the rules below (Amendment A5, §10).** The
 first thing `project()` does is refuse a document whose `meta.schema_version`
 this package cannot read — absent, not a positive integer, or a version other
@@ -758,8 +767,16 @@ for its corpus; rule 6 was added by Amendment A4):
 2. **Widgets:** the name-keyed `widgets` map (§1.2) is emitted as the
    positional `widgets_values` array using the pinned catalog's
    `widget_order` for the node's type — including dynamic-combo expansion
-   driven by the node's current widget values. Missing names project as
-   `null` (Python pads with `None`). A node stored opaquely
+   driven by the node's current widget values. A selected option's slot
+   that holds no stored value shows that option's default (read-time
+   defaults: nothing is written into the document on a selection change).
+   Other missing names project as `null` (Python pads with `None`). A legacy
+   overflow slot (`_extra_N`, BE-9176) projects at index N while N is past
+   the node's current expanded order; once a selection gives index N to a
+   real name, the real name owns it and the overflow value is shadowed (kept
+   in the document, not projected) until the position is free again. Both
+   are pure functions of doc state, so replicas converge in any arrival
+   order. A node stored opaquely
    (`__widgets_opaque` — Amendment A2) emits its array verbatim and needs no
    catalog entry.
 3. **Numbers serialize as JS numbers.** Python may emit `8.0` where JS emits
