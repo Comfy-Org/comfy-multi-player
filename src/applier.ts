@@ -1438,6 +1438,61 @@ function validateWidgetName(
 }
 
 /**
+ * The node's opaque widget value when it is a NAME-KEYED RECORD, else
+ * `undefined` (schema §1.2).
+ *
+ * This package only ever stores an ARRAY under {@link OPAQUE_WIDGETS_KEY}. A
+ * host may also keep a node's `widgets_values` OBJECT there whole: some
+ * classes (VideoHelperSuite's loaders are the common case) serialize their
+ * widgets by name from their own frontend code, under names such as a DOM
+ * preview widget that no `widget_order` derived from `object_info` can list,
+ * so the `widgets` map could never project them. `project()` already hands the
+ * object back verbatim. Unlike an array, the object is name-addressable: the
+ * widget name IS the key, so `set_widget` can write it without a catalogue
+ * position (see {@link applyRecordWidgetWrite}).
+ */
+function opaqueRecordOf(node: Y.Map<unknown>): Record<string, unknown> | undefined {
+  if (widgetStorageOf(node) !== "opaque") return undefined;
+  const value = node.get(OPAQUE_WIDGETS_KEY);
+  return isPlainRecord(value) ? value : undefined;
+}
+
+/**
+ * `set_widget` on a node whose opaque value is a record: write the one key as
+ * a whole-value read-modify-write of the record (Amendment A2, the shape a
+ * promoted host write uses for an opaque array). Ops are the replication unit
+ * (KA-1) and every replica applies them in the same order, so two writes to
+ * different keys each see the other's result and commute; the same key is
+ * decided by the per-widget stamp register exactly like a named write.
+ *
+ * The name must already be a key of the record, or a name the pinned catalogue
+ * lists for the class (a sparse record the frontend has not filled in yet).
+ * Anything else is `unknown_widget` and nothing is written: creating a key the
+ * node's own frontend never reads would report `applied` for a write with no
+ * effect. `Object.hasOwn` keeps an inherited name such as `__proto__` out.
+ */
+function applyRecordWidgetWrite(
+  node: Y.Map<unknown>,
+  record: Record<string, unknown>,
+  widget: string,
+  value: unknown,
+  catalog: WidgetCatalog | undefined,
+): void {
+  const type = String(node.get("type") ?? "");
+  const listed = catalogEntry(catalog, type)?.widget_order ?? [];
+  if (!Object.hasOwn(record, widget) && (widget === "__proto__" || !listed.includes(widget))) {
+    const known = [...new Set([...Object.keys(record), ...listed])];
+    throw new OpRejectedError(
+      "unknown_widget",
+      `widget '${widget}' not found on ${type} node ${String(node.get("id"))} (its widgets_values is a name-keyed record); available: ${known.join(", ") || "(none)"}`,
+    );
+  }
+  const next: Record<string, unknown> = structuredClone(record);
+  next[widget] = structuredClone(value);
+  mset(node, OPAQUE_WIDGETS_KEY, next);
+}
+
+/**
  * Refuse a name-addressed widget write against a node whose `widgets_values`
  * is stored opaquely (schema §1.2 — a class the pinned catalog does not
  * describe, e.g. the frontend-only `Note`/`MarkdownNote`).
@@ -1626,6 +1681,16 @@ function hostWriteStorage(node: Y.Map<unknown>, catalog: WidgetCatalog | undefin
   const storage = widgetStorageOf(node);
   switch (storage) {
     case "opaque":
+      // A name-keyed record has no positions: laying `widgets_values[i]` over
+      // it would replace every value with a fresh array and still report
+      // `applied`. Refuse it with the document intact.
+      if (opaqueRecordOf(node) !== undefined) {
+        const type = String(node.get("type") ?? "");
+        throw new OpRejectedError(
+          "opaque_widgets",
+          `set_widget(${type}): node ${String(node.get("id"))} stores its widgets_values as a name-keyed record, so a positional promoted host write cannot be laid over it (schema §1.2 / Amendment A15)`,
+        );
+      }
       return "positional";
     case "named": {
       const type = String(node.get("type") ?? "");
@@ -1766,6 +1831,12 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
     if (nodeIncarnation(target) !== (op.node_incarnation ?? LEGACY_NODE_INCARNATION)) return "no-op";
     const nodeType = String(target.get("type") ?? "");
     const widget = interior.inner_widget;
+    const record = opaqueRecordOf(target);
+    if (record !== undefined) {
+      applyRecordWidgetWrite(target, record, widget, op.value, catalog);
+      mset(stamps, targetKey, key);
+      return "applied";
+    }
     rejectIfOpaqueWidgets(target, widget);
     // Same catalogue rules as a top-level write, and for the same reason: an
     // interior node projects through `projectDefinition` -> `projectNode` ->
@@ -1803,6 +1874,12 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
   const node = nodesMap(doc).get(String(op.node_id));
   if (!node) return "no-op"; // target concurrently deleted → no-op (delete wins)
   if (nodeIncarnation(node) !== (op.node_incarnation ?? LEGACY_NODE_INCARNATION)) return "no-op";
+  const record = opaqueRecordOf(node);
+  if (record !== undefined) {
+    applyRecordWidgetWrite(node, record, op.widget, op.value, catalog);
+    mset(stamps, targetKey, key);
+    return "applied";
+  }
   rejectIfOpaqueWidgets(node, op.widget);
   validateWidgetName(catalog, String(node.get("type") ?? ""), op.widget, node);
   // Top-level writes may extend past the current positional length — comfy-cli

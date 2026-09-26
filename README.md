@@ -659,6 +659,14 @@ last-writer-wins — which is what you want for a sticky note.
 The cost is that such values are not name-addressable: a `set_widget` against
 one is **rejected** with `opaque_widgets` rather than silently doing nothing.
 
+A host may also keep a node's `widgets_values` OBJECT under that key: some
+classes serialize their widgets by name from their own frontend code, under
+names no catalog can list. That value is name-addressable, because the name is
+the key, so `set_widget` writes the one key as a whole-value read-modify-write
+of the object. The name must be a key the object already holds or a name the
+catalog lists for the class; anything else is `unknown_widget`. A positional
+promoted host write onto such a node is `opaque_widgets`.
+
 ## Purity
 
 This package runs in the browser bundle and in the server process, so it must
