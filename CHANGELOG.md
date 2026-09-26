@@ -13,7 +13,8 @@ this package uses semantic versioning.
   name-keyed object (a class that serializes its widgets by name from its own
   frontend code) now writes that key instead of refusing with
   `opaque_widgets`. The name must be a key the object holds or a name the
-  catalog lists for the class, else `unknown_widget`. A positional promoted
+  catalog lists for the class, else `unknown_widget` (or
+  `uncatalogued_widget_write` when the pinned catalog lacks the class). A positional promoted
   host write onto such a node is refused with `opaque_widgets` instead of
   replacing the object with an array.
 

@@ -664,7 +664,8 @@ classes serialize their widgets by name from their own frontend code, under
 names no catalog can list. That value is name-addressable, because the name is
 the key, so `set_widget` writes the one key as a whole-value read-modify-write
 of the object. The name must be a key the object already holds or a name the
-catalog lists for the class; anything else is `unknown_widget`. A positional
+catalog lists for the class; anything else is `unknown_widget`, and a class the
+pinned catalog does not know is `uncatalogued_widget_write`. A positional
 promoted host write onto such a node is `opaque_widgets`.
 
 ## Purity

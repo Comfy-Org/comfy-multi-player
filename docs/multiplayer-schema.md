@@ -1086,7 +1086,8 @@ key, so `set_widget` writes that key as a whole-value read-modify-write of the
 object (the Amendment A2 shape a promoted host write uses for an opaque array),
 gated by the same per-widget stamp register as a named write. The name must be
 a key the object already holds or a name the catalog lists for the class, else
-`unknown_widget`; a positional promoted host write onto the object is
+`unknown_widget` (`uncatalogued_widget_write` when a pinned catalog lacks the
+class); a positional promoted host write onto the object is
 `opaque_widgets`, since it would replace every value with an array.
 
 ### Rejected alternative: catalog entries for the frontend-only classes

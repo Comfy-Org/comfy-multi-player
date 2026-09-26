@@ -1465,11 +1465,14 @@ function opaqueRecordOf(node: Y.Map<unknown>): Record<string, unknown> | undefin
  * different keys each see the other's result and commute; the same key is
  * decided by the per-widget stamp register exactly like a named write.
  *
- * The name must already be a key of the record, or a name the pinned catalogue
- * lists for the class (a sparse record the frontend has not filled in yet).
- * Anything else is `unknown_widget` and nothing is written: creating a key the
- * node's own frontend never reads would report `applied` for a write with no
- * effect. `Object.hasOwn` keeps an inherited name such as `__proto__` out.
+ * With a pinned catalogue the class must be in it (`uncatalogued_widget_write`
+ * otherwise, the same KA-12 boundary a named write draws), and the name must
+ * already be a key of the record or a name the catalogue lists for the class
+ * (a sparse record the frontend has not filled in yet). Anything else is
+ * `unknown_widget` and nothing is written: creating a key the node's own
+ * frontend never reads would report `applied` for a write with no effect.
+ * Without a catalogue only the record's own keys are accepted.
+ * `Object.hasOwn` keeps an inherited name such as `__proto__` out.
  */
 function applyRecordWidgetWrite(
   node: Y.Map<unknown>,
@@ -1479,7 +1482,14 @@ function applyRecordWidgetWrite(
   catalog: WidgetCatalog | undefined,
 ): void {
   const type = String(node.get("type") ?? "");
-  const listed = catalogEntry(catalog, type)?.widget_order ?? [];
+  const entry = catalogEntry(catalog, type);
+  if (catalog && !entry) {
+    throw new OpRejectedError(
+      "uncatalogued_widget_write",
+      `set_widget(${type}): named widget write to a class absent from the pinned catalog (schema §1.2 / KA-12)`,
+    );
+  }
+  const listed = entry?.widget_order ?? [];
   if (!Object.hasOwn(record, widget) && (widget === "__proto__" || !listed.includes(widget))) {
     const known = [...new Set([...Object.keys(record), ...listed])];
     throw new OpRejectedError(
