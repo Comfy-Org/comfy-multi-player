@@ -31,6 +31,7 @@ import {
   type WorkflowJSON,
   type WorkflowNode,
 } from "./types.js";
+import { widgetOrderForValues } from "./dynamic-combos.js";
 
 /** Top-level keys that are NOT meta passthrough: structural keys get their own root maps; comfy-cli bookkeeping is never imported. */
 const NON_META_KEYS = ["nodes", "links", "definitions", "_applied_ops", "_widget_stamps"] as const;
@@ -39,9 +40,10 @@ const NON_META_KEYS = ["nodes", "links", "definitions", "_applied_ops", "_widget
 const RESERVED_META_KEYS = ["schema_version", "catalog_version"] as const;
 
 /** OWN-property lookup: an inherited key such as `__proto__` must read as "missing", not as a catalog entry (#13). */
-function widgetOrderFor(catalog: WidgetCatalog, nodeType: string): readonly string[] | undefined {
+function widgetOrderFor(catalog: WidgetCatalog, nodeType: string, wv: unknown): readonly string[] | undefined {
   if (typeof nodeType !== "string" || !Object.hasOwn(catalog.types, nodeType)) return undefined;
-  return catalog.types[nodeType]?.widget_order;
+  // Selection-aware: a dynamic combo's non-default option names its own slots.
+  return widgetOrderForValues(catalog.types[nodeType], wv);
 }
 
 interface SubgraphDef {
@@ -103,7 +105,7 @@ export function mint(workflow: WorkflowJSON, catalog: WidgetCatalog, catalogVers
 
     const nodes = nodesMap(doc);
     for (const node of workflow.nodes ?? []) {
-      nodes.set(String(node.id), createNodeMap(node, widgetOrderFor(catalog, node.type)));
+      nodes.set(String(node.id), createNodeMap(node, widgetOrderFor(catalog, node.type, node.widgets_values)));
     }
 
     const links = linksMap(doc);
@@ -252,7 +254,7 @@ function mintDefinitionNodes(dm: Y.Map<unknown>, nodes: WorkflowNode[], catalog:
     const key = String(node.id);
     if (order.includes(key)) throw new TypeError(`mint: duplicate definition node id '${key}'`);
     order.push(key);
-    nm.set(key, createNodeMap(node, widgetOrderFor(catalog, node.type)));
+    nm.set(key, createNodeMap(node, widgetOrderFor(catalog, node.type, node.widgets_values)));
   }
   dm.set("nodes", nm);
   dm.set("node_order", order);

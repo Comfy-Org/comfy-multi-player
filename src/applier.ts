@@ -127,7 +127,6 @@ import {
   type DefineSubgraphOp,
   type DisconnectOp,
   type GrowConnectOp,
-  type GrowSpec,
   type ImportedLinkState,
   type InteriorSetWidgetOp,
   LINK_STATE_DESCRIPTOR_VERSION,
@@ -145,6 +144,7 @@ import {
   type WireOp,
 } from "./types.js";
 import { addInteriorLinkOrder, removeInteriorLinkOrder } from "./interior-link-order.js";
+import { optionOwnedWidgets, projectedLength, widgetLayoutForWidgets, widgetOrderForValues, widgetOrderForWidgets } from "./dynamic-combos.js";
 import { NODE_INCARNATION_KEY, WRITABLE_NODE_FIELDS } from "./types.js";
 
 /**
@@ -1118,7 +1118,7 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
     }
     rejectUnprojectableWidgets(node.type, wv, entry);
     try {
-      nodeWrites.push([String(node.id), node.id, createNodeMap(node, entry?.widget_order)]);
+      nodeWrites.push([String(node.id), node.id, createNodeMap(node, widgetOrderForValues(entry, node.widgets_values))]);
     } catch (err) {
       throw new OpRejectedError("invalid_node_payload", `insert_workflow(${node.type}): ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1229,11 +1229,15 @@ function rejectUnprojectableWidgets(
       `add_node(${type}): named widgets_values for a class absent from the pinned catalog cannot be projected (schema §1.2 — projection is catalog-dependent by design)`,
     );
   }
+  // Selection-aware: the payload's own selector values pick each dynamic
+  // combo's option, so a non-default option's sub-widgets are real names.
+  const order = widgetOrderForValues(entry, wv) ?? entry.widget_order;
+  const owned = optionOwnedWidgets(entry);
   for (const name of names) {
-    if (!entry.widget_order.includes(name)) {
+    if (!order.includes(name) && !owned.has(name)) {
       throw new OpRejectedError(
         "unknown_widget",
-        `add_node(${type}): widget '${name}' is not in widget_order for ${type}; available: ${entry.widget_order.join(", ") || "(none — all inputs are links)"}`,
+        `add_node(${type}): widget '${name}' is not in widget_order for ${type}; available: ${order.join(", ") || "(none — all inputs are links)"}`,
       );
     }
   }
@@ -1263,7 +1267,7 @@ function requireAddNodeValid(op: AddNodeOp): void {
 function createAddedNode(op: AddNodeOp, catalog?: WidgetCatalog): Y.Map<unknown> {
   const wv = op.node.widgets_values;
   const entry = catalogEntry(catalog, op.node.type);
-  const order = entry?.widget_order;
+  const order = widgetOrderForValues(entry, wv);
   if (!catalog && Array.isArray(wv) && wv.length > 0) {
     throw new OpRejectedError(
       "catalog_required",
@@ -1409,6 +1413,7 @@ function validateWidgetName(
   catalog: WidgetCatalog | undefined,
   nodeType: string,
   widget: string,
+  node?: Y.Map<unknown>,
 ): void {
   if (!catalog) return;
   const entry = catalogEntry(catalog, nodeType);
@@ -1418,10 +1423,16 @@ function validateWidgetName(
       `set_widget(${nodeType}): named widget write to a class absent from the pinned catalog cannot be projected (schema §1.2 — projection is catalog-dependent by design)`,
     );
   }
-  if (!entry.widget_order.includes(widget)) {
+  // Any option's sub-widget is a legal target, selected or not: accepting only
+  // the CURRENT selection's would make the outcome depend on whether the
+  // selector write arrived first (KA-2). An unselected option's value is
+  // stored and not projected until that option is selected.
+  const widgets = node?.get("widgets");
+  const order = widgetOrderForWidgets(entry, widgets instanceof Y.Map ? widgets : undefined);
+  if (!order.includes(widget) && !optionOwnedWidgets(entry).has(widget)) {
     throw new OpRejectedError(
       "unknown_widget",
-      `widget '${widget}' not found on ${nodeType}; available: ${entry.widget_order.join(", ") || "(none — all inputs are links)"}`,
+      `widget '${widget}' not found on ${nodeType}; available: ${order.join(", ") || "(none — all inputs are links)"}`,
     );
   }
 }
@@ -1670,7 +1681,7 @@ function applyPromotedHostWrite(
   const storage = hostWriteStorage(target, catalog);
   switch (storage) {
     case "named":
-      validateWidgetName(catalog, String(target.get("type") ?? ""), op.widget);
+      validateWidgetName(catalog, String(target.get("type") ?? ""), op.widget, target);
       mset(widgetsOf(target), op.widget, structuredClone(op.value));
       mset(stamps, targetKey, key);
       return "applied";
@@ -1762,16 +1773,20 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
     // makes the WHOLE document unprojectable exactly as it would at top level.
     // Runs BEFORE the range check so an uncatalogued class is refused rather
     // than falling through the `if (entry)` block as an accepted write (#13).
-    validateWidgetName(catalog, nodeType, widget);
+    validateWidgetName(catalog, nodeType, widget, target);
     // OWN-property lookup (#13): an inherited key such as `__proto__` must read
     // as "absent from the catalog", not resolve to a prototype object.
     const entry = catalogEntry(catalog, nodeType);
     if (entry) {
-      const idx = entry.widget_order.indexOf(widget);
+      const current = target.get("widgets");
+      const stored = current instanceof Y.Map ? current : undefined;
+      const layout = widgetLayoutForWidgets(entry, stored);
+      const idx = layout.order.indexOf(widget);
       // Interior writes never pad (comfy-cli `_write_widget` extend=False):
       // the projected positional index must already be inside the node's
-      // current widgets_values length.
-      const len = projectedWidgetsLength(target, entry.widget_order);
+      // current widgets_values length — which counts a selected option's
+      // read-time defaults, since the projection shows them.
+      const len = Math.max(projectedWidgetsLength(target, layout.order), projectedLength(layout, stored));
       if (idx >= len) {
         throw new OpRejectedError(
           "widget_out_of_range",
@@ -1789,7 +1804,7 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
   if (!node) return "no-op"; // target concurrently deleted → no-op (delete wins)
   if (nodeIncarnation(node) !== (op.node_incarnation ?? LEGACY_NODE_INCARNATION)) return "no-op";
   rejectIfOpaqueWidgets(node, op.widget);
-  validateWidgetName(catalog, String(node.get("type") ?? ""), op.widget);
+  validateWidgetName(catalog, String(node.get("type") ?? ""), op.widget, node);
   // Top-level writes may extend past the current positional length — comfy-cli
   // pads with None; here the name-keyed map makes padding a projection concern.
   mset(widgetsOf(node), op.widget, structuredClone(op.value));
@@ -2370,15 +2385,21 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
   // impossible (opaque destination, or a widget the catalogue cannot describe)
   // the whole op is refused HERE, before the slot append, so a rejected op
   // still leaves the doc untouched. Both checks read `dst`, so unlike the
-  // op-only set above they cannot move any earlier.
+  // op-only set above they cannot move any earlier. The widget's type is
+  // settled HERE too, not coerced: `String(["inputcount"])` names a real
+  // widget, and a guard left to the bump would fire only after
+  // `growInputSlot` had written the slot and the grow ledgers (KA-4). The
+  // validated name is what the bump writes.
+  let count: InputcountWrite | null = null;
   if (op.grow?.inputcount != null) {
-    rejectIfOpaqueWidgets(dst, String(op.grow.inputcount.widget));
-    validateWidgetName(
-      catalog,
-      String(dst.get("type") ?? ""),
-      String(op.grow.inputcount.widget),
-    );
+    const widget: unknown = op.grow.inputcount.widget;
+    if (typeof widget !== "string") {
+      throw new OpRejectedError("malformed_op", "connect: grow.inputcount needs a widget name");
+    }
+    rejectIfOpaqueWidgets(dst, widget);
+    validateWidgetName(catalog, String(dst.get("type") ?? ""), widget, dst);
     assertWritableValue(op.grow.inputcount.value, "connect: grow.inputcount");
+    count = { widget, value: op.grow.inputcount.value };
   }
 
   // `link_id` is written THREE ways — the links-map key (via String()), the
@@ -2420,7 +2441,7 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
       // is nothing to gate (vocabulary §1.2 / amendment v1.2's carve-out).
       if (!claimLinkIdentity(doc, op)) return "lww-dropped";
       if (!src) return "no-op"; // source concurrently deleted → no-op (delete wins)
-      return growInputSlot(doc, dst, op, catalog);
+      return growInputSlot(doc, dst, op, count, catalog);
     }
     // `to_slot`'s type was settled by `requireOpOnlyValid`.
     const toIdx = op.to_slot as number;
@@ -2644,6 +2665,7 @@ function growInputSlot(
   doc: Y.Doc,
   dst: Y.Map<unknown>,
   op: GrowConnectOp,
+  count: InputcountWrite | null,
   catalog?: WidgetCatalog,
 ): number {
   const grow = op.grow;
@@ -2705,8 +2727,8 @@ function growInputSlot(
     insArr.length - 1,
   );
 
-  if (grow.inputcount != null) {
-    applyInputcountBump(doc, dst, op, grow.inputcount, catalog);
+  if (count !== null) {
+    applyInputcountBump(doc, dst, op, count);
   }
   return toIdx;
 }
@@ -2819,6 +2841,12 @@ function normalizeGrowFamily(
   return wantedRank >= 0 ? positions[wantedRank]! : appendedIndex;
 }
 
+/** A `grow.inputcount` whose widget name `applyConnect` validated before any write. */
+interface InputcountWrite {
+  widget: string;
+  value: unknown;
+}
+
 /**
  * §8.4 second register: a stamped write of the family's count widget, sharing
  * the connect's op_id/stamp, through the SAME LWW gate as an explicit
@@ -2833,19 +2861,14 @@ function applyInputcountBump(
   doc: Y.Doc,
   dst: Y.Map<unknown>,
   op: GrowConnectOp,
-  ic: NonNullable<GrowSpec["inputcount"]>,
-  catalog?: WidgetCatalog,
+  ic: InputcountWrite,
 ): void {
-  if (typeof ic.widget !== "string") {
-    throw new OpRejectedError("malformed_op", "connect: grow.inputcount needs a widget name");
-  }
   const stamps = stampsMap(doc);
   if (nodeIncarnation(dst) !== (op.node_incarnation ?? LEGACY_NODE_INCARNATION)) return;
   const targetKey = widgetTargetKey(op.to_node, op.node_incarnation ?? LEGACY_NODE_INCARNATION, ic.widget);
   const prior = stamps.get(targetKey) as StampKey | undefined;
   const key = stampKey(op);
   if (prior != null && compareStampKeys(key, prior) <= 0) return; // lww-dropped
-  validateWidgetName(catalog, String(dst.get("type") ?? ""), ic.widget);
   mset(widgetsOf(dst), ic.widget, structuredClone(ic.value));
   mset(stamps, targetKey, key);
 }

@@ -12,6 +12,7 @@ import {
 } from "../src/index.js";
 import { appliedMap, isStorableArrayItem, isStorableMapValue } from "../src/doc.js";
 import { loadCatalog } from "./helpers.js";
+import { cleanRejection, rejectionEvidence } from "./rejection-oracle.js";
 
 const catalog = loadCatalog();
 /** Same catalog, but with a real `inputcount` widget on the grow destination. */
@@ -25,10 +26,23 @@ const countingCatalog: WidgetCatalog = {
 const opId = (tag: string) => (tag + "0".repeat(32)).slice(0, 32);
 
 /**
- * D4: a rejected op leaves the document BYTE-identical, not merely
- * projection-identical. The rejected op also never records its `op_id`, so
- * re-submitting it is re-attempted (and re-rejected) rather than deduped —
- * which is what makes the retry non-mutating too, the second half of #10.
+ * A trailing op that is valid on its own against every fixture in this file:
+ * a fresh node id no fixture or rejected row uses, of a catalogued type.
+ */
+const trailingOp: Op = {
+  op: "add_node", op_id: opId("trailing"), actor: "human:z", base_version: 9,
+  stamp: [9, "human:z"], node_id: 990, class_type: "LoadImage", pos: [],
+  node: {
+    id: 990, type: "LoadImage", inputs: [],
+    outputs: [{ name: "IMAGE", type: "IMAGE", links: [] }], widgets_values: [],
+  },
+};
+
+/**
+ * The shared rejection oracle (`test/rejection-oracle.ts`), defaulting to this
+ * file's catalog, with abort-remainder evidence: `trailingOp` is first shown
+ * to apply alone on a fresh copy of the same fixture, so the `batch_aborted`
+ * it gets behind the rejected op is caused by that rejection and nothing else.
  */
 function assertRejectedWithoutMutation(
   workflow: WorkflowJSON,
@@ -36,17 +50,13 @@ function assertRejectedWithoutMutation(
   code: string,
   withCatalog: WidgetCatalog = catalog,
 ): void {
-  const doc = mint(workflow, withCatalog);
-  const before = Buffer.from(Y.encodeStateAsUpdate(doc));
-  expect(applyOps(doc, [op], withCatalog).outcomes.find((outcome) => outcome.outcome === "rejected")?.reason.code).toBe(code);
-  expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
-  // A rejected op is retryable, so it must not have burned its op_id — and if
-  // it had, the retry below would report `no-op`, not `rejected`.
-  expect(appliedMap(doc).has(op.op_id)).toBe(false);
-
-  const retry = applyOps(doc, [op], withCatalog);
-  expect(retry.outcomes.find((outcome) => outcome.outcome === "rejected")?.reason.code).toBe(code);
-  expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
+  const alone = mint(workflow, withCatalog);
+  try {
+    expect(applyOps(alone, [trailingOp], withCatalog).outcomes.map((outcome) => outcome.outcome)).toEqual(["applied"]);
+  } finally {
+    alone.destroy();
+  }
+  expect(rejectionEvidence(workflow, op, withCatalog, trailingOp)).toEqual(cleanRejection(code, true));
 }
 
 describe("regression: rejected connect ops leave document bytes unchanged (#10)", () => {
@@ -101,6 +111,23 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
         inputcount: { widget: 7 as unknown as string, value: 2 },
       },
     }, "malformed_op");
+  });
+
+  it("a non-string inputcount widget that stringifies to a real widget is refused before the slot is grown", () => {
+    // `["inputcount"]` coerces to the catalogued "inputcount" under String(),
+    // so a dst-side check that validates `String(widget)` passes it. The
+    // pre-growth block must refuse the non-string itself; otherwise the slot
+    // and the grow ledgers are written before the bump's own type check
+    // throws, and the rejection is only partial (PR #240 review).
+    assertRejectedWithoutMutation(workflow, {
+      op: "connect", op_id: opId("array-count"), actor: "human:z", base_version: 9,
+      stamp: [9, "human:z"], link_id: 9508, from_node: 300, from_slot: 0,
+      to_node: 700, to_slot: null, link_type: "IMAGE",
+      grow: {
+        name: "images.image0", type: "IMAGE",
+        inputcount: { widget: ["inputcount"] as unknown as string, value: 2 },
+      },
+    }, "malformed_op", countingCatalog);
   });
 
   it("malformed grow payload does not append a grown slot", () => {
