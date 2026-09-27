@@ -85,7 +85,7 @@ function setWidget(widget: string, value: unknown, actor = "agent", lamport = 1)
  * byte-identical (no stamp, no ledger entry, no value), and a valid op queued
  * behind it is `batch_aborted` without being applied.
  */
-function expectRejected(doc: Y.Doc, op: SetWidgetOp, code: string, cat: WidgetCatalog | undefined = catalog): void {
+function expectRejected(doc: Y.Doc, op: SetWidgetOp, code: string, cat: WidgetCatalog | undefined): void {
   const before = Buffer.from(Y.encodeStateAsUpdate(doc));
   const follower = setWidget("custom_width", 999, "carol", 50);
   const res = applyOps(doc, [op, follower], cat);
@@ -134,13 +134,13 @@ describe("set_widget on a record-shaped opaque node", () => {
 
   it("rejects a name neither the record nor the catalog knows, leaving the document byte-identical", () => {
     const doc = recordDoc();
-    expectRejected(doc, setWidget("no_such_widget", 1), "unknown_widget");
+    expectRejected(doc, setWidget("no_such_widget", 1), "unknown_widget", catalog);
     expect(projectedValues(doc)).toEqual(RECORD);
   });
 
   it("rejects `__proto__` rather than writing a key the encoder would drop", () => {
     const doc = recordDoc();
-    expectRejected(doc, setWidget("__proto__", { polluted: true }), "unknown_widget");
+    expectRejected(doc, setWidget("__proto__", { polluted: true }), "unknown_widget", catalog);
     expect(projectedValues(doc)).toEqual(RECORD);
   });
 
@@ -191,7 +191,7 @@ describe("set_widget on a record-shaped opaque node", () => {
       ...setWidget("custom_height", 512),
       promoted: { value_index: 3, host_widgets_values: ["clip.mp4", 0, 0, 0] },
     } as SetWidgetOp;
-    expectRejected(doc, op, "opaque_widgets");
+    expectRejected(doc, op, "opaque_widgets", catalog);
     expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
     expect(projectedValues(doc)).toEqual(RECORD);
   });
@@ -205,7 +205,6 @@ describe("set_widget on an array-shaped opaque node (unchanged)", () => {
     };
     const doc = mint(wf, catalog);
     const op: SetWidgetOp = { op: "set_widget", ...envelope("agent", 1), node_id: 9, widget: "text", value: "x" };
-    const res = applyOps(doc, [op], catalog);
-    expect(res.outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "opaque_widgets" } });
+    expectRejected(doc, op, "opaque_widgets", catalog);
   });
 });
