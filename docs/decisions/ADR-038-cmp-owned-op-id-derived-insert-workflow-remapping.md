@@ -9,10 +9,10 @@ first (2026-09-10, `50a0a2752ebf`) and keeps the number. Any citation of "ADR-03
 `insert_workflow`, op-id-derived remapping, or the rejection of producer-side pre-remapping means
 this ADR.
 
-> Implemented in the cmp `@comfyorg/comfy-multi-player` package on the draft PR
+> Implemented in the cmp `@comfyorg/comfy-multi-player` package via PR
 > https://github.com/Comfy-Org/ComfyUI_frontend/pull/17501 (final blind review with zero findings:
 > https://github.com/Comfy-Org/ComfyUI_frontend/pull/17501#pullrequestreview-5185868875). The
-> governed-repo copy of this ADR inside the cmp package is pending until that PR merges.
+> governed-repo copy of this ADR is now present in the cmp package.
 
 ## Context
 
