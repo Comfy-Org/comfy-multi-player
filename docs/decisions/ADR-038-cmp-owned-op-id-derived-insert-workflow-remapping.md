@@ -16,7 +16,7 @@ this ADR.
 
 ## Context
 
-`insert_workflow` is V1 (Monday 9/15, FE 1.54) scope per Christian's 2026-09-12 correction. The op
+`insert_workflow` is V1 (Monday 2025-09-15, FE 1.54) scope per Christian's 2026-09-12 correction. The op
 carries a whole workflow fragment (nodes, links, groups, nested subgraph definitions) whose IDs were
 chosen by the producer (agent tool, comfy-cli, or a pasted template) with no knowledge of the target
 document. Producer-chosen IDs collide with existing document IDs, and two followers that replay the
