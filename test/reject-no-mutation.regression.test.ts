@@ -5,6 +5,7 @@ import type { ConnectOp, Op, WidgetCatalog, WorkflowJSON } from "../src/index.js
 import { appliedMap } from "../src/doc.js";
 import { loadCatalog } from "./helpers.js";
 import { checkGraphInvariants } from "./graph-invariant-oracle.js";
+import { cleanRejection, rejectionEvidence } from "./rejection-oracle.js";
 
 const catalog = loadCatalog();
 /** Same catalog, but with a real `inputcount` widget on the grow destination. */
@@ -37,14 +38,7 @@ function assertRejectedWithoutMutation(
   code: string,
   withCatalog: WidgetCatalog = catalog,
 ): void {
-  const doc = mint(workflow, withCatalog);
-  const before = Buffer.from(Y.encodeStateAsUpdate(doc));
-  expect(rejected(applyOps(doc, [op], withCatalog))).toMatchObject({ code });
-  expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
-
-  const retry = applyOps(doc, [op], withCatalog);
-  expect(rejected(retry)).toMatchObject({ code });
-  expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
+  expect(rejectionEvidence(workflow, op, withCatalog)).toEqual(cleanRejection(code));
 }
 
 describe("regression: rejected connect ops leave document bytes unchanged (#10)", () => {
