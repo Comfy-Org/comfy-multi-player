@@ -21,6 +21,7 @@
 import { describe, expect, it } from "vitest";
 
 import { applyOps, mint, project, type Op, type WidgetCatalog, type WorkflowJSON } from "../src/index.js";
+import { noOpIds } from "./apply-result-helpers.js";
 
 const DEF = "5d1f2c8e-7a3b-4c9d-8e2f-1a2b3c4d5e6f";
 
@@ -106,6 +107,41 @@ describe("insert_workflow numeric group ids", () => {
     applyOps(b, [op], catalog);
     const ids = (wf: WorkflowJSON) => [...rootGroups(wf), ...definitionGroups(wf)].map((g) => [g.title, g.id]).sort();
     expect(ids(project(a, catalog))).toEqual(ids(project(b, catalog)));
+  });
+
+  it("projects the same groups whichever order two group-bearing inserts arrive in", () => {
+    const a = insert(withGroups());
+    const b = insert({
+      nodes: [{ id: 5, type: "Src" }],
+      links: [],
+      groups: [group(1, "second op one"), group(9, "second op two")],
+    });
+    const ab = mint({ nodes: [], links: [] }, catalog);
+    const ba = mint({ nodes: [], links: [] }, catalog);
+    expect(applyOps(ab, [a, b], catalog).outcomes.map((o) => o.outcome)).toEqual(["applied", "applied"]);
+    applyOps(ba, [b], catalog);
+    applyOps(ba, [a], catalog);
+
+    const wfAB = project(ab, catalog);
+    const wfBA = project(ba, catalog);
+    expect(rootGroups(wfBA)).toEqual(rootGroups(wfAB));
+    expect(definitionGroups(wfBA)).toEqual(definitionGroups(wfAB));
+    expectFrontendGroupIds(rootGroups(wfAB));
+    // Four root groups from two ops; the same original id (1) in each op stays distinct.
+    expect(rootGroups(wfAB)).toHaveLength(4);
+    expect(new Set(rootGroups(wfAB).map((g) => g.id)).size).toBe(4);
+  });
+
+  it("is a no-op when the same insert is applied again, leaving the groups unchanged", () => {
+    const doc = mint({ nodes: [], links: [] }, catalog);
+    const op = insert(withGroups());
+    applyOps(doc, [op], catalog);
+    const before = project(doc, catalog);
+    const again = applyOps(doc, [op], catalog);
+    expect(noOpIds(again)).toEqual([op.op_id]);
+    const after = project(doc, catalog);
+    expect(rootGroups(after)).toEqual(rootGroups(before));
+    expect(definitionGroups(after)).toEqual(definitionGroups(before));
   });
 
   it("round-trips project → mint → project with the numeric ids unchanged", () => {
