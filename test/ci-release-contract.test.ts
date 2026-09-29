@@ -92,7 +92,7 @@ function requireRelease(steps: Step[]): void {
     throw new Error("missing supported pinned npm before Install");
   }
   const node = steps.find((step) => step.uses?.startsWith("actions/setup-node@"));
-  if (!node || !unconditionalGate(node) || node.with?.["node-version"] !== "24.21.0") {
+  if (!node || !unconditionalGate(node) || node.with?.["node-version"] !== "26.10.0") {
     throw new Error("missing pinned release Node");
   }
   if (steps.some((step) => /npm publish|gh release create/.test(step.run ?? ""))) {
@@ -182,7 +182,7 @@ describe("parsed CI and release contracts", () => {
     ["non-fatal recovery", (steps: Step[]) => { steps.find((step) => step.name === "Verify identity and recover release")!["continue-on-error"] = true; }],
     ["changed helper", (steps: Step[]) => { steps.find((step) => step.name === "Verify identity and recover release")!.run = "echo skipped"; }],
     ["old npm", (steps: Step[]) => { steps.find((step) => step.name === "Pin release npm")!.run = "npm install --global npm@10.9.7"; }],
-    ["moving Node", (steps: Step[]) => { steps.find((step) => step.uses?.startsWith("actions/setup-node@"))!.with!["node-version"] = 24; }],
+    ["moving Node", (steps: Step[]) => { steps.find((step) => step.uses?.startsWith("actions/setup-node@"))!.with!["node-version"] = 26; }],
     ["unguarded publication", (steps: Step[]) => { steps.push({ run: "npm publish --provenance --access public" }); }],
   ] as const)("rejects %s", (_name, change) => {
     const document = loadYaml(".github/workflows/release.yml") as { jobs: { publish: { steps: Step[] } } };
