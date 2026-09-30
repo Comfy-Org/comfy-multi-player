@@ -9,8 +9,8 @@ import {
 import { OPAQUE_WIDGETS_KEY, SCHEMA_VERSION, linksMap, nodesMap } from "../src/index.js";
 
 describe("schema", () => {
-  it("pins SCHEMA_VERSION at 4", () => {
-    expect(SCHEMA_VERSION).toBe(4);
+  it("pins SCHEMA_VERSION at 5", () => {
+    expect(SCHEMA_VERSION).toBe(5);
   });
 
   it("initDoc creates the schema v4 layout with lazy clock reservations", () => {
