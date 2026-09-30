@@ -686,7 +686,7 @@ type DefinitionWidgetEdit = {
   targetKey: string;
   definitionId: string;
   nodeId: string;
-  widget: string;
+  storageKey: string;
   value: unknown;
 };
 
@@ -705,17 +705,24 @@ function definitionWidgetEdits(
     if (!Array.isArray(target) || target[0] !== "widget" || !Array.isArray(target[1])) continue;
     const path = target[1].map(String);
     const widget = target[3];
-    if (path.length < 2 || typeof widget !== "string") continue;
+    const occurrence = target[4] === undefined ? 0 : target[4];
+    if (
+      path.length < 2 ||
+      typeof widget !== "string" ||
+      !Number.isInteger(occurrence) ||
+      (occurrence as number) < 0
+    ) continue;
     const resolved = definitionNodeAtPath(doc, existing, path);
     if (!resolved) continue;
     const oldWidgets = resolved.node.get("widgets");
-    if (oldWidgets instanceof Y.Map && oldWidgets.has(widgetStorageKey(widget))) {
+    const storageKey = widgetStorageKey(widget, occurrence as number);
+    if (oldWidgets instanceof Y.Map && oldWidgets.has(storageKey)) {
       edits.push({
         targetKey,
         definitionId: resolved.definitionId,
         nodeId: path.at(-1)!,
-        widget,
-        value: structuredClone(oldWidgets.get(widgetStorageKey(widget))),
+        storageKey,
+        value: structuredClone(oldWidgets.get(storageKey)),
       });
     }
   }
@@ -756,7 +763,7 @@ function restoreDefinitionWidgetEdits(
       mdel(stampsMap(doc), edit.targetKey);
       continue;
     }
-    mset(newWidgets, edit.widget, edit.value);
+    mset(newWidgets, edit.storageKey, edit.value);
   }
 }
 
