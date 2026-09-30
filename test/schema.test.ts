@@ -13,7 +13,7 @@ describe("schema", () => {
     expect(SCHEMA_VERSION).toBe(5);
   });
 
-  it("initDoc creates the schema v4 layout with lazy clock reservations", () => {
+  it("initDoc creates the schema v5 layout with lazy clock reservations", () => {
     const doc = new Y.Doc();
     initDoc(doc, "object_info@2026-08-01");
     expect(nodesMap(doc)).toBeInstanceOf(Y.Map);

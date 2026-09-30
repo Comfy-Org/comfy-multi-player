@@ -25,7 +25,7 @@ function workflow(): WorkflowJSON {
   };
 }
 
-describe("schema v4 retains first-class imported link state", () => {
+describe("schema v5 retains first-class imported link state", () => {
   it("stores complete concrete, full-name promoted, and grown descriptors", () => {
     const doc = mint(workflow(), catalog);
     expect(SCHEMA_VERSION).toBe(5);

@@ -1,4 +1,4 @@
-# Multiplayer workflow-document schema — v4
+# Multiplayer workflow-document schema — v5
 
 `SCHEMA_VERSION = 5`
 
