@@ -7,36 +7,18 @@ import {
   project,
   type ConnectOp,
   type Op,
-  type WidgetCatalog,
   type WorkflowJSON,
 } from "../src/index.js";
 import { appliedMap, isStorableArrayItem, isStorableMapValue } from "../src/doc.js";
-import { loadCatalog } from "./helpers.js";
-import { cleanRejection, rejectionEvidence } from "./rejection-oracle.js";
-
-const catalog = loadCatalog();
-/** Same catalog, but with a real `inputcount` widget on the grow destination. */
-const countingCatalog: WidgetCatalog = {
-  ...catalog,
-  types: {
-    ...catalog.types,
-    BatchImagesNode: { ...catalog.types["BatchImagesNode"]!, widget_order: ["inputcount"] },
-  },
-};
-const opId = (tag: string) => (tag + "0".repeat(32)).slice(0, 32);
-
-/**
- * A trailing op that is valid on its own against every fixture in this file:
- * a fresh node id no fixture or rejected row uses, of a catalogued type.
- */
-const trailingOp: Op = {
-  op: "add_node", op_id: opId("trailing"), actor: "human:z", base_version: 9,
-  stamp: [9, "human:z"], node_id: 990, class_type: "LoadImage", pos: [],
-  node: {
-    id: 990, type: "LoadImage", inputs: [],
-    outputs: [{ name: "IMAGE", type: "IMAGE", links: [] }], widgets_values: [],
-  },
-};
+import {
+  assertRejectedWithAbort as assertRejectedWithoutMutation,
+  countingRejectionCatalog as countingCatalog,
+  rejectedConnectDestination,
+  rejectedConnectSource,
+  rejectedConnectWorkflow,
+  rejectionCatalog as catalog,
+  rejectionOpId as opId,
+} from "./rejection-test-helpers.js";
 
 /**
  * The shared rejection oracle (`test/rejection-oracle.ts`), defaulting to this
@@ -44,39 +26,14 @@ const trailingOp: Op = {
  * to apply alone on a fresh copy of the same fixture, so the `batch_aborted`
  * it gets behind the rejected op is caused by that rejection and nothing else.
  */
-function assertRejectedWithoutMutation(
-  workflow: WorkflowJSON,
-  op: Op,
-  code: string,
-  withCatalog: WidgetCatalog = catalog,
-): void {
-  const alone = mint(workflow, withCatalog);
-  try {
-    expect(applyOps(alone, [trailingOp], withCatalog).outcomes.map((outcome) => outcome.outcome)).toEqual(["applied"]);
-  } finally {
-    alone.destroy();
-  }
-  expect(rejectionEvidence(workflow, op, withCatalog, trailingOp)).toEqual(cleanRejection(code, true));
-}
-
 describe("regression: rejected connect ops leave document bytes unchanged (#10)", () => {
   // The shared rejection matrix lives in reject-no-mutation.regression.test.ts.
   // Keep this suite limited to KA-4/storage cases with distinct evidence.
-  const source = {
-    id: 300, type: "LoadImage", inputs: [],
-    outputs: [{ name: "IMAGE", type: "IMAGE", links: [9000] }], widgets_values: [],
-  };
-  const destination = {
-    id: 700, type: "BatchImagesNode",
-    inputs: [{ name: "images.image0", type: "IMAGE", link: 9000 }],
-    outputs: [{ name: "IMAGE", type: "IMAGE", links: [] }], widgets_values: [],
-  };
-  const workflow: WorkflowJSON = {
-    nodes: [source, destination],
-    links: [[9000, 300, 0, 700, 0, "IMAGE"]],
-    groups: [], extra: {}, last_node_id: 700, last_link_id: 9000,
-  };
+  const source = rejectedConnectSource;
+  const destination = rejectedConnectDestination;
+  const workflow = rejectedConnectWorkflow;
 
+  // eslint-disable-next-line sonarjs/assertions-in-tests -- assertion is in the shared rejection helper
   it("a non-string inputcount widget that stringifies to a real widget is refused before the slot is grown", () => {
     // `["inputcount"]` coerces to the catalogued "inputcount" under String(),
     // so a dst-side check that validates `String(widget)` passes it. The
@@ -94,6 +51,7 @@ describe("regression: rejected connect ops leave document bytes unchanged (#10)"
     }, "malformed_op", countingCatalog);
   });
 
+  // eslint-disable-next-line sonarjs/assertions-in-tests -- assertion is in the shared rejection helper
   it("an out-of-range from_slot onto an EMPTY destination slot is refused before the register is claimed", () => {
     // The projection-invisible member of the family. Slot 1 holds no incumbent
     // link, so the only footprint of the premature register claim is the
@@ -209,6 +167,7 @@ describe("KA-4 / D4: a rejected op leaves the document byte-identical (the whole
       },
     );
 
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- assertion is in the shared rejection helper
     it("a node that already has a widgets map is refused too (the ordering must not regress)", () => {
       assertRejectedWithoutMutation(workflow, {
         op: "set_widget", op_id: opId("unstorable-sw-existing"), actor: "human:z",
@@ -284,6 +243,7 @@ describe("KA-4 / D4: a rejected op leaves the document byte-identical (the whole
       }, "malformed_op");
     });
 
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- assertion is in the shared rejection helper
     it("an absent target with a non-iterable removed_links is refused the same way", () => {
       assertRejectedWithoutMutation(workflow, {
         op: "delete_node", op_id: opId("bad-removed-absent"), actor: "human:z",
@@ -309,6 +269,7 @@ describe("KA-4 / D4: a rejected op leaves the document byte-identical (the whole
       },
     );
 
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- assertion is in the shared rejection helper
     it("a nested flags value is refused", () => {
       assertRejectedWithoutMutation(workflow, {
         op: "add_node", op_id: opId("unstorable-add-flags"), actor: "human:z",
@@ -317,6 +278,7 @@ describe("KA-4 / D4: a rejected op leaves the document byte-identical (the whole
       } as unknown as Op, "invalid_node_payload");
     });
 
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- assertion is in the shared rejection helper
     it("a name-keyed widgets_values entry is refused", () => {
       assertRejectedWithoutMutation(workflow, {
         op: "add_node", op_id: opId("unstorable-add-widgets"), actor: "human:z",
@@ -325,6 +287,7 @@ describe("KA-4 / D4: a rejected op leaves the document byte-identical (the whole
       } as unknown as Op, "invalid_node_payload");
     });
 
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- assertion is in the shared rejection helper
     it("a Date inside an output's links array is refused (Y.Array insert is stricter than Y.Map set)", () => {
       assertRejectedWithoutMutation(workflow, {
         op: "add_node", op_id: opId("unstorable-add-links"), actor: "human:z",
