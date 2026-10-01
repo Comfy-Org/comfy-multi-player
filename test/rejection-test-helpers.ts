@@ -18,6 +18,7 @@ export const countingRejectionCatalog: WidgetCatalog = {
   },
 };
 
+/** Build a deterministic 32-character operation ID for rejection fixtures. */
 export const rejectionOpId = (tag: string) => (tag + "0".repeat(32)).slice(0, 32);
 
 export const rejectedConnectSource = {
@@ -64,13 +65,13 @@ const rejectionTrailingOp: Op = {
   },
 };
 
-/** Assert the byte-identity and retry oracle, optionally including batch-abort evidence. */
+/** Assert the byte-identity, retry, and batch-abort rejection oracle. */
 export function assertRejectedWithoutMutation(
   workflow: WorkflowJSON,
   op: Op,
   code: string,
   withCatalog: WidgetCatalog = rejectionCatalog,
-  trailing?: Op,
+  trailing: Op | undefined = rejectionTrailingOp,
 ): void {
   if (trailing !== undefined) {
     const alone = mint(workflow, withCatalog);
