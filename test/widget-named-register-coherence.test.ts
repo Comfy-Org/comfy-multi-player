@@ -356,8 +356,15 @@ describe("A23 — the named register follows an occurrence-addressed write", () 
     const base = mint(duplicates({ same: second }), catalog);
     const forward = fork(base);
     const reverse = fork(base);
-    applyOps(forward, [low, high], catalog);
-    applyOps(reverse, [high, low], catalog);
+    // Assert the OUTCOME sequences, not just the end state. Without this, a
+    // `reverse` run whose trailing `low` was *rejected before mutation* would
+    // leave `high`'s value in place and pass every assertion below — so the
+    // convergence claim would hold over an arrival order that never happened.
+    // An LWW drop and a rejection are the two readings this distinguishes.
+    expect(applyOps(forward, [low, high], catalog).outcomes.map((o) => o.outcome))
+      .toEqual(["applied", "applied"]);
+    expect(applyOps(reverse, [high, low], catalog).outcomes.map((o) => o.outcome))
+      .toEqual(["applied", "lww-dropped"]);
 
     expect(project(forward, catalog)).toEqual(project(reverse, catalog));
     expect(node(forward).widgets_values_named).toEqual({ same: { winner: true } });
