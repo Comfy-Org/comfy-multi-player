@@ -30,6 +30,7 @@ import {
 const catalog: WidgetCatalog = {
   types: {
     DuplicateWidgets: { widget_order: ["same", "same"] },
+    TripleWidgets: { widget_order: ["same", "same", "same"] },
     UniqueWidgets: { widget_order: ["alpha", "beta"] },
     ProtoWidget: { widget_order: ["__proto__"] },
     Host: { widget_order: ["width"] },
@@ -120,6 +121,39 @@ describe("A23 — the named register follows an occurrence-addressed write", () 
     // Still the FINAL occurrence's value: writing `replacement` here would
     // revert occurrence 1 for every name-addressed reader.
     expect(projected.widgets_values_named).toEqual({ same: second });
+  });
+
+  // Cardinality three, deliberately. With only TWO same-named widgets, "the
+  // final occurrence" and "anything but the first" pick out the same widget,
+  // so a two-widget fixture cannot tell the implemented predicate from that
+  // weaker one. Three is where they first disagree: the middle occurrence is
+  // neither the first nor the last.
+  const triples = (named: Record<string, unknown>): WorkflowJSON => ({
+    nodes: [{
+      id: 1,
+      type: "TripleWidgets",
+      widgets_values: ["a", "b", "c"],
+      widgets_values_named: named,
+    }],
+    links: [],
+  });
+
+  it("follows the LAST of three occurrences", () => {
+    const doc = mint(triples({ same: "c" }), catalog);
+    applied(doc, write({ node_id: 1, widget: "same", widget_occurrence: 2, value: "C" }));
+
+    const projected = node(doc);
+    expect(projected.widgets_values).toEqual(["a", "b", "C"]);
+    expect(projected.widgets_values_named).toEqual({ same: "C" });
+  });
+
+  it("leaves the register alone for the MIDDLE of three occurrences", () => {
+    const doc = mint(triples({ same: "c" }), catalog);
+    applied(doc, write({ node_id: 1, widget: "same", widget_occurrence: 1, value: "B" }));
+
+    const projected = node(doc);
+    expect(projected.widgets_values).toEqual(["a", "B", "c"]);
+    expect(projected.widgets_values_named).toEqual({ same: "c" });
   });
 
   it("invents no register for a node that carries none", () => {
