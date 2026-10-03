@@ -321,15 +321,25 @@ export function projectDefinition(dm: Y.Map<unknown>, catalog: WidgetCatalog): R
  * `z.number()`, and a string refuses the whole workflow). `insert_workflow`
  * derives numeric group ids (`remap.ts` `derivedGroupId`); a document written
  * before that still stores the string `derivedId`, which reads back here as the
- * number that derivation gives for it. Numeric and absent ids are untouched.
+ * number that derivation gives for it. Only that derived form is coerced: any
+ * other string id (a workflow's own, never inserted) is left as it is, so
+ * `project(mint(wf))` round-trips it. Numeric and absent ids are untouched.
  */
 function projectGroups(groups: unknown[]): unknown[] {
   return groups.map((group) => {
     if (typeof group !== "object" || group === null || Array.isArray(group)) return group;
     const id = (group as { id?: unknown }).id;
-    return typeof id === "string" ? { ...group, id: numericId(id) } : group;
+    return typeof id === "string" && DERIVED_GROUP_ID.test(id) ? { ...group, id: numericId(id) } : group;
   });
 }
+
+/**
+ * The string `derivedId` `insert_workflow` gave a group before it derived
+ * numbers: `insert:<opId>:<scope>:group:<original>`. `opId` has no colon, a
+ * scope may (`root/definition:...`), and `<original>` is
+ * `encodeURIComponent(JSON.stringify(id))`, which never contains one.
+ */
+const DERIVED_GROUP_ID = /^insert:[^:]+:.+:group:[^:]*$/;
 
 function scrubPrivateKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(scrubPrivateKeys);

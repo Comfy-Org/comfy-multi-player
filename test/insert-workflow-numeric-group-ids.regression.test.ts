@@ -173,7 +173,15 @@ describe("insert_workflow numeric group ids", () => {
         groups: [group(legacyId, "g")],
         definitions: {
           subgraphs: [
-            { id: DEF, name: "Inner", inputs: [], outputs: [], nodes: [], links: [], groups: [group(`${legacyId}:inner`, "inner")] },
+            {
+              id: DEF,
+              name: "Inner",
+              inputs: [],
+              outputs: [],
+              nodes: [],
+              links: [],
+              groups: [group(`insert:${opId}:root/definition:${encodeURIComponent(JSON.stringify(DEF))}:group:${encodeURIComponent(JSON.stringify(1))}`, "inner")],
+            },
           ],
         },
       } as unknown as WorkflowJSON,
@@ -182,5 +190,23 @@ describe("insert_workflow numeric group ids", () => {
     const wf = project(legacy, catalog);
     expect(rootGroups(wf)[0]!.id).toBe(expected);
     expectFrontendGroupIds(definitionGroups(wf));
+  });
+
+  it("leaves a plain string group id that insert_workflow never derived unchanged", () => {
+    // Only the derived `insert:<opId>:<scope>:group:<original>` form is
+    // coerced; any other string id must round-trip project(mint(wf)) == wf.
+    const wf = {
+      nodes: [{ id: 1, type: "Src" }],
+      links: [],
+      groups: [group("my-custom-group", "g"), group("insert:not-derived", "h")],
+      definitions: {
+        subgraphs: [
+          { id: DEF, name: "Inner", inputs: [], outputs: [], nodes: [], links: [], groups: [group("inner-custom", "i")] },
+        ],
+      },
+    } as unknown as WorkflowJSON;
+    const out = project(mint(wf, catalog), catalog);
+    expect(rootGroups(out).map((g) => g.id)).toEqual(["my-custom-group", "insert:not-derived"]);
+    expect(definitionGroups(out).map((g) => g.id)).toEqual(["inner-custom"]);
   });
 });
