@@ -78,7 +78,7 @@ jobs:
     # map load from the same commit. The permissions block above must stay a
     # superset of the UNION of what every job in the reusable workflow
     # declares at this pin — re-check both whenever this SHA moves.
-    uses: Comfy-Org/github-workflows/.github/workflows/pr-risk.yml@bc8901ef7a5246337afe1cc2cb3cc08d4268705a # github-workflows main (bc8901e)
+    uses: Comfy-Org/github-workflows/.github/workflows/pr-risk.yml@4d05e52f3ac9a5ded77ad60f6288be5782ee788b # github-workflows main (bc8901e)
     with:
       # Keep the grader/map ref in lock-step with the `uses:` ref above.
       workflows_ref: bc8901ef7a5246337afe1cc2cb3cc08d4268705a
