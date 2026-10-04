@@ -2369,6 +2369,24 @@ A node carrying the field is **self-described**, and for it:
   `project()` → `mint()` (which is what `compact()` is) does not lose the
   layout. No catalog lookup on either leg.
 
+Two guards exist because a declaration creates two new ways for the document
+to contradict itself, and both have a silent wrong answer available:
+
+- **A promoted host write (A15) carries TWO addresses for one target** — the
+  widget name and `promoted.value_index` — and on a self-described node both
+  resolve. A disagreement is `malformed_op`, which is the rule A15 already
+  applies one field over where `promoted.instance_path` must join to `node_id`.
+  Preferring the name would apply a write whose author believed it was editing
+  a different slot: acknowledged and wrong, strictly worse than refused.
+- **A stored `object` form whose `order` repeats a name reads as NOT
+  self-described**, routing the node back to the catalog path and its loud
+  refusals. Object keys are unique, so projection reads every declared key at
+  occurrence 0; a duplicate would authorize a write at occurrence 1 that
+  projection can never render. The asymmetry with `array` — where a repeat is
+  the primary case — is deliberate. `deriveWidgetForm` already refuses this on
+  the write side, so the read-side check exists for untrusted doc state: a raw
+  update folded in by a host.
+
 Only ONE field is declared; everything else is DERIVED here. The shape comes
 from `typeof widgets_values`, the key order from `Object.keys`, the residue
 from set difference. That is deliberate: four declared fields are four ways for
@@ -2418,10 +2436,22 @@ deliberate coordinated step.
 exists for (duplicate names, unknown keys in a custom-serialized object,
 occurrence-addressed mutation of an uncatalogued class), both arrival orders
 converging, a replayed `op_id` leaving the encoded document byte-identical,
-survival through `compact()`, the catalog-less `readGraph` surface, every
-fail-closed refusal, and — the regression half — that an UNDECLARED node still
-stores an uncatalogued array opaquely, still refuses a named write to it, and
-still resolves a catalogued class through the pinned `widget_order`.
+survival through `compact()`, the catalog-less `readGraph` surface and the
+encoded wire token agreeing with `fixtures/golden-vectors/wire-layout.json`,
+the declaration winning over a catalogued class's `widget_order`, the
+`add_node` / `insert_workflow` / subgraph-interior write paths, `__proto__` as
+an own serializer key in both the declared and residue paths, both guards
+above, every fail-closed refusal, and — the regression half — that an
+UNDECLARED node still stores an uncatalogued array opaquely, still refuses a
+named write to it, and still resolves a catalogued class through the pinned
+`widget_order`.
+
+Each rejection case additionally asserts that the encoded document is
+byte-identical, that the `op_id` was not consumed into `__applied`, and that a
+following VALID op in the same batch did not apply (§4 abort-remainder), with a
+control proving that follower applies on its own. Asserting the outcome code
+alone would pass even if the write had landed and then been reported as
+rejected.
 
 ### Consumer impact
 

@@ -36,6 +36,7 @@ import {
   WIDGET_FORM_KEY,
   applyOps,
   compact,
+  hasAppliedOp,
   mint,
   project,
   readGraph,
@@ -138,17 +139,53 @@ describe("A24: duplicate widget names on an uncatalogued class", () => {
     expect(nodeById(zero, 1).widgets_values).toEqual(["A", "second", 7]);
   });
 
-  it("rejects an occurrence the declared order does not have", () => {
+  /**
+   * A rejection must precede every mutation and must abort the remainder of
+   * the batch (§4). Asserting only the outcome code would pass even if the
+   * write had already landed and then been reported as rejected, so each case
+   * additionally proves the encoded document is byte-identical, the `op_id`
+   * was not consumed into `__applied`, and a following VALID op in the same
+   * batch did not apply.
+   */
+  const rejectionFacts = (bad: SetWidgetOp) => {
     const doc = mint(workflowOf(dupNode()), catalog);
-    const result = applyOps(doc, [write(1, 1, "value", "x", 2)], catalog);
-    expect(result.outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "unknown_widget" } });
-    expect(nodeById(doc, 1).widgets_values).toEqual([...DUP_VALUES]);
+    const before = Buffer.from(Y.encodeStateAsUpdate(doc));
+    const seenBefore = applyOps(doc, [], catalog).ops_seen;
+    const follower = write(9, 1, "mode", 42);
+    const result = applyOps(doc, [bad, follower], catalog);
+    return {
+      outcome: result.outcomes[0],
+      opsSeenUnchanged: result.ops_seen === seenBefore,
+      badConsumed: hasAppliedOp(doc, bad.op_id),
+      followerConsumed: hasAppliedOp(doc, follower.op_id),
+      bytesUnchanged: Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before),
+      values: nodeById(doc, 1).widgets_values,
+    };
+  };
+
+  const REJECTED_CLEANLY = {
+    outcome: { outcome: "rejected", reason: { code: "unknown_widget" } },
+    opsSeenUnchanged: true,
+    badConsumed: false,
+    followerConsumed: false,
+    bytesUnchanged: true,
+    values: [...DUP_VALUES],
+  };
+
+  it("rejects an occurrence the declared order does not have", () => {
+    expect(rejectionFacts(write(1, 1, "value", "x", 2))).toMatchObject(REJECTED_CLEANLY);
   });
 
   it("rejects a name the declared order does not have", () => {
+    expect(rejectionFacts(write(1, 1, "not_a_widget", "x"))).toMatchObject(REJECTED_CLEANLY);
+  });
+
+  it("CONTROL: the follower op above does apply when nothing precedes it", () => {
+    // Otherwise the abort-remainder assertion would hold for a follower that
+    // could never have applied in the first place.
     const doc = mint(workflowOf(dupNode()), catalog);
-    const result = applyOps(doc, [write(1, 1, "not_a_widget", "x")], catalog);
-    expect(result.outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "unknown_widget" } });
+    expect(outcomes(doc, [write(9, 1, "mode", 42)])).toEqual(["applied"]);
+    expect(nodeById(doc, 1).widgets_values).toEqual(["first", "second", 42]);
   });
 });
 
@@ -483,6 +520,64 @@ describe("A24: a malformed widgets_values_form is refused, never guessed at", ()
     const declared = nodeById(asWidget, 2).widgets_values as Record<string, unknown>;
     expect(Object.getOwnPropertyDescriptor(declared, "__proto__")?.value).toBe(99);
     expect(declared["real"]).toBe(2);
+  });
+
+  /**
+   * The two reads below are the UNTRUSTED-DOC-STATE path: our own writers
+   * cannot produce either state, so the only way in is a raw update a host
+   * folded into the document. Both are constructed by writing the reserved key
+   * directly, which is the thing `createNodeMap` refuses from a payload —
+   * which is exactly why the READ side has to answer for it too.
+   */
+  const forgeForm = (form: unknown): Y.Doc => {
+    const doc = mint(workflowOf(dupNode()), catalog);
+    const node = (doc.getMap("nodes") as Y.Map<Y.Map<unknown>>).get("1")!;
+    doc.transact(() => {
+      node.set(WIDGET_FORM_KEY, form);
+    });
+    return doc;
+  };
+
+  it("reads an object form with a duplicate name as NOT self-described", () => {
+    // A duplicate would let the write side authorize occurrence 1 while
+    // projection, which reads an object's keys at occurrence 0 only, could
+    // never render it — an acknowledged, invisible write.
+    const doc = forgeForm({ shape: "object", order: ["value", "value"], keys: ["value"] });
+    const result = applyOps(doc, [write(1, 1, "value", "x", 1)], catalog);
+    // Falls back to the catalog path, whose refusal for this class is loud.
+    expect(result.outcomes[0]).toMatchObject({
+      outcome: "rejected",
+      reason: { code: "uncatalogued_widget_write" },
+    });
+  });
+
+  it("still reads an ARRAY form with a duplicate name as self-described", () => {
+    // The asymmetry is the point: a positional array is exactly where two
+    // same-named widgets are addressable, which is A24's primary case.
+    const doc = forgeForm({ shape: "array", order: ["value", "value"] });
+    expect(outcomes(doc, [write(1, 1, "value", "x", 1)])).toEqual(["applied"]);
+  });
+
+  it("refuses a promoted host write whose value_index disagrees with the declared order", () => {
+    const doc = mint(workflowOf(dupNode()), catalog);
+    const before = Buffer.from(Y.encodeStateAsUpdate(doc));
+    const op = {
+      ...write(1, 1, "mode", 42),
+      promoted: { value_index: 0, instance_path: ["1"], host_widgets_values: [0, 0, 0] },
+    } as unknown as SetWidgetOp;
+    // `mode` is declared at index 2, so index 0 names a different slot.
+    expect(applyOps(doc, [op], catalog).outcomes[0]).toMatchObject({
+      outcome: "rejected",
+      reason: { code: "malformed_op" },
+    });
+    expect(Buffer.from(Y.encodeStateAsUpdate(doc)).equals(before)).toBe(true);
+
+    const agreeing = {
+      ...write(2, 1, "mode", 42),
+      promoted: { value_index: 2, instance_path: ["1"], host_widgets_values: [0, 0, 0] },
+    } as unknown as SetWidgetOp;
+    expect(outcomes(doc, [agreeing])).toEqual(["applied"]);
+    expect(nodeById(doc, 1).widgets_values).toEqual(["first", "second", 42]);
   });
 
   it("refuses a node payload carrying the doc-internal storage key directly", () => {

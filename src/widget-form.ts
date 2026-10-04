@@ -227,6 +227,15 @@ export function storedWidgetFormOf(node: Y.Map<unknown>): StoredWidgetForm | nul
   const { shape, order } = stored;
   if (shape !== "array" && shape !== "object") return null;
   if (!Array.isArray(order) || order.length === 0 || order.some((name) => typeof name !== "string")) return null;
+  // An `object` form whose order repeats a name is unreadable, not merely odd,
+  // and the asymmetry with `array` is the whole reason this check is here:
+  // object keys are unique, so `projectWidgetForm` reads every declared key at
+  // occurrence 0. A duplicate would let `formDeclares` AUTHORIZE a write at
+  // occurrence 1 that projection can never render — a write acknowledged and
+  // then invisible, which is the exact failure A24 exists to remove. Our own
+  // writers cannot produce it (`deriveObjectForm` refuses it), so this is the
+  // untrusted-doc-state path: a raw update folded in by a host.
+  if (shape === "object" && new Set(order as string[]).size !== order.length) return null;
   const form: StoredWidgetForm = { shape, order: order as string[] };
   if (Array.isArray(stored["keys"])) form.keys = (stored["keys"] as unknown[]).map(String);
   if (isPlainRecord(stored["extra"])) form.extra = stored["extra"];
@@ -236,6 +245,17 @@ export function storedWidgetFormOf(node: Y.Map<unknown>): StoredWidgetForm | nul
 /** Is `(name, occurrence)` a widget this node declared? */
 export function formDeclares(form: StoredWidgetForm, name: string, occurrence: number): boolean {
   return widgetIndexOf(form.order, name, occurrence) >= 0;
+}
+
+/**
+ * The position `(name, occurrence)` occupies in the declared order, or `-1`.
+ *
+ * Exported so a caller holding a SECOND address for the same target — a
+ * promoted host write's `promoted.value_index` (Amendment A15) — can compare
+ * the two rather than silently preferring one.
+ */
+export function formIndexOf(form: StoredWidgetForm, name: string, occurrence: number): number {
+  return widgetIndexOf(form.order, name, occurrence);
 }
 
 /**

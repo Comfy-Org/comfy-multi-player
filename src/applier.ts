@@ -106,6 +106,7 @@ import {
   declaresWidgetForm,
   formDeclares,
   formFinalOccurrence,
+  formIndexOf,
   storedWidgetFormOf,
 } from "./widget-form.js";
 import { linkHasMissingEndpoint, remapInsertedWorkflowIds } from "./remap.js";
@@ -1798,9 +1799,9 @@ function hostWriteStorage(node: Y.Map<unknown>, catalog: WidgetCatalog | undefin
     case "self":
       // A24: the node declared its own order, so the named path can express
       // the write and `validateWidgetName` checks it against that declaration.
-      // A promoted host write carries a `value_index` as well, which this
-      // deliberately ignores: a declared order is per-instance and more
-      // specific than an index into an array the producer no longer emits.
+      // A promoted host write carries a `value_index` as well, and both
+      // addresses resolve here, so `requirePromotedFormAgreement` refuses a
+      // disagreement instead of this silently preferring one.
       return "named";
     case "named": {
       const type = String(node.get("type") ?? "");
@@ -1823,6 +1824,43 @@ function hostWriteStorage(node: Y.Map<unknown>, catalog: WidgetCatalog | undefin
     default:
       return assertNever(storage, "applier.hostWriteStorage");
   }
+}
+
+/**
+ * A promoted host write carries TWO addresses for one target — the widget
+ * NAME and `promoted.value_index` — and on a self-described node (A24) both
+ * resolve. Refuse a disagreement rather than silently preferring one.
+ *
+ * This is the rule `promotedHostWrite` already applies one field over, where
+ * `promoted.instance_path` must join to `node_id`: a payload naming a
+ * destination two ways must name the same one, or the op is `malformed_op`.
+ * Preferring the name would apply a write whose author believed it was editing
+ * a different slot — acknowledged, and wrong, which is strictly worse than
+ * refused.
+ *
+ * Nothing to check when the node is not self-described: the A15 path then owns
+ * the index and the name is not positionally resolvable at all.
+ *
+ * The verdict reads the NODE, so it sits below the delete-wins return and
+ * joins the documented arrival-order-dependent rejection class (A6 /
+ * `EXCEPTIONS.md` KA-4) rather than being hoisted — exactly like
+ * `validateWidgetName`, whose verdict it accompanies.
+ */
+function requirePromotedFormAgreement(
+  node: Y.Map<unknown>,
+  widget: string,
+  occurrence: number,
+  valueIndex: number,
+): void {
+  const form = storedWidgetFormOf(node);
+  if (!form) return;
+  const declared = formIndexOf(form, widget, occurrence);
+  if (declared < 0 || declared === valueIndex) return;
+  const at = occurrence === 0 ? "" : ` occurrence ${String(occurrence)}`;
+  throw new OpRejectedError(
+    "malformed_op",
+    `set_widget: promoted.value_index ${String(valueIndex)} names a different slot than widget '${widget}'${at}, which node ${String(node.get("id"))}'s widgets_values_form puts at ${String(declared)}`,
+  );
 }
 
 /**
@@ -1858,6 +1896,7 @@ function applyPromotedHostWrite(
     case "named":
       {
         const occurrence = op.widget_occurrence ?? 0;
+        requirePromotedFormAgreement(target, op.widget, occurrence, promoted.valueIndex);
         validateWidgetName(catalog, String(target.get("type") ?? ""), op.widget, target, occurrence);
         mset(widgetsOf(target), widgetStorageKey(op.widget, occurrence), structuredClone(op.value));
         updateOrderedWidgetValue(target, op.widget, occurrence, op.value);
