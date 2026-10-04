@@ -57,6 +57,31 @@ export const MAX_COLLECTION_ENTRIES = 4096;
  */
 export const MAX_OP_COST = 262_144;
 
+/**
+ * BE-17528 — how far past a class's `widget_order` an overflow slot
+ * (`_extra_<n>`, BE-9176) may address, and therefore the longest overrun a
+ * projected `widgets_values` can carry beyond that order.
+ *
+ * Unlike every other bound in this file, this one guards a value that arrives
+ * in the caller's DOCUMENT rather than in an op, so `opBoundsRefusal` never
+ * sees it. `widgetsToPositional` allocates through the highest index a stored
+ * widget name encodes, and that index was attacker-chosen and unbounded: a
+ * 216-byte Yjs snapshot carrying one widget named `_extra_1000000` projected a
+ * 1,000,001-element array, needing no privileged write (measured; the doc-host
+ * review that found it reproduced the same shape end to end through `/project`
+ * at roughly 400-550 bytes).
+ *
+ * Equal to {@link MAX_COLLECTION_ENTRIES} ON PURPOSE, and that is the whole
+ * argument for the value: an op payload's `widgets_values` array is already
+ * capped at that many entries, so the widest overrun this package will ever
+ * mint names `_extra_<MAX_COLLECTION_ENTRIES - 1>` and stays inside
+ * `order.length + MAX_OVERFLOW_WIDGETS`. The bound is therefore the tightest
+ * one that cannot refuse a document minted here. A HOST may choose a stricter
+ * bound of its own (`cloud`'s doc-host uses 1024 in `catalogpins.ts`) — this
+ * is the package-level floor under every caller, not a replacement for it.
+ */
+export const MAX_OVERFLOW_WIDGETS = MAX_COLLECTION_ENTRIES;
+
 type Frame =
   | { readonly kind: "enter"; readonly value: unknown; readonly depth: number }
   | { readonly kind: "leave"; readonly container: object };

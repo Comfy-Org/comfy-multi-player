@@ -24,6 +24,7 @@
 
 import * as Y from "yjs";
 import { assertNever } from "./exhaustive.js";
+import { MAX_OVERFLOW_WIDGETS } from "./limits.js";
 import {
   LEGACY_NODE_INCARNATION,
   NODE_INCARNATION_KEY,
@@ -126,6 +127,39 @@ const OVERFLOW_WIDGET_NAME_RE = /^_extra_(0|[1-9]\d*)$/;
 export function parseOverflowWidgetName(name: string): number | null {
   const match = OVERFLOW_WIDGET_NAME_RE.exec(name);
   return match ? Number(match[1]!) : null;
+}
+
+/**
+ * Why `name` may not be stored against a `widget_order` of `orderLength`
+ * entries, or `null` to accept it (BE-17528). Only an overflow placeholder can
+ * be refused here: a real catalog name addresses a position inside the order.
+ *
+ * The bound is enforced on BOTH legs of the round trip the BE-9176 workaround
+ * rests on — mint names an overrun entry positionally, projection reads the
+ * same shape back — because enforcing it on one leg alone would trade an
+ * unbounded allocation for a document that mints fine and is then permanently
+ * unprojectable. Both legs refuse at the same {@link MAX_OVERFLOW_WIDGETS}, so
+ * the overrun this package will accept and the overrun it will emit are the
+ * same set by construction.
+ *
+ * The refusal is loud rather than a skip. A beyond-bound name cannot be
+ * resolved to a position, and the one existing path that tolerates an
+ * unresolvable overflow name — `widgetsToPositional`'s shadowing branch, for a
+ * slot whose index the CURRENT dynamic-combo selection has given to a real
+ * name — is about a value that is still legitimately in the document and
+ * projects again later. A beyond-bound index never becomes legitimate, so
+ * silently dropping it would hide the only signal that the document is corrupt.
+ */
+export function overflowBoundRefusal(name: string, orderLength: number): string | null {
+  const index = parseOverflowWidgetName(name);
+  if (index === null) return null;
+  const bound = orderLength + MAX_OVERFLOW_WIDGETS;
+  if (index < bound) return null;
+  return (
+    `overflow widget '${name}' addresses index ${String(index)}, at or past the bound ` +
+    `${String(bound)} (widget_order length ${String(orderLength)} + ${String(MAX_OVERFLOW_WIDGETS)} ` +
+    "overflow slots); projecting it would allocate a widgets_values array through that index (BE-17528)"
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -793,6 +827,11 @@ function slotToYMap(slot: unknown, what: string): Y.Map<unknown> | unknown {
  * are named positionally via {@link overflowWidgetName} rather than the whole
  * node being lost. This is not silently swallowing a mismatch: every value is
  * kept, under a name that cannot be confused with a real catalog entry.
+ *
+ * That overrun is BOUNDED, on both shapes (BE-17528 —
+ * {@link overflowBoundRefusal}). An array whose overrun exceeds the bound is
+ * refused here rather than stored, so this function cannot mint a node that
+ * `project()` would then refuse to lay out.
  */
 function widgetsToYMap(wv: unknown, widgetOrder: readonly string[] | undefined): Y.Map<unknown> {
   const widgets = new Y.Map<unknown>();
@@ -800,11 +839,22 @@ function widgetsToYMap(wv: unknown, widgetOrder: readonly string[] | undefined):
     const order = widgetOrder ?? [];
     wv.forEach((v, i) => {
       const name = order[i] ?? overflowWidgetName(i);
+      const refusal = overflowBoundRefusal(name, order.length);
+      if (refusal !== null) throw new TypeError(`widgets_values[${String(i)}]: ${refusal}`);
       const occurrence = i < order.length ? widgetOccurrenceAt(order, i) : 0;
       widgets.set(widgetStorageKey(name, occurrence), cloneForMap(v, `widgets_values[${String(i)}]`));
     });
   } else if (isPlainObject(wv)) {
-    for (const [k, v] of Object.entries(wv)) widgets.set(k, cloneForMap(v, `widgets_values.${k}`));
+    for (const [k, v] of Object.entries(wv)) {
+      // A name-keyed record is not decomposed against the order, so a
+      // placeholder-shaped KEY is the only way an overflow index reaches
+      // storage on this leg. `add_node`/`insert_workflow` already refuse one
+      // (`rejectUnprojectableWidgets`, `unknown_widget`); `mint()` does not
+      // run that check, and this is the shared chokepoint both reach.
+      const refusal = overflowBoundRefusal(k, (widgetOrder ?? []).length);
+      if (refusal !== null) throw new TypeError(`widgets_values.${k}: ${refusal}`);
+      widgets.set(k, cloneForMap(v, `widgets_values.${k}`));
+    }
   }
   return widgets;
 }
