@@ -804,7 +804,10 @@ for its corpus; rule 6 was added by Amendment A4):
    It equals `MAX_COLLECTION_ENTRIES`, so every `widgets_values` an op may
    carry still round-trips; a host may apply a stricter bound of its own.
    The refusal is loud rather than a skip — unlike shadowing, a
-   beyond-bound index never becomes legitimate. A node stored opaquely
+   beyond-bound index never becomes legitimate. It is decided on the
+   DECODED widget name, so the plain and the A24 occurrence-encoded
+   spellings of one identity get the same verdict on both legs. A node
+   stored opaquely
    (`__widgets_opaque` — Amendment A2) emits its array verbatim and needs no
    catalog entry.
 3. **Numbers serialize as JS numbers.** Python may emit `8.0` where JS emits

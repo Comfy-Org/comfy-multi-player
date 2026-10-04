@@ -32,7 +32,7 @@ import {
   type WidgetCatalog,
   type WorkflowNode,
 } from "./types.js";
-import { widgetOccurrenceAt, widgetStorageKey } from "./widget-identity.js";
+import { widgetIdentityFromStorageKey, widgetOccurrenceAt, widgetStorageKey } from "./widget-identity.js";
 import {
   WIDGET_FORM_FIELD,
   WIDGET_FORM_KEY,
@@ -153,8 +153,19 @@ export function parseOverflowWidgetName(name: string): number | null {
  * name — is about a value that is still legitimately in the document and
  * projects again later. A beyond-bound index never becomes legitimate, so
  * silently dropping it would hide the only signal that the document is corrupt.
+ *
+ * Accepts a widget NAME or an occurrence-encoded STORAGE KEY (A24) and decodes
+ * before deciding, so the two legs cannot disagree about which spelling they
+ * were handed. That is not defensive sugar: the first version of this guard
+ * read the raw key on the name-keyed mint leg, where the key is caller-supplied
+ * verbatim, and `{"<occurrence-encoded _extra_1000000>": 1}` therefore MINTED
+ * and was then permanently unprojectable — the mint-then-refuse failure the
+ * two-leg design exists to prevent. Decoding here rather than at each call site
+ * means a future caller cannot reintroduce it by forgetting. Idempotent on a
+ * plain name, which is what the projection leg passes.
  */
-export function overflowBoundRefusal(name: string): string | null {
+export function overflowBoundRefusal(nameOrStorageKey: string): string | null {
+  const { name } = widgetIdentityFromStorageKey(nameOrStorageKey);
   const index = parseOverflowWidgetName(name);
   if (index === null || index < MAX_OVERFLOW_WIDGETS) return null;
   return (
@@ -853,6 +864,11 @@ function widgetsToYMap(wv: unknown, widgetOrder: readonly string[] | undefined):
       // storage on this leg. `add_node`/`insert_workflow` already refuse one
       // (`rejectUnprojectableWidgets`, `unknown_widget`); `mint()` does not
       // run that check, and this is the shared chokepoint both reach.
+      //
+      // `k` arrives VERBATIM from the caller's JSON, so it can be either
+      // spelling: a plain name, or an A24 occurrence-encoded storage key whose
+      // decoded name is the placeholder. `overflowBoundRefusal` decodes, which
+      // is why the check is not a regex on `k` here — see the note there.
       const refusal = overflowBoundRefusal(k);
       if (refusal !== null) throw new TypeError(`widgets_values.${k}: ${refusal}`);
       widgets.set(k, cloneForMap(v, `widgets_values.${k}`));

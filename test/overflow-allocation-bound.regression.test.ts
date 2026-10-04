@@ -53,6 +53,9 @@ import {
   type WidgetCatalog,
   type WorkflowJSON,
 } from "../src/index.js";
+// Not re-exported from the public surface on purpose (A24: no consumer builds a
+// second interpretation of a stored identity), so the test reaches the module.
+import { widgetStorageKey } from "../src/widget-identity.js";
 
 const ORDER = ["seed", "steps"];
 
@@ -251,6 +254,42 @@ describe("BE-17528: the overflow allocation is bounded", () => {
     // The in-bound placeholder on the same shape still mints and projects.
     const ok = mint(workflow("KSampler", { seed: 1, steps: 2, _extra_2: 3 }), catalog);
     expect(projected(ok)).toEqual([1, 2, 3]);
+  });
+
+  it("refuses it under the A24 OCCURRENCE-ENCODED spelling of the same key", () => {
+    // The name-keyed record is stored key-for-key, and `k` is caller JSON, so a
+    // caller can hand over either spelling of the same identity. Checking the
+    // raw key — which the first version of this guard did — refused only the
+    // plain one: the encoded key failed the placeholder regex, MINTED, and the
+    // document was then permanently unprojectable at the projection leg, which
+    // decodes. That is the mint-then-refuse failure the two-leg design exists to
+    // prevent, so the two legs must agree on the SPELLING as well as the bound.
+    // Both spellings a caller can get here: the canonical encoding of a second
+    // occurrence, and the NON-canonical occurrence-0 encoding that
+    // `widgetStorageKey` never emits (it returns the bare name there) but that
+    // `widgetIdentityFromStorageKey` decodes and a caller's JSON can carry
+    // verbatim. The prefix is derived from the encoder rather than re-spelled,
+    // so this case cannot drift from the real key format.
+    const prefix = widgetStorageKey("x", 1).slice(0, -JSON.stringify(["x", 1]).length);
+    const encodedKeys = [
+      widgetStorageKey("_extra_1000000", 1),
+      `${prefix}${JSON.stringify(["_extra_1000000", 0])}`,
+    ];
+    for (const encoded of encodedKeys) {
+      // Precondition: the encoded key really is a different string from the
+      // name, or this case would silently re-test the one above.
+      expect(encoded).not.toBe("_extra_1000000");
+      expect(() => mint(workflow("KSampler", { [encoded]: "boom" }), catalog)).toThrow(
+        /_extra_1000000.*index 1000000.*BE-17528/s,
+      );
+    }
+    // An in-bound occurrence-encoded placeholder is NOT refused: the bound is
+    // the only thing this spelling changes.
+    const inBound = widgetStorageKey("_extra_2", 1);
+    expect(() => mint(workflow("KSampler", { seed: 1, steps: 2, [inBound]: 3 }), catalog)).not.toThrow();
+    // And a real duplicate-named widget, whose encoded key carries no overflow
+    // index at all, is untouched.
+    expect(() => mint(workflow("KSampler", { [widgetStorageKey("seed", 1)]: 7 }), catalog)).not.toThrow();
   });
 
   it("refuses a beyond-bound placeholder KEY in a name-keyed add_node payload", () => {
