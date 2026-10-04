@@ -22,16 +22,21 @@
  * The pair of properties these cases hold together, since a bound that only
  * refuses is half a fix:
  *
- *  - REFUSES, LOUDLY, anything at or past `order.length + MAX_OVERFLOW_WIDGETS`
- *    — including on the dynamic-combo path, whose shadowing branch would
- *    otherwise answer an unresolvable overflow name with a silent skip.
+ *  - REFUSES, LOUDLY, any index at or past `MAX_OVERFLOW_WIDGETS` — including
+ *    on the dynamic-combo path, whose shadowing branch would otherwise answer
+ *    an unresolvable overflow name with a silent skip.
  *  - REFUSES NOTHING this package can mint. `MAX_OVERFLOW_WIDGETS` equals
  *    `MAX_COLLECTION_ENTRIES`, so the widest `widgets_values` an op may carry
  *    still round-trips, and mint and projection refuse exactly the same set.
+ *  - DOES NOT MOVE. The bound is absolute, not `order.length + N`, so no
+ *    document write can turn a stored, projectable slot into a refused one.
+ *    This is a review finding against the first version of the guard and it
+ *    was reachable: see the selection-invariance case below.
  *
- * Invariants: KA-4 (the refusal is a pure function of document and catalog, so
- * replicas converge on it in any arrival order) and KA-12 (the bound is stated
- * relative to the pinned `widget_order`, the only layout claim there is).
+ * Invariants: KA-4 (the refusal is a pure function of the stored name alone, so
+ * replicas converge on it in any arrival order, and no op can change a verdict
+ * already reached) and KA-12 (the overflow region exists only because the
+ * pinned catalog is an upper rather than exact bound on a class's layout).
  */
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
@@ -79,10 +84,13 @@ function docCarryingWidget(name: string, value: unknown, type = "KSampler", cat 
 const projected = (doc: Y.Doc, cat = catalog): unknown[] =>
   project(doc, cat).nodes[0]!.widgets_values as unknown[];
 
-function setWidget(widget: string, value: unknown): SetWidgetOp {
+const REJECTED_OP_ID = "e".repeat(32);
+const TRAILING_OP_ID = "f".repeat(32);
+
+function setWidget(opId: string, widget: string, value: unknown): SetWidgetOp {
   return {
     op: "set_widget",
-    op_id: "1".padStart(32, "0"),
+    op_id: opId,
     actor: "agent:a",
     base_version: 1,
     stamp: [1, "agent:a"],
@@ -90,6 +98,26 @@ function setWidget(widget: string, value: unknown): SetWidgetOp {
     widget,
     value,
   };
+}
+
+/**
+ * A rejected op left NO trace, asserted the way `.agents/checks/test-quality.md`
+ * requires rather than by `project()`: byte identity of the encoded state plus
+ * the `op_id`'s absence from `__applied`, because `project()` renders neither
+ * `__stamps` nor `__applied` and so cannot see a rejection that already claimed
+ * a register (KA-4). A trailing valid op checks §4 abort-remainder.
+ */
+function expectRejectedWithoutTrace(doc: Y.Doc, op: AddNodeOp | SetWidgetOp): void {
+  const before = Y.encodeStateAsUpdate(doc);
+  const trailing = setWidget(TRAILING_OP_ID, "steps", 99);
+  const outcomes = applyOps(doc, [op, trailing], catalog).outcomes.map((o) => o.outcome);
+  expect(outcomes[0]).toBe("rejected");
+  // Abort-remainder: the valid op behind a rejected one must not apply.
+  expect(outcomes[1]).not.toBe("applied");
+  expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+  const applied = doc.getMap("__applied");
+  expect(applied.has(op.op_id)).toBe(false);
+  expect(applied.has(TRAILING_OP_ID)).toBe(false);
 }
 
 describe("BE-17528: the overflow allocation is bounded", () => {
@@ -101,30 +129,62 @@ describe("BE-17528: the overflow allocation is bounded", () => {
     expect(() => projected(doc)).toThrow(/_extra_1000000.*index 1000000.*BE-17528/s);
   });
 
-  it("names the bound and the order length it was computed from", () => {
+  it("names the bound it was measured against", () => {
     expect(() => projected(docCarryingWidget("_extra_1000000", "boom"))).toThrow(
-      new RegExp(`bound ${String(ORDER.length + MAX_OVERFLOW_WIDGETS)} \\(widget_order length ${String(ORDER.length)}`),
+      new RegExp(`${String(MAX_OVERFLOW_WIDGETS)}-slot overflow bound`),
     );
   });
 
   it("accepts the LAST in-bound index and refuses the FIRST out-of-bound one", () => {
-    const last = ORDER.length + MAX_OVERFLOW_WIDGETS - 1;
+    const last = MAX_OVERFLOW_WIDGETS - 1;
     const values = projected(docCarryingWidget(`_extra_${String(last)}`, "edge"));
     expect(values).toHaveLength(last + 1);
     expect(values[last]).toBe("edge");
 
-    expect(() => projected(docCarryingWidget(`_extra_${String(last + 1)}`, "edge")))
-      .toThrow(/at or past the bound/);
+    expect(() => projected(docCarryingWidget(`_extra_${String(MAX_OVERFLOW_WIDGETS)}`, "edge")))
+      .toThrow(/at or past the/);
   });
 
-  it("measures the bound against the node's EXPANDED order, not the pinned one", () => {
-    // `Dyn`'s pinned order is one name; selecting `a` expands it to two, so the
-    // bound moves with the selection the node actually carries.
-    const inBound = MAX_OVERFLOW_WIDGETS + 1;
-    const values = projected(docCarryingWidget(`_extra_${String(inBound)}`, "edge", "Dyn", dynCatalog), dynCatalog);
-    expect(values).toHaveLength(inBound + 1);
-    expect(() => projected(docCarryingWidget(`_extra_${String(inBound + 1)}`, "edge", "Dyn", dynCatalog), dynCatalog))
-      .toThrow(/at or past the bound/);
+  it("does not move when a dynamic-combo selection changes the order length", () => {
+    // Review finding against the first version of this guard, and it was
+    // reachable, not theoretical. The bound was `order.length +
+    // MAX_OVERFLOW_WIDGETS`, measured against the node's EXPANDED order. Under
+    // selector `"a"` that order is two names, so `_extra_<MAX + 1>` minted
+    // in-bound and projected. One ordinary, APPLIED `set_widget` deselecting
+    // the option shrank the order to one name, dropped the bound by one, and
+    // left the document permanently unprojectable — the exact mint-then-refuse
+    // failure the two-leg design exists to prevent, caused by the guard itself.
+    //
+    // An absolute bound cannot be moved by any write, which is why
+    // `overflowBoundRefusal` takes no order. The two halves below are the
+    // discriminating pair, and they have to be a pair: the relative and
+    // absolute bounds admit DIFFERENT sets of documents, so no single index
+    // shows both "relative breaks" and "absolute works".
+    const selectedOrderLength = 2; // `["mode", "mode.detail"]` under selector "a"
+    const widen = (n: number): unknown[] => {
+      const wv: unknown[] = ["a"];
+      for (let i = 1; i <= n; i++) wv.push(i);
+      return wv;
+    };
+
+    // (a) The bound does not WIDEN with the expanded order. This document is
+    // exactly what a `order.length + MAX_OVERFLOW_WIDGETS` bound would admit
+    // here and is the one the shrink then strands, so it must not mint at all.
+    const relativeTop = selectedOrderLength + MAX_OVERFLOW_WIDGETS - 1;
+    expect(() => mint(workflow("Dyn", widen(relativeTop)), dynCatalog)).toThrow(/BE-17528/);
+
+    // (b) Everything the bound DOES admit survives a selection change. The
+    // widest such document, then one applied selector write that shrinks the
+    // order by a name: still projectable, same length, value intact.
+    const top = MAX_OVERFLOW_WIDGETS - 1;
+    const doc = mint(workflow("Dyn", widen(top)), dynCatalog);
+    expect(projected(doc, dynCatalog)).toHaveLength(top + 1);
+
+    const deselect = applyOps(doc, [setWidget(TRAILING_OP_ID, "mode", "no-such-option")], dynCatalog);
+    expect(deselect.outcomes.map((o) => o.outcome)).toEqual(["applied"]);
+    const after = projected(doc, dynCatalog);
+    expect(after).toHaveLength(top + 1);
+    expect(after[top]).toBe(top);
   });
 
   it("THROWS on the dynamic-combo path rather than silently shadowing the value", () => {
@@ -160,10 +220,10 @@ describe("BE-17528: the overflow allocation is bounded", () => {
   });
 
   it("is exactly tight at an EMPTY widget_order, where the equality is load-bearing", () => {
-    // The case that makes `MAX_OVERFLOW_WIDGETS === MAX_COLLECTION_ENTRIES` an
-    // equality rather than a round number. At any other order length the bound
-    // has `order.length` slots of slack, so a value one too small still passes
-    // the case above; here `_extra_<cap - 1>` sits on the boundary exactly.
+    // What makes `MAX_OVERFLOW_WIDGETS === MAX_COLLECTION_ENTRIES` an equality
+    // rather than a round number: with no real names in front of them, the
+    // op-payload cap's worth of values occupies `_extra_0` through
+    // `_extra_<cap - 1>`, so the last one sits on the boundary exactly.
     // `widget_order: []` is PRESENT but empty, which `isOpaqueWidgets`
     // deliberately routes down the named path, not the opaque one.
     const empty: WidgetCatalog = { types: { Bare: { widget_order: [] } } };
@@ -175,7 +235,7 @@ describe("BE-17528: the overflow allocation is bounded", () => {
   });
 
   it("refuses the same overrun at MINT, so the two legs cannot disagree", () => {
-    const tooWide = Array.from({ length: ORDER.length + MAX_OVERFLOW_WIDGETS + 1 }, (_v, i) => i);
+    const tooWide = Array.from({ length: MAX_OVERFLOW_WIDGETS + 1 }, (_v, i) => i);
     expect(() => mint(workflow("KSampler", tooWide), catalog)).toThrow(/BE-17528/);
     // One shorter is accepted on both legs.
     const widest = tooWide.slice(0, -1);
@@ -199,26 +259,27 @@ describe("BE-17528: the overflow allocation is bounded", () => {
     const doc = mint(workflow("KSampler", [1, 2]), catalog);
     const op: AddNodeOp = {
       op: "add_node",
-      op_id: "2".padStart(32, "0"),
+      op_id: REJECTED_OP_ID,
       actor: "agent:a",
       base_version: 1,
       stamp: [1, "agent:a"],
       node_id: 2,
       node: { id: 2, type: "KSampler", widgets_values: { _extra_1000000: "boom" } },
     } as unknown as AddNodeOp;
-    expect(applyOps(doc, [op], catalog).outcomes.map((o) => o.outcome)).toEqual(["rejected"]);
+    expectRejectedWithoutTrace(doc, op);
     expect(projected(doc)).toEqual([1, 2]);
   });
 
   it("refuses a beyond-bound set_widget, with and without a catalog", () => {
-    const op = setWidget("_extra_1000000", "boom");
-    expect(applyOps(mint(workflow("KSampler", [1, 2]), catalog), [op], catalog).outcomes.map((o) => o.outcome))
-      .toEqual(["rejected"]);
+    const doc = mint(workflow("KSampler", [1, 2]), catalog);
+    expectRejectedWithoutTrace(doc, setWidget(REJECTED_OP_ID, "_extra_1000000", "boom"));
+    expect(projected(doc)).toEqual([1, 2]);
+
     // No catalog skips `validateWidgetName` by design, which is how this name
     // reaches storage in the first place. The write still lands, so the bound
     // at projection is the backstop, not this.
     const blind = mint(workflow("KSampler", [1, 2]), catalog);
-    applyOps(blind, [op], undefined);
+    applyOps(blind, [setWidget(REJECTED_OP_ID, "_extra_1000000", "boom")], undefined);
     expect(() => projected(blind)).toThrow(/BE-17528/);
   });
 

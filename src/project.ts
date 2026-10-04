@@ -152,7 +152,7 @@ function widgetsToPositional(
     // loop's whole output is an allocation through the highest index it
     // accepts, and this document state arrives as caller-supplied doc bytes
     // that no op-payload bound ever saw (BE-17528).
-    const refusal = overflowBoundRefusal(name, order.length);
+    const refusal = overflowBoundRefusal(name);
     if (refusal !== null) throw new TypeError(`project: ${nodeType}: ${refusal}`);
     const i = occurrence === 0 ? positionalIndexOf(order, name) : widgetIndexOf(order, name, occurrence);
     // A sub-widget of an option the node does not select owns no slot; its

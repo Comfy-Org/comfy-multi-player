@@ -58,9 +58,9 @@ export const MAX_COLLECTION_ENTRIES = 4096;
 export const MAX_OP_COST = 262_144;
 
 /**
- * BE-17528 — how far past a class's `widget_order` an overflow slot
- * (`_extra_<n>`, BE-9176) may address, and therefore the longest overrun a
- * projected `widgets_values` can carry beyond that order.
+ * BE-17528 — the exclusive upper bound on an overflow slot's index
+ * (`_extra_<n>`, BE-9176), and therefore on the length of the
+ * `widgets_values` array a projection will allocate.
  *
  * Unlike every other bound in this file, this one guards a value that arrives
  * in the caller's DOCUMENT rather than in an op, so `opBoundsRefusal` never
@@ -71,14 +71,32 @@ export const MAX_OP_COST = 262_144;
  * review that found it reproduced the same shape end to end through `/project`
  * at roughly 400-550 bytes).
  *
- * Equal to {@link MAX_COLLECTION_ENTRIES} ON PURPOSE, and that is the whole
- * argument for the value: an op payload's `widgets_values` array is already
- * capped at that many entries, so the widest overrun this package will ever
- * mint names `_extra_<MAX_COLLECTION_ENTRIES - 1>` and stays inside
- * `order.length + MAX_OVERFLOW_WIDGETS`. The bound is therefore the tightest
- * one that cannot refuse a document minted here. A HOST may choose a stricter
- * bound of its own (`cloud`'s doc-host uses 1024 in `catalogpins.ts`) — this
- * is the package-level floor under every caller, not a replacement for it.
+ * ABSOLUTE, not relative to the node's `widget_order`, and that is the load-
+ * bearing property rather than a simplification. A dynamic-combo order expands
+ * and contracts with the node's own selector value, so a bound of the form
+ * `order.length + N` MOVES when an ordinary `set_widget` changes the selection.
+ * Measured on the first version of this guard: a node minted with
+ * `_extra_4097` under a two-name expanded order projected fine, and one applied
+ * selector write shrank the order to one name, dropped the bound to 4097, and
+ * left the document permanently unprojectable — exactly the mint-then-refuse
+ * failure this bound exists to avoid, now caused by the bound itself. An
+ * absolute cap cannot be moved by any document write, so mint and projection
+ * agree for the life of the document.
+ *
+ * Equal to {@link MAX_COLLECTION_ENTRIES} ON PURPOSE: an op payload's
+ * `widgets_values` array is already capped at that many entries, so the widest
+ * overrun any op can carry names `_extra_<MAX_COLLECTION_ENTRIES - 1>` and
+ * stays inside the cap. It is the tightest absolute value that cannot refuse an
+ * overrun this package would itself mint from an op.
+ *
+ * The one case it does refuse is a class whose `widget_order` is itself longer
+ * than this cap. Such a class has no reachable overflow region: its
+ * `widgets_values` already exceeds the op-payload array cap, so no op can write
+ * it, and no `_extra_<n>` name below the cap can sit past the end of its order.
+ *
+ * A HOST may choose a stricter bound of its own (`cloud`'s doc-host uses 1024
+ * in `catalogpins.ts`, measured against the current order) — this is the
+ * package-level floor under every caller, not a replacement for it.
  */
 export const MAX_OVERFLOW_WIDGETS = MAX_COLLECTION_ENTRIES;
 
