@@ -1,5 +1,5 @@
 /**
- * Selection-aware widget order for `COMFY_DYNAMICCOMBO_V3` inputs.
+ * Value-dependent widget order for dynamic combos and repeated widget groups.
  *
  * A catalog entry's `widget_order` is value-blind: comfy-cli expands every
  * dynamic combo at its FIRST key. When the entry also carries
@@ -17,11 +17,12 @@
  * does not depend on the selection either (every option's slots are
  * accepted), so no op's outcome depends on its arrival order.
  *
- * An entry WITHOUT `dynamic_combos` is returned unchanged everywhere here, so
+ * An entry without `dynamic_combos` or `dynamic_groups` is unchanged, so
  * the value-blind behaviour (BE-9176 `_extra_N` placeholders) is untouched.
  */
 import * as Y from "yjs";
 
+import { groupLayout, isDynamicGroupField } from "./dynamic-groups.js";
 import type { DynamicComboEntry, WidgetCatalogEntry } from "./types.js";
 import { widgetOccurrenceAt, widgetStorageKey } from "./widget-identity.js";
 
@@ -32,9 +33,9 @@ function combosOf(entry: WidgetCatalogEntry | undefined): Combos | undefined {
   return combos && Object.keys(combos).length > 0 ? combos : undefined;
 }
 
-/** Whether `entry` carries dynamic-combo options, so its order depends on the selection. */
-export function hasDynamicCombos(entry: WidgetCatalogEntry | undefined): boolean {
-  return combosOf(entry) !== undefined;
+/** Whether widget order depends on selectors or row counts. */
+export function hasDynamicWidgetLayout(entry: WidgetCatalogEntry | undefined): boolean {
+  return combosOf(entry) !== undefined || Object.keys(entry?.dynamic_groups ?? {}).length > 0;
 }
 
 /** Every name some option of some selector owns (any selection, any depth). */
@@ -80,16 +81,23 @@ function expand(
   const walk = (names: readonly string[], depth: number): void => {
     for (const name of names) {
       order.push(name);
-      if (depth > 32 || !Object.hasOwn(combos, name)) continue;
+      if (depth > 32) continue;
       const index = order.length - 1;
       const stored = valueAt(name, index, widgetOccurrenceAt(order, index));
+      const group = groupLayout(entry, name, stored);
+      if (group) {
+        group.defaults.forEach((value, child) => defaults.set(child, value));
+        order.push(...group.order);
+        continue;
+      }
+      if (!Object.hasOwn(combos, name)) continue;
       const option = selectedOption(combos[name]!, stored === undefined ? defaults.get(name) : stored);
       if (!option) continue;
       for (const [child, value] of Object.entries(option.defaults)) defaults.set(child, value);
       walk(option.widgets, depth + 1);
     }
   };
-  walk(entry.widget_order.filter((name) => !owned.has(name)), 0);
+  walk(entry.widget_order.filter((name) => !owned.has(name) && !isDynamicGroupField(entry, name)), 0);
   return { order, defaults };
 }
 
@@ -97,20 +105,20 @@ function expand(
 export function widgetOrderForValues(entry: WidgetCatalogEntry | undefined, wv: unknown): readonly string[] | undefined {
   if (!entry) return undefined;
   const combos = combosOf(entry);
-  if (!combos) return entry.widget_order;
-  if (Array.isArray(wv)) return expand(entry, combos, (_name, index) => wv[index]).order;
+  if (!hasDynamicWidgetLayout(entry)) return entry.widget_order;
+  if (Array.isArray(wv)) return expand(entry, combos ?? {}, (_name, index) => wv[index]).order;
   if (typeof wv === "object" && wv !== null) {
     const named = wv as Record<string, unknown>;
-    return expand(entry, combos, (name) => (Object.hasOwn(named, name) ? named[name] : undefined)).order;
+    return expand(entry, combos ?? {}, (name) => (Object.hasOwn(named, name) ? named[name] : undefined)).order;
   }
-  return expand(entry, combos, () => undefined).order;
+  return expand(entry, combos ?? {}, () => undefined).order;
 }
 
 /** The layout for a document node's name-keyed widgets map: order plus read-time defaults. */
 export function widgetLayoutForWidgets(entry: WidgetCatalogEntry, widgets: Y.Map<unknown> | undefined): WidgetLayout {
   const combos = combosOf(entry);
-  if (!combos) return { order: entry.widget_order, defaults: new Map() };
-  return expand(entry, combos, (name, _index, occurrence) =>
+  if (!hasDynamicWidgetLayout(entry)) return { order: entry.widget_order, defaults: new Map() };
+  return expand(entry, combos ?? {}, (name, _index, occurrence) =>
     widgets?.get(widgetStorageKey(name, occurrence)),
   );
 }
