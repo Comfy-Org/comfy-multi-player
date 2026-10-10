@@ -17,7 +17,8 @@
  *   ├── Y.Map '__applied'   — op_id → sha256 of the canonical op payload
  *   │                         (idempotency + op_id-reuse detection, §4
  *   │                         amendment A8; a legacy `1` is a pre-A8 record)
- *   ├── Y.Map '__stamps'    — write-target key → [base_version, actor, op_id] (§4)
+ *   ├── Y.Map '__stamps'    — write-target key → [base_version, actor, op_id] (§4),
+ *   │                         plus counterless grow_request / interior_route rows
  *   ├── Y.Map '__link_state' — normalized link id → durable descriptor (§1.5)
  *   └── Y.Map '__clock_reservations' — producer identity → reserved counter tuple (§1.6)
  */
