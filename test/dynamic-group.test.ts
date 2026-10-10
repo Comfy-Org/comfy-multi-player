@@ -21,6 +21,14 @@ const composite = JSON.parse(readFileSync(new URL("./fixtures/dynamic-group-comp
 };
 const groupEntry = catalog.types["DevToolsNodeWithDynamicGroup"]!;
 const loras = groupEntry.dynamic_groups!["loras"]!;
+const conditionalCatalog: WidgetCatalog = { types: { DevToolsNodeWithDynamicGroup: {
+  ...groupEntry,
+  widget_order: ["before", "mode", "after"],
+  dynamic_combos: { mode: { default: "off", options: {
+    off: { widgets: [], defaults: {} },
+    on: { widgets: ["loras"], defaults: { loras: 0 } },
+  } } },
+} } };
 const edit = (widget: string, value: unknown, counter = 1) => ({
   op: "set_widget", node_id: 1, widget, value,
   op_id: counter.toString(16).padStart(32, "0"), actor: "agent:a", base_version: counter, stamp: [counter, "agent:a"],
@@ -212,6 +220,67 @@ describe("DynamicGroup catalog layout", () => {
     (workflow.nodes[0]!.widgets_values as unknown[])[1] = -1;
     expect(() => mint(workflow, catalog)).toThrow(/row count/);
   });
+
+  it.each([-1, 1.5, "2", 1_000_000])("refuses inactive named group count %s during mint", (count) => {
+    const workflow = structuredClone(cases.empty);
+    delete workflow.nodes[0]!["widgets_values_named"];
+    workflow.nodes[0]!.widgets_values = { before: "first", mode: "off", loras: count, after: "last" };
+
+    expect(() => mint(workflow, conditionalCatalog)).toThrow(/row count/);
+  });
+
+  it("keeps a valid inactive named group available when its option is selected", () => {
+    const workflow = structuredClone(cases.empty);
+    delete workflow.nodes[0]!["widgets_values_named"];
+    workflow.nodes[0]!.widgets_values = { before: "first", mode: "off", loras: 2, after: "last" };
+    const doc = mint(workflow, conditionalCatalog);
+
+    expect(project(doc, conditionalCatalog).nodes[0]!.widgets_values).toEqual(["first", "off", "last"]);
+    expect(applyOps(doc, [edit("mode", "on")], conditionalCatalog).outcomes[0]?.outcome).toBe("applied");
+    expect(project(doc, conditionalCatalog).nodes[0]!.widgets_values).toEqual([
+      "first", "on", 2, "A.safetensors", 1, true, "A.safetensors", 1, true, "last",
+    ]);
+    doc.destroy();
+  });
+
+  it.each(["mint", "interior_mint", "add_node", "insert_workflow"] as const)(
+    "preserves declared-form residue independently of group metadata on %s",
+    (path) => {
+      const workflow = structuredClone(cases.empty);
+      const node = workflow.nodes[0]!;
+      delete node["widgets_values_named"];
+      node.widgets_values = { before: "first", mode: "on", loras: -1, after: "last" };
+      node.widgets_values_form = { order: ["before", "mode", "after"] };
+      if (path === "mint") {
+        const doc = mint(workflow, conditionalCatalog);
+        expect(project(doc, conditionalCatalog).nodes[0]!.widgets_values).toEqual(node.widgets_values);
+        expect(project(doc, conditionalCatalog).nodes[0]!.widgets_values_form).toEqual(node.widgets_values_form);
+        doc.destroy();
+      } else if (path === "interior_mint") {
+        const doc = mint({
+          nodes: [{ id: 9, type: "group-definition" }], links: [],
+          definitions: { subgraphs: [{ id: "group-definition", nodes: [node], links: [] }] },
+        }, conditionalCatalog);
+        expect(project(doc, conditionalCatalog)).toMatchObject({ definitions: { subgraphs: [{ nodes: [{
+          widgets_values: node.widgets_values, widgets_values_form: node.widgets_values_form,
+        }] }] } });
+        doc.destroy();
+      } else {
+        const envelope = {
+          op_id: "a".repeat(32), actor: "agent:a", base_version: 1, stamp: [1, "agent:a"],
+        } satisfies Pick<Op, "op_id" | "actor" | "base_version" | "stamp">;
+        const op: Op = path === "add_node"
+          ? { ...envelope, op: "add_node", node_id: node.id, class_type: node.type, pos: [0, 0], node }
+          : { ...envelope, op: "insert_workflow", workflow };
+        const doc = mint({ nodes: [], links: [] }, conditionalCatalog);
+        expect(applyOps(doc, [op], conditionalCatalog).outcomes[0]?.outcome).toBe("applied");
+        const restored = project(doc, conditionalCatalog).nodes.find((candidate) => candidate.type === node.type)!;
+        expect(restored.widgets_values).toEqual(node.widgets_values);
+        expect(restored.widgets_values_form).toEqual(node.widgets_values_form);
+        doc.destroy();
+      }
+    },
+  );
 
   it("preserves rows above a newer catalog's advertised maximum", () => {
     const smaller = structuredClone(catalog);

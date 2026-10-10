@@ -1137,7 +1137,8 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
       rejectUnprojectableWidgets(node, node.type, wv, entry);
     }
     try {
-      nodeWrites.push([String(node.id), node.id, createNodeMap(node, widgetOrderForValues(entry, node.widgets_values))]);
+      nodeWrites.push([String(node.id), node.id, createNodeMap(node,
+        declaresWidgetForm(node) ? undefined : widgetOrderForValues(entry, node.widgets_values))]);
     } catch (err) {
       throw new OpRejectedError("invalid_node_payload", `insert_workflow(${node.type}): ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1298,7 +1299,7 @@ function requireAddNodeValid(op: AddNodeOp): void {
 function createAddedNode(op: AddNodeOp, catalog?: WidgetCatalog): Y.Map<unknown> {
   const wv = op.node.widgets_values;
   const entry = catalogEntry(catalog, op.node.type);
-  const order = widgetOrderForValues(entry, wv);
+  const order = declaresWidgetForm(op.node) ? undefined : widgetOrderForValues(entry, wv);
   // A24: a payload that declares its own `widgets_values_form` needs neither
   // check. Both exist because a payload the catalog cannot describe would
   // become unprojectable — and a declared node projects WITHOUT the catalog,

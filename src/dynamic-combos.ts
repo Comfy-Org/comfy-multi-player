@@ -22,7 +22,7 @@
  */
 import * as Y from "yjs";
 
-import { assertDynamicGroupCatalog, groupLayout, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
+import { assertDynamicGroupCatalog, groupCountRefusal, groupLayout, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
 import type { DynamicComboEntry, WidgetCatalogEntry } from "./types.js";
 import { widgetOccurrenceAt, widgetStorageKey } from "./widget-identity.js";
 
@@ -119,6 +119,12 @@ export function widgetOrderForValues(entry: WidgetCatalogEntry | undefined, wv: 
   if (Array.isArray(wv)) return expand(entry, combos ?? {}, (_name, index) => wv[index]).order;
   if (typeof wv === "object" && wv !== null) {
     const named = wv as Record<string, unknown>;
+    assertDynamicGroupCatalog(entry);
+    for (const name of Object.keys(entry.dynamic_groups ?? {})) {
+      if (!Object.hasOwn(named, name)) continue;
+      const refusal = groupCountRefusal(entry, name, named[name]);
+      if (refusal) throw new TypeError(refusal);
+    }
     return expand(entry, combos ?? {}, (name) => (Object.hasOwn(named, name) ? named[name] : undefined)).order;
   }
   return expand(entry, combos ?? {}, () => undefined).order;
