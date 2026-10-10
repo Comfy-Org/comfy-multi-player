@@ -2,10 +2,12 @@ import * as Y from "yjs";
 import { describe, expect, it, vi } from "vitest";
 import { applyOps, DocDerivedLamportClockStore, freezeLamportEnvelope, MAX_LAMPORT_COUNTER,
   mint, migrate, observedDocCounter, observeLamport, persistLamportTick, project, readStamps,
-  SCHEMA_VERSION, tickLamport, validateLamportCounter, type LamportClockStore } from "../src/index.js";
+  SCHEMA_VERSION, tickLamport, validateLamportCounter, type LamportClockStore, type WidgetCatalog,
+  type WorkflowJSON } from "../src/index.js";
 import { loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
+const growCatalog: WidgetCatalog = { types: { Source: { widget_order: [] }, Destination: { widget_order: [] } } };
 const identity = { workflow_id: "w", lineage_id: "l", producer_id: "agent:clock" };
 const reservationKey = '["__lamport_clock","w","l","agent:clock"]';
 
@@ -115,6 +117,25 @@ describe("creator-owned Lamport counter", () => {
       { workflow_id: "w", lineage_id: "l", producer_id: "p" },
       async (stored) => ({ counter: tickLamport(stored ?? 0), value: stored }),
     )).rejects.toThrow(/Lamport counter/);
+  });
+
+  it("skips autogrow request rows when taking the floor of a real document", () => {
+    const io = (name: string, links: unknown) => ({ name, type: "IMAGE", ...(links === undefined ? {} : links as object) });
+    const doc = mint({
+      nodes: [
+        { id: 1, type: "Source", pos: [0, 0], inputs: [], outputs: [io("out", { links: [] })], widgets_values: [] },
+        { id: 2, type: "Destination", pos: [0, 0], inputs: [io("fixed", { link: null })], outputs: [], widgets_values: [] },
+      ],
+      links: [],
+    } as unknown as WorkflowJSON, growCatalog);
+    applyOps(doc, [{
+      op: "connect", op_id: "c".repeat(32), actor: "agent:t:1", base_version: 7, stamp: [7, "agent:t:1"],
+      link_id: 9, from_node: 1, from_slot: 0, to_node: 2, link_type: "IMAGE",
+      grow: { name: "images.image0", type: "IMAGE", widget: "upload" },
+    }], growCatalog);
+    expect(Object.keys(readStamps(doc)).some((key) => key.startsWith('["grow_request",'))).toBe(true);
+    expect(observedDocCounter(doc)).toBe(7);
+    expect(observedDocCounter(replicaOf(doc))).toBe(7);
   });
 
   it("keeps reservations out of public readStamps and preserves their identity tuple", async () => {
