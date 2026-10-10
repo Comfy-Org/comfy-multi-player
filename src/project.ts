@@ -48,7 +48,8 @@ import { assertNever } from "./exhaustive.js";
 import { projectInteriorLinkOrder } from "./interior-link-order.js";
 import { assertReadableSchema } from "./schema-version.js";
 import { NODE_INCARNATION_KEY, type WidgetCatalog, type WorkflowJSON, type WorkflowNode } from "./types.js";
-import { hasDynamicCombos, optionOwnedWidgets, projectedLength, widgetLayoutForWidgets } from "./dynamic-combos.js";
+import { isDynamicGroupField } from "./dynamic-groups.js";
+import { hasDynamicWidgetLayout, optionOwnedWidgets, projectedLength, widgetLayoutForWidgets } from "./dynamic-combos.js";
 import { widgetIdentityFromStorageKey, widgetOccurrenceAt, widgetStorageKey, widgetIndexOf } from "./widget-identity.js";
 import {
   WIDGET_FORM_FIELD,
@@ -143,7 +144,7 @@ function widgetsToPositional(
   const layout = widgetLayoutForWidgets(entry, widgets);
   const order = layout.order;
   const inactive = optionOwnedWidgets(entry);
-  const selectionDependent = hasDynamicCombos(entry);
+  const selectionDependent = hasDynamicWidgetLayout(entry);
   let max = -1;
   widgets.forEach((_v, storageKey) => {
     const { name, occurrence } = widgetIdentityFromStorageKey(storageKey);
@@ -157,7 +158,7 @@ function widgetsToPositional(
     const i = occurrence === 0 ? positionalIndexOf(order, name) : widgetIndexOf(order, name, occurrence);
     // A sub-widget of an option the node does not select owns no slot; its
     // value is kept for when that option is selected again.
-    if (i < 0 && inactive.has(name)) return;
+    if (i < 0 && (inactive.has(name) || isDynamicGroupField(entry, name))) return;
     // A legacy overflow slot (`_extra_N`) whose position the CURRENT selection
     // gives to a real name is shadowed: the real name owns that position (its
     // written value, else its read-time default) and the overflow value stays

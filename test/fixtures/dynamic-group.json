@@ -1,0 +1,336 @@
+{
+  "source_commit": "65769ee31183cd1e1049321c2fb42296f03bf4b5",
+  "catalog": {
+    "catalog_version": "sha256:52da4957ce9495873344210047eba2f289ccfc8efc603d203ad06643c014b9d4",
+    "class_count": 1,
+    "types": {
+      "DevToolsNodeWithDynamicGroup": {
+        "widget_order": [
+          "before",
+          "loras",
+          "after"
+        ],
+        "dynamic_groups": {
+          "loras": {
+            "min": 0,
+            "max": 3,
+            "widgets": [
+              "lora_name",
+              "strength",
+              "enabled"
+            ],
+            "defaults": {
+              "lora_name": "A.safetensors",
+              "strength": 1.0,
+              "enabled": true
+            }
+          }
+        }
+      }
+    }
+  },
+  "cases": {
+    "empty": {
+      "nodes": [
+        {
+          "id": 1,
+          "type": "DevToolsNodeWithDynamicGroup",
+          "pos": [
+            100,
+            150
+          ],
+          "size": [
+            350,
+            140
+          ],
+          "flags": {},
+          "order": 0,
+          "mode": 0,
+          "inputs": [],
+          "outputs": [
+            {
+              "name": "rows",
+              "type": "STRING",
+              "links": []
+            }
+          ],
+          "properties": {
+            "Node name for S&R": "DevToolsNodeWithDynamicGroup"
+          },
+          "widgets_values": [
+            "first",
+            0,
+            "last"
+          ]
+        }
+      ],
+      "links": []
+    },
+    "populated": {
+      "nodes": [
+        {
+          "id": 1,
+          "type": "DevToolsNodeWithDynamicGroup",
+          "pos": [
+            100,
+            150
+          ],
+          "size": [
+            350,
+            106
+          ],
+          "flags": {},
+          "order": 0,
+          "mode": 0,
+          "inputs": [
+            {
+              "label": "LoRA #1 lora_name",
+              "localized_name": "LoRA #1 lora_name",
+              "name": "loras.0.lora_name",
+              "type": "COMBO",
+              "widget": {
+                "name": "loras.0.lora_name"
+              },
+              "link": null
+            },
+            {
+              "label": "LoRA #1 strength",
+              "localized_name": "LoRA #1 strength",
+              "name": "loras.0.strength",
+              "type": "FLOAT",
+              "widget": {
+                "name": "loras.0.strength"
+              },
+              "link": null
+            },
+            {
+              "label": "LoRA #1 enabled",
+              "localized_name": "LoRA #1 enabled",
+              "name": "loras.0.enabled",
+              "shape": 7,
+              "type": "BOOLEAN",
+              "widget": {
+                "name": "loras.0.enabled"
+              },
+              "link": null
+            },
+            {
+              "label": "LoRA #2 lora_name",
+              "localized_name": "LoRA #2 lora_name",
+              "name": "loras.1.lora_name",
+              "type": "COMBO",
+              "widget": {
+                "name": "loras.1.lora_name"
+              },
+              "link": null
+            },
+            {
+              "label": "LoRA #2 strength",
+              "localized_name": "LoRA #2 strength",
+              "name": "loras.1.strength",
+              "type": "FLOAT",
+              "widget": {
+                "name": "loras.1.strength"
+              },
+              "link": null
+            },
+            {
+              "label": "LoRA #2 enabled",
+              "localized_name": "LoRA #2 enabled",
+              "name": "loras.1.enabled",
+              "shape": 7,
+              "type": "BOOLEAN",
+              "widget": {
+                "name": "loras.1.enabled"
+              },
+              "link": null
+            }
+          ],
+          "outputs": [
+            {
+              "localized_name": "rows",
+              "name": "rows",
+              "type": "STRING",
+              "links": []
+            }
+          ],
+          "properties": {
+            "Node name for S&R": "DevToolsNodeWithDynamicGroup"
+          },
+          "widgets_values": [
+            "head",
+            2,
+            "A.safetensors",
+            1,
+            true,
+            "C.safetensors",
+            0.5,
+            false,
+            "tail"
+          ],
+          "widgets_values_named": {
+            "before": "head",
+            "loras": 2,
+            "loras.0.lora_name": "A.safetensors",
+            "loras.0.strength": 1,
+            "loras.0.enabled": true,
+            "loras.1.lora_name": "C.safetensors",
+            "loras.1.strength": 0.5,
+            "loras.1.enabled": false,
+            "after": "tail"
+          }
+        }
+      ],
+      "links": []
+    }
+  },
+  "editing": {
+    "ops": [
+      {
+        "op": "set_widget",
+        "op_id": "813921d971aa439ea121b13f00904192",
+        "actor": "agent:dynamic-group-probe",
+        "base_version": 0,
+        "stamp": [
+          0,
+          "agent:dynamic-group-probe"
+        ],
+        "node_id": 1,
+        "widget": "loras.1.strength",
+        "value": 0.7,
+        "old": 0.5
+      },
+      {
+        "op": "set_widget",
+        "op_id": "c3e0f30f0a9a4978ba0c37ad8e34c9e5",
+        "actor": "agent:dynamic-group-probe",
+        "base_version": 1,
+        "stamp": [
+          1,
+          "agent:dynamic-group-probe"
+        ],
+        "node_id": 1,
+        "widget": "after",
+        "value": "edited tail",
+        "old": "tail"
+      }
+    ],
+    "expected": {
+      "nodes": [
+        {
+          "id": 1,
+          "type": "DevToolsNodeWithDynamicGroup",
+          "pos": [
+            100,
+            150
+          ],
+          "size": [
+            350,
+            106
+          ],
+          "flags": {},
+          "order": 0,
+          "mode": 0,
+          "inputs": [
+            {
+              "label": "LoRA #1 lora_name",
+              "localized_name": "LoRA #1 lora_name",
+              "name": "loras.0.lora_name",
+              "type": "COMBO",
+              "widget": {
+                "name": "loras.0.lora_name"
+              },
+              "link": null
+            },
+            {
+              "label": "LoRA #1 strength",
+              "localized_name": "LoRA #1 strength",
+              "name": "loras.0.strength",
+              "type": "FLOAT",
+              "widget": {
+                "name": "loras.0.strength"
+              },
+              "link": null
+            },
+            {
+              "label": "LoRA #1 enabled",
+              "localized_name": "LoRA #1 enabled",
+              "name": "loras.0.enabled",
+              "shape": 7,
+              "type": "BOOLEAN",
+              "widget": {
+                "name": "loras.0.enabled"
+              },
+              "link": null
+            },
+            {
+              "label": "LoRA #2 lora_name",
+              "localized_name": "LoRA #2 lora_name",
+              "name": "loras.1.lora_name",
+              "type": "COMBO",
+              "widget": {
+                "name": "loras.1.lora_name"
+              },
+              "link": null
+            },
+            {
+              "label": "LoRA #2 strength",
+              "localized_name": "LoRA #2 strength",
+              "name": "loras.1.strength",
+              "type": "FLOAT",
+              "widget": {
+                "name": "loras.1.strength"
+              },
+              "link": null
+            },
+            {
+              "label": "LoRA #2 enabled",
+              "localized_name": "LoRA #2 enabled",
+              "name": "loras.1.enabled",
+              "shape": 7,
+              "type": "BOOLEAN",
+              "widget": {
+                "name": "loras.1.enabled"
+              },
+              "link": null
+            }
+          ],
+          "outputs": [
+            {
+              "localized_name": "rows",
+              "name": "rows",
+              "type": "STRING",
+              "links": []
+            }
+          ],
+          "properties": {
+            "Node name for S&R": "DevToolsNodeWithDynamicGroup"
+          },
+          "widgets_values": [
+            "head",
+            2,
+            "A.safetensors",
+            1,
+            true,
+            "C.safetensors",
+            0.7,
+            false,
+            "edited tail"
+          ],
+          "widgets_values_named": {
+            "before": "head",
+            "loras": 2,
+            "loras.0.lora_name": "A.safetensors",
+            "loras.0.strength": 1,
+            "loras.0.enabled": true,
+            "loras.1.lora_name": "C.safetensors",
+            "loras.1.strength": 0.7,
+            "loras.1.enabled": false,
+            "after": "edited tail"
+          }
+        }
+      ],
+      "links": []
+    }
+  }
+}

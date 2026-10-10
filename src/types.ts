@@ -647,6 +647,13 @@ export interface WidgetCatalogEntry {
    * (see `dynamic-combos.ts`).
    */
   dynamic_combos?: Record<string, DynamicComboEntry>;
+  /** Row-count controllers with relative field names and fresh-row defaults. */
+  dynamic_groups?: Record<string, {
+    min: number;
+    max: number;
+    widgets: string[];
+    defaults: Record<string, unknown>;
+  }>;
 }
 
 /** One dynamic-combo selector: its fresh-node key and each option's slots. */

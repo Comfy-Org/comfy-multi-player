@@ -2494,3 +2494,9 @@ on that path and the retention on every other — rather than papered over.
 map directly, maintains neither passthrough register (A23's gap), and does not
 consult a declared order either. Pre-existing, one op over, and not addressed
 here.
+
+## Amendment A25 — 2026-10-05 — DynamicGroup catalog layout
+
+An opt-in `dynamic_groups` catalog entry expands a saved row-count controller into indexed widget identities. These use the existing name-keyed registers; no op kind or on-document key changes. The new catalog hash requires coordinated reader adoption. Existing documents retain their original catalog and are re-minted to adopt the new layout.
+
+Count writes change the projected layout, retaining hidden registers and applying fresh-row defaults only at read time. They do not delete rows or links. Explicit `widgets_values_form` declarations remain authoritative; a count write requiring a new declaration is rejected before mutation. See [DynamicGroup catalog support](dynamic-groups.md) for the producer contract, bounds, and fixture provenance.

@@ -152,6 +152,7 @@ import {
   type WireOp,
 } from "./types.js";
 import { addInteriorLinkOrder, removeInteriorLinkOrder } from "./interior-link-order.js";
+import { groupCountRefusal, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
 import { optionOwnedWidgets, projectedLength, widgetLayoutForWidgets, widgetOrderForValues, widgetOrderForWidgets } from "./dynamic-combos.js";
 import { NODE_INCARNATION_KEY, WRITABLE_NODE_FIELDS } from "./types.js";
 
@@ -1136,7 +1137,8 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
       rejectUnprojectableWidgets(node, node.type, wv, entry);
     }
     try {
-      nodeWrites.push([String(node.id), node.id, createNodeMap(node, widgetOrderForValues(entry, node.widgets_values))]);
+      nodeWrites.push([String(node.id), node.id, createNodeMap(node,
+        declaresWidgetForm(node) ? undefined : widgetOrderForValues(entry, node.widgets_values))]);
     } catch (err) {
       throw new OpRejectedError("invalid_node_payload", `insert_workflow(${node.type}): ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1297,7 +1299,7 @@ function requireAddNodeValid(op: AddNodeOp): void {
 function createAddedNode(op: AddNodeOp, catalog?: WidgetCatalog): Y.Map<unknown> {
   const wv = op.node.widgets_values;
   const entry = catalogEntry(catalog, op.node.type);
-  const order = widgetOrderForValues(entry, wv);
+  const order = declaresWidgetForm(op.node) ? undefined : widgetOrderForValues(entry, wv);
   // A24: a payload that declares its own `widgets_values_form` needs neither
   // check. Both exist because a payload the catalog cannot describe would
   // become unprojectable — and a declared node projects WITHOUT the catalog,
@@ -1484,7 +1486,7 @@ function validateWidgetName(
   // stored and not projected until that option is selected.
   const widgets = node?.get("widgets");
   const order = widgetOrderForWidgets(entry, widgets instanceof Y.Map ? widgets : undefined);
-  if (widgetIndexOf(order, widget, occurrence) < 0 && !(occurrence === 0 && optionOwnedWidgets(entry).has(widget))) {
+  if (widgetIndexOf(order, widget, occurrence) < 0 && !(occurrence === 0 && (optionOwnedWidgets(entry).has(widget) || isDynamicGroupField(entry, widget)))) {
     throw new OpRejectedError(
       "unknown_widget",
       `widget '${widget}' not found on ${nodeType}; available: ${order.join(", ") || "(none — all inputs are links)"}`,
@@ -1585,6 +1587,8 @@ function isFinalWidgetOccurrence(
   if (!catalog) return false;
   const entry = catalogEntry(catalog, String(node.get("type") ?? ""));
   if (!entry) return false;
+  // Indexed group field names remain unique while their rows are hidden.
+  if (occurrence === 0 && isDynamicGroupField(entry, name)) return true;
   const widgets = node.get("widgets");
   const order = widgetOrderForWidgets(entry, widgets instanceof Y.Map ? widgets : undefined);
   return widgetIndexOf(order, name, occurrence) >= 0 && widgetIndexOf(order, name, occurrence + 1) < 0;
@@ -1898,6 +1902,7 @@ function applyPromotedHostWrite(
         const occurrence = op.widget_occurrence ?? 0;
         requirePromotedFormAgreement(target, op.widget, occurrence, promoted.valueIndex);
         validateWidgetName(catalog, String(target.get("type") ?? ""), op.widget, target, occurrence);
+        validateDynamicGroupValue(target, catalog, op.widget, op.value);
         mset(widgetsOf(target), widgetStorageKey(op.widget, occurrence), structuredClone(op.value));
         updateOrderedWidgetValue(target, op.widget, occurrence, op.value);
         updateNamedWidgetValue(target, catalog, op.widget, occurrence, op.value);
@@ -1952,6 +1957,18 @@ function validateWidgetOp(op: SetWidgetOp) {
   return { interior, promoted };
 }
 
+function validateDynamicGroupValue(node: Y.Map<unknown>, catalog: WidgetCatalog | undefined, widget: string, value: unknown): void {
+  const entry = catalogEntry(catalog, String(node.get("type") ?? ""));
+  const refusal = groupCountRefusal(entry, widget, value);
+  if (refusal) throw new OpRejectedError("malformed_op", refusal);
+  if (groupOf(entry, widget) && storedWidgetFormOf(node)) {
+    const widgets = node.get("widgets");
+    if (widgets instanceof Y.Map && widgets.get(widgetStorageKey(widget, 0)) !== value) {
+      throw new OpRejectedError("malformed_op", "row count changes require an updated widgets_values_form declaration");
+    }
+  }
+}
+
 function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): SuccessfulOutcome {
   const { interior, promoted } = validateWidgetOp(op);
   // Interior paths have several legal spellings (definition id and instance
@@ -2003,6 +2020,7 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
     // than falling through the `if (entry)` block as an accepted write (#13).
     const occurrence = op.widget_occurrence ?? 0;
     validateWidgetName(catalog, nodeType, widget, target, occurrence);
+    validateDynamicGroupValue(target, catalog, widget, op.value);
     // OWN-property lookup (#13): an inherited key such as `__proto__` must read
     // as "absent from the catalog", not resolve to a prototype object.
     const entry = catalogEntry(catalog, nodeType);
@@ -2042,6 +2060,7 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
   rejectIfOpaqueWidgets(node, op.widget);
   const occurrence = op.widget_occurrence ?? 0;
   validateWidgetName(catalog, String(node.get("type") ?? ""), op.widget, node, occurrence);
+  validateDynamicGroupValue(node, catalog, op.widget, op.value);
   // Top-level writes may extend past the current positional length — comfy-cli
   // pads with None; here the name-keyed map makes padding a projection concern.
   mset(widgetsOf(node), widgetStorageKey(op.widget, occurrence), structuredClone(op.value));

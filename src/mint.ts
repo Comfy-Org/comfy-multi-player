@@ -32,6 +32,7 @@ import {
   type WorkflowNode,
 } from "./types.js";
 import { widgetOrderForValues } from "./dynamic-combos.js";
+import { declaresWidgetForm } from "./widget-form.js";
 
 /** Top-level keys that are NOT meta passthrough: structural keys get their own root maps; comfy-cli bookkeeping is never imported. */
 const NON_META_KEYS = ["nodes", "links", "definitions", "_applied_ops", "_widget_stamps"] as const;
@@ -105,7 +106,8 @@ export function mint(workflow: WorkflowJSON, catalog: WidgetCatalog, catalogVers
 
     const nodes = nodesMap(doc);
     for (const node of workflow.nodes ?? []) {
-      nodes.set(String(node.id), createNodeMap(node, widgetOrderFor(catalog, node.type, node.widgets_values)));
+      nodes.set(String(node.id), createNodeMap(node,
+        declaresWidgetForm(node) ? undefined : widgetOrderFor(catalog, node.type, node.widgets_values)));
     }
 
     const links = linksMap(doc);
@@ -254,7 +256,8 @@ function mintDefinitionNodes(dm: Y.Map<unknown>, nodes: WorkflowNode[], catalog:
     const key = String(node.id);
     if (order.includes(key)) throw new TypeError(`mint: duplicate definition node id '${key}'`);
     order.push(key);
-    nm.set(key, createNodeMap(node, widgetOrderFor(catalog, node.type, node.widgets_values)));
+    nm.set(key, createNodeMap(node,
+      declaresWidgetForm(node) ? undefined : widgetOrderFor(catalog, node.type, node.widgets_values)));
   }
   dm.set("nodes", nm);
   dm.set("node_order", order);
