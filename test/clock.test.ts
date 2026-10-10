@@ -150,6 +150,23 @@ describe("creator-owned Lamport counter", () => {
     expect(() => observedDocCounter(reserved)).toThrow(TypeError);
   });
 
+  it("skips malformed rows only when asked, across both ledgers", async () => {
+    const doc = mint({ nodes: [], links: [] }, catalog);
+    await persistLamportTick(new DocDerivedLamportClockStore(doc), identity, [19]);
+    const stamps = doc.getMap<unknown>("__stamps");
+    stamps.set('["widget","1","0","seed"]', [12, "agent:t:1", "a".repeat(32)]);
+    stamps.set('["grow_request","1","9","images"]', ["images.image0", null, false]);
+    stamps.set("bad", [Number.NaN, "agent:bad", "c".repeat(32)]);
+    doc.getMap<unknown>("__clock_reservations").set('["__lamport_clock","w","l","other"]', [99, "someone", "x"]);
+
+    expect(() => observedDocCounter(doc)).toThrow(/Lamport counter/);
+    expect(observedDocCounter(doc, { skipMalformed: true })).toEqual({ counter: 20, skipped: 2 });
+    expect(observedDocCounter(replicaOf(doc), { skipMalformed: true })).toEqual({ counter: 20, skipped: 2 });
+    expect(observedDocCounter(mint({ nodes: [], links: [] }, catalog), { skipMalformed: true }))
+      .toEqual({ counter: undefined, skipped: 0 });
+    expect(() => observedDocCounter(new Y.Doc(), { skipMalformed: true })).toThrow();
+  });
+
   it("keeps reservations out of public readStamps and preserves their identity tuple", async () => {
     const doc = mint({ nodes: [], links: [] }, catalog);
     const store = new DocDerivedLamportClockStore(doc);
