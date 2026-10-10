@@ -157,14 +157,19 @@ describe("creator-owned Lamport counter", () => {
     stamps.set('["widget","1","0","seed"]', [12, "agent:t:1", "a".repeat(32)]);
     stamps.set('["grow_request","1","9","images"]', ["images.image0", null, false]);
     stamps.set("bad", [Number.NaN, "agent:bad", "c".repeat(32)]);
+    stamps.set("null-row", null);
     doc.getMap<unknown>("__clock_reservations").set('["__lamport_clock","w","l","other"]', [99, "someone", "x"]);
+    doc.getMap<unknown>("__clock_reservations").set("not json", [98, "someone", "not json"]);
 
     expect(() => observedDocCounter(doc)).toThrow(/Lamport counter/);
-    expect(observedDocCounter(doc, { skipMalformed: true })).toEqual({ counter: 20, skipped: 2 });
-    expect(observedDocCounter(replicaOf(doc), { skipMalformed: true })).toEqual({ counter: 20, skipped: 2 });
+    expect(observedDocCounter(doc, { skipMalformed: true })).toEqual({ counter: 20, skipped: 4 });
+    expect(observedDocCounter(replicaOf(doc), { skipMalformed: true })).toEqual({ counter: 20, skipped: 4 });
     expect(observedDocCounter(mint({ nodes: [], links: [] }, catalog), { skipMalformed: true }))
       .toEqual({ counter: undefined, skipped: 0 });
-    expect(() => observedDocCounter(new Y.Doc(), { skipMalformed: true })).toThrow();
+    expect(() => observedDocCounter(new Y.Doc(), { skipMalformed: true })).toThrow(/schema/);
+    const brokenRoot = mint({ nodes: [], links: [] }, catalog);
+    brokenRoot.getArray("__clock_reservations").push([[5, "agent:clock", "x"]]);
+    expect(() => observedDocCounter(replicaOf(brokenRoot), { skipMalformed: true })).toThrow(/non-map content/);
   });
 
   it("keeps reservations out of public readStamps and preserves their identity tuple", async () => {

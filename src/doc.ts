@@ -279,6 +279,9 @@ export const ROOT_META = "meta";
 export const ROOT_APPLIED = "__applied";
 export const ROOT_STAMPS = "__stamps";
 export const ROOT_LINK_STATE = "__link_state";
+/** `__stamps` companion-row key tags: counterless rows written beside a stamp. */
+export const GROW_REQUEST_TAG = "grow_request";
+export const INTERIOR_ROUTE_TAG = "interior_route";
 /** Created lazily by a successful clock admission, never exported from the entrypoint. */
 export const ROOT_CLOCK_RESERVATIONS = "__clock_reservations";
 
