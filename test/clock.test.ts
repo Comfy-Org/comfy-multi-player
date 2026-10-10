@@ -133,7 +133,7 @@ describe("creator-owned Lamport counter", () => {
       link_id: 9, from_node: 1, from_slot: 0, to_node: 2, link_type: "IMAGE",
       grow: { name: "images.image0", type: "IMAGE", widget: "upload" },
     }], growCatalog);
-    expect(Object.keys(readStamps(doc)).some((key) => key.startsWith('["grow_request",'))).toBe(true);
+    expect([...doc.getMap("__stamps").keys()].some((key) => key.startsWith('["grow_request",'))).toBe(true);
     expect(observedDocCounter(doc)).toBe(7);
     expect(observedDocCounter(replicaOf(doc))).toBe(7);
 

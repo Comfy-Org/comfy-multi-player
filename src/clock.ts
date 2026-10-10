@@ -36,7 +36,7 @@ const documentTransactionTails = new WeakMap<Y.Doc, Promise<void>>();
  * old node lives remain part of the observed floor (DQ-11 / ADR-021). A
  * successful transaction writes `__clock_reservations` so the next transaction
  * observes it even before the producer's semantic op is applied. `__stamps`
- * remains exclusively the semantic write-target ledger exposed by readStamps.
+ * remains the semantic write-target ledger exposed by readStamps.
  */
 export class DocDerivedLamportClockStore implements LamportClockStore {
   public constructor(private readonly doc: Y.Doc) {}
