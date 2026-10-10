@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest"
 
 import {
   applyOps,
+  DocDerivedLamportClockStore,
   mint,
+  observedDocCounter,
+  persistLamportTick,
   project,
   type DefineSubgraphOp,
   type Op,
@@ -382,6 +385,26 @@ describe("define_subgraph application", () => {
     expect(results.map(({ retainedValue }) => retainedValue)).toEqual([[7], [7]])
     expect(results.every(({ projection }) => projection.nodes.length === 0)).toBe(true)
     expect(results.map(({ retainedRoute }) => retainedRoute)).toEqual([subgraphId, subgraphId])
+  })
+
+  it("keeps the Lamport floor readable after a subgraph instance is deleted", async () => {
+    const instanceId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    const doc = mint({
+      nodes: [{ id: instanceId, type: subgraphId, inputs: [], outputs: [] }],
+      links: [], definitions: { subgraphs: [definition()] },
+    } as unknown as WorkflowJSON, catalog)
+    const remove = {
+      op: "delete_node", node_id: instanceId, removed_links: [],
+      op_id: "f".repeat(32), actor: "human:delete", base_version: 5, stamp: [5, "human:delete"],
+    } as Op
+    expect(applyOps(doc, [remove], catalog).outcomes[0]?.outcome).toBe("applied")
+    expect(stampsMap(doc).get(JSON.stringify(["interior_route", instanceId, "0"]))).toBe(subgraphId)
+
+    const replica = new Y.Doc()
+    Y.applyUpdate(replica, Y.encodeStateAsUpdate(doc))
+    expect([observedDocCounter(doc), observedDocCounter(replica)]).toEqual([5, 5])
+    const identity = { workflow_id: "w", lineage_id: "l", producer_id: "agent:clock" }
+    await expect(persistLamportTick(new DocDerivedLamportClockStore(doc), identity, [])).resolves.toBe(6)
   })
 
   it("shares the canonical register between a retained instance route and a direct definition path", () => {
