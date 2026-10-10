@@ -22,7 +22,7 @@
  */
 import * as Y from "yjs";
 
-import { groupLayout, isDynamicGroupField } from "./dynamic-groups.js";
+import { assertDynamicGroupCatalog, groupLayout, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
 import type { DynamicComboEntry, WidgetCatalogEntry } from "./types.js";
 import { widgetOccurrenceAt, widgetStorageKey } from "./widget-identity.js";
 
@@ -75,19 +75,29 @@ function expand(
   combos: Combos,
   valueAt: (name: string, index: number, occurrence: number) => unknown,
 ): WidgetLayout {
+  assertDynamicGroupCatalog(entry);
   const owned = optionOwnedWidgets(entry);
   const order: string[] = [];
+  const seen = new Set<string>();
   const defaults = new Map<string, unknown>();
+  const append = (name: string): void => {
+    if (seen.has(name) && (groupOf(entry, name) || isDynamicGroupField(entry, name))) {
+      const kind = groupOf(entry, name) ? "controller" : "field";
+      throw new TypeError(`DynamicGroup ${kind} '${name}' is duplicated in the selected layout`);
+    }
+    order.push(name);
+    seen.add(name);
+  };
   const walk = (names: readonly string[], depth: number): void => {
     for (const name of names) {
-      order.push(name);
+      append(name);
       if (depth > 32) continue;
       const index = order.length - 1;
       const stored = valueAt(name, index, widgetOccurrenceAt(order, index));
       const group = groupLayout(entry, name, stored);
       if (group) {
         group.defaults.forEach((value, child) => defaults.set(child, value));
-        order.push(...group.order);
+        group.order.forEach(append);
         continue;
       }
       if (!Object.hasOwn(combos, name)) continue;

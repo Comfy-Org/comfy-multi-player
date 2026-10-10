@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
-import { applyOps, mint, project, type Op, type TopLevelSetWidgetOp, type WidgetCatalog, type WorkflowJSON } from "../src/index.js";
+import { applyOps, mint, project, type Op, type TopLevelSetWidgetOp, type WidgetCatalog, type WidgetCatalogEntry, type WorkflowJSON } from "../src/index.js";
 import { canonicalize } from "./helpers.js";
 import { assertRejectedWithoutMutation } from "./rejection-test-helpers.js";
 
@@ -11,12 +11,122 @@ const fixture = JSON.parse(readFileSync(new URL("./fixtures/dynamic-group.json",
   editing: { ops: Op[]; expected: WorkflowJSON };
 };
 const { catalog, cases } = fixture;
+const composite = JSON.parse(readFileSync(new URL("./fixtures/dynamic-group-composite.json", import.meta.url), "utf8")) as {
+  catalog: WidgetCatalog;
+  workflow: WorkflowJSON;
+  op: TopLevelSetWidgetOp;
+  expected_workflow: WorkflowJSON;
+  explicit_form_workflow: WorkflowJSON;
+  standalone_count_op: TopLevelSetWidgetOp;
+};
+const groupEntry = catalog.types["DevToolsNodeWithDynamicGroup"]!;
+const loras = groupEntry.dynamic_groups!["loras"]!;
 const edit = (widget: string, value: unknown, counter = 1) => ({
   op: "set_widget", node_id: 1, widget, value,
   op_id: counter.toString(16).padStart(32, "0"), actor: "agent:a", base_version: counter, stamp: [counter, "agent:a"],
 } satisfies TopLevelSetWidgetOp);
 
 describe("DynamicGroup catalog layout", () => {
+  it.each([
+    ["duplicate controller", { ...groupEntry, widget_order: ["before", "loras", "loras", "after"] }],
+    ["duplicate relative field", { ...groupEntry, dynamic_groups: { loras: { ...loras, widgets: ["strength", "strength"] } } }],
+    ["ordinary generated-name alias", { ...groupEntry, widget_order: ["before", "loras", "after", "loras.0.strength"] }],
+    ["duplicate minimum-row field", {
+      ...groupEntry,
+      widget_order: ["before", "loras", "loras.0.lora_name", "loras.0.strength", "loras.0.enabled", "loras.0.strength", "after"],
+      dynamic_groups: { loras: { ...loras, min: 1 } },
+    }],
+    ["misplaced minimum-row field", {
+      ...groupEntry,
+      widget_order: ["loras.0.lora_name", "before", "loras", "loras.0.strength", "loras.0.enabled", "after"],
+      dynamic_groups: { loras: { ...loras, min: 1 } },
+    }],
+    ["controller also used by DynamicCombo", {
+      ...groupEntry,
+      dynamic_combos: { loras: { default: "none", options: { none: { widgets: [], defaults: {} } } } },
+    }],
+    ["missing controller", { ...groupEntry, widget_order: ["before", "after"] }],
+    ["other group controller aliases a row field", {
+      ...groupEntry,
+      widget_order: ["before", "loras", "loras.0.strength", "after"],
+      dynamic_groups: { ...groupEntry.dynamic_groups, "loras.0.strength": { min: 0, max: 3, widgets: ["value"], defaults: { value: 1 } } },
+    }],
+  ] satisfies [string, WidgetCatalogEntry][])("refuses %s catalog metadata before naming values", (_label, entry) => {
+    const malformed = structuredClone(catalog);
+    malformed.types["DevToolsNodeWithDynamicGroup"] = entry;
+    const workflow = structuredClone(cases.empty);
+    workflow.nodes[0]!.widgets_values = { before: "first", loras: 0, after: "last" };
+
+    expect(() => mint(workflow, malformed)).toThrow(/DynamicGroup/);
+  });
+
+  it("refuses a malformed catalog on projection or apply without changing the document", () => {
+    const doc = mint(cases.populated, catalog);
+    const malformed = structuredClone(catalog);
+    malformed.types["DevToolsNodeWithDynamicGroup"]!.dynamic_groups!["loras"]!.widgets.push("strength");
+    const op = edit("after", "must not land");
+    const trailing = edit("before", "must not land either", 2);
+    const before = Y.encodeStateAsUpdate(doc);
+
+    expect(() => project(doc, malformed)).toThrow(/DynamicGroup/);
+    expect(applyOps(doc, [op, trailing], malformed).outcomes).toMatchObject([
+      { outcome: "rejected", reason: { code: "apply_failed" } },
+      { outcome: "rejected", reason: { code: "batch_aborted" } },
+    ]);
+    expect(applyOps(doc, [op], malformed).outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "apply_failed" } });
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+    expect(doc.getMap("__applied").has(op.op_id)).toBe(false);
+    expect(doc.getMap("__applied").has(trailing.op_id)).toBe(false);
+    expect(project(doc, catalog).nodes[0]!.widgets_values).toEqual(cases.populated.nodes[0]!.widgets_values);
+    doc.destroy();
+  });
+
+  it("keeps ordinary duplicate occurrences and unrelated dotted names distinct", () => {
+    const duplicateCatalog = structuredClone(catalog);
+    duplicateCatalog.types["DevToolsNodeWithDynamicGroup"]!.widget_order = ["before", "before", "loras", "loras.note", "after", "after"];
+    const workflow = structuredClone(cases.empty);
+    delete workflow.nodes[0]!["widgets_values_named"];
+    workflow.nodes[0]!.widgets_values = ["first", "second", 1, "A.safetensors", 1, true, "ordinary dotted value", "tail one", "tail two"];
+    const doc = mint(workflow, duplicateCatalog);
+
+    expect(project(doc, duplicateCatalog).nodes[0]!.widgets_values).toEqual(workflow.nodes[0]!.widgets_values);
+    expect(applyOps(doc, [{ ...edit("before", "edited second"), widget_occurrence: 1 }], duplicateCatalog).outcomes[0]?.outcome).toBe("applied");
+    expect(project(doc, duplicateCatalog).nodes[0]!.widgets_values).toEqual(["first", "edited second", 1, "A.safetensors", 1, true, "ordinary dotted value", "tail one", "tail two"]);
+    doc.destroy();
+  });
+
+  it("round-trips the CLI two-group, nondefault-combo, seed-companion composition and replays its field edit", () => {
+    const doc = mint(composite.workflow, composite.catalog);
+    expect(canonicalize(project(doc, composite.catalog))).toEqual(canonicalize(composite.workflow));
+
+    expect(applyOps(doc, [composite.op], composite.catalog).outcomes[0]?.outcome).toBe("applied");
+    expect(canonicalize(project(doc, composite.catalog))).toEqual(canonicalize(composite.expected_workflow));
+    const beforeRetry = Y.encodeStateAsUpdate(doc);
+    applyOps(doc, [composite.op], composite.catalog);
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(beforeRetry);
+    doc.destroy();
+  });
+
+  it("uses an explicit producer form for existing field edits without group metadata", () => {
+    const withoutGroups = structuredClone(composite.catalog);
+    delete withoutGroups.types["CompositeDynamicGroup"]!.dynamic_groups;
+    const doc = mint(composite.explicit_form_workflow, withoutGroups);
+
+    expect(applyOps(doc, [composite.op], withoutGroups).outcomes[0]?.outcome).toBe("applied");
+    const expected = structuredClone(composite.expected_workflow);
+    expected.nodes[0]!.widgets_values_form = composite.explicit_form_workflow.nodes[0]!.widgets_values_form;
+    expect(canonicalize(project(doc, withoutGroups))).toEqual(canonicalize(expected));
+    doc.destroy();
+  });
+
+  it("refuses the CLI standalone count op when replay cannot update the producer form", () => {
+    const workflow = structuredClone(composite.explicit_form_workflow);
+    const before = structuredClone(workflow);
+    assertRejectedWithoutMutation(workflow, composite.standalone_count_op,
+      "malformed_op", composite.catalog, { ...composite.op, op_id: "d".repeat(32) });
+    expect(workflow).toEqual(before);
+  });
+
   it("replays CLI-authored field and trailing-widget edits exactly", () => {
     const doc = mint(cases.populated, catalog);
     expect(applyOps(doc, fixture.editing.ops, catalog).outcomes.map((o) => o.outcome)).toEqual(["applied", "applied"]);
@@ -136,6 +246,48 @@ describe("DynamicGroup catalog layout", () => {
     ]);
     assertRejectedWithoutMutation(workflow, edit("loras", 0), "malformed_op", catalog,
       edit("after", "must not run", 2));
+    doc.destroy();
+  });
+
+  it.each([0, -1])("refuses promoted count %s without invalidating the declared row form", (count) => {
+    const workflow = structuredClone(cases.populated);
+    workflow.nodes[0]!.widgets_values_form = { order: [
+      "before", "loras", "loras.0.lora_name", "loras.0.strength", "loras.0.enabled",
+      "loras.1.lora_name", "loras.1.strength", "loras.1.enabled", "after",
+    ] };
+    const op: TopLevelSetWidgetOp = {
+      ...edit("loras", count),
+      promoted: {
+        value_index: 1, instance_path: ["1"],
+        host_widgets_values: ["head", count, "A.safetensors", 1, true, "C.safetensors", 0.5, false, "tail"],
+      },
+    };
+    assertRejectedWithoutMutation(workflow, op, "malformed_op", catalog,
+      edit("after", "must not run", 2));
+  });
+
+  it("preserves promoted ordinary row field edits through the declared form", () => {
+    const workflow = structuredClone(cases.populated);
+    workflow.nodes[0]!.widgets_values_form = { order: [
+      "before", "loras", "loras.0.lora_name", "loras.0.strength", "loras.0.enabled",
+      "loras.1.lora_name", "loras.1.strength", "loras.1.enabled", "after",
+    ] };
+    const op: TopLevelSetWidgetOp = {
+      ...edit("loras.1.strength", 0.7),
+      promoted: {
+        value_index: 6, instance_path: ["1"],
+        host_widgets_values: ["head", 2, "A.safetensors", 1, true, "C.safetensors", 0.7, false, "tail"],
+      },
+    };
+    const doc = mint(workflow, catalog);
+
+    expect(applyOps(doc, [op], catalog).outcomes[0]?.outcome).toBe("applied");
+    const node = project(doc, catalog).nodes[0]!;
+    expect(node.widgets_values).toEqual(["head", 2, "A.safetensors", 1, true, "C.safetensors", 0.7, false, "tail"]);
+    expect(node.widgets_values_form).toEqual(workflow.nodes[0]!.widgets_values_form);
+    const beforeRetry = Y.encodeStateAsUpdate(doc);
+    applyOps(doc, [op], catalog);
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(beforeRetry);
     doc.destroy();
   });
 

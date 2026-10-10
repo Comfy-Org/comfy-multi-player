@@ -1901,6 +1901,7 @@ function applyPromotedHostWrite(
         const occurrence = op.widget_occurrence ?? 0;
         requirePromotedFormAgreement(target, op.widget, occurrence, promoted.valueIndex);
         validateWidgetName(catalog, String(target.get("type") ?? ""), op.widget, target, occurrence);
+        validateDynamicGroupValue(target, catalog, op.widget, op.value);
         mset(widgetsOf(target), widgetStorageKey(op.widget, occurrence), structuredClone(op.value));
         updateOrderedWidgetValue(target, op.widget, occurrence, op.value);
         updateNamedWidgetValue(target, catalog, op.widget, occurrence, op.value);
