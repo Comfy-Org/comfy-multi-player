@@ -120,7 +120,7 @@ describe("creator-owned Lamport counter", () => {
   });
 
   it("skips autogrow request rows when taking the floor of a real document", () => {
-    const io = (name: string, links: unknown) => ({ name, type: "IMAGE", ...(links === undefined ? {} : links as object) });
+    const io = (name: string, links: object) => ({ name, type: "IMAGE", ...links });
     const doc = mint({
       nodes: [
         { id: 1, type: "Source", pos: [0, 0], inputs: [], outputs: [io("out", { links: [] })], widgets_values: [] },
@@ -136,6 +136,18 @@ describe("creator-owned Lamport counter", () => {
     expect(Object.keys(readStamps(doc)).some((key) => key.startsWith('["grow_request",'))).toBe(true);
     expect(observedDocCounter(doc)).toBe(7);
     expect(observedDocCounter(replicaOf(doc))).toBe(7);
+
+    // The skip covers only the request row: the grow's own stamp still counts and still fails closed.
+    const stamps = doc.getMap<unknown>("__stamps");
+    const growKey = [...stamps.keys()].find((key) => key.startsWith('["grow",'))!;
+    stamps.set(growKey, [9, "agent:t:1", "c".repeat(32)]);
+    expect(observedDocCounter(doc)).toBe(9);
+    stamps.set(growKey, ["images.image0", null, false]);
+    expect(() => observedDocCounter(doc)).toThrow(/malformed stamp tuple/);
+    // Reservations are never companion rows, whatever their key.
+    const reserved = mint({ nodes: [], links: [] }, catalog);
+    reserved.getMap<unknown>("__clock_reservations").set('["grow_request","1","9","images"]', [3, "agent:clock", "x"]);
+    expect(() => observedDocCounter(reserved)).toThrow(TypeError);
   });
 
   it("keeps reservations out of public readStamps and preserves their identity tuple", async () => {

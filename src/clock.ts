@@ -29,7 +29,8 @@ const documentTransactionTails = new WeakMap<Y.Doc, Promise<void>>();
  * counter: the Y.Doc is the caller-owned lineage snapshot and this store's
  * transaction queue is the serialization boundary.
  *
- * Both ledgers are validated rather than silently skipped. Malformed state
+ * Both ledgers are validated rather than silently skipped; only `__stamps`
+ * companion rows, which hold no counter, are passed over. Malformed state
  * must fail closed before a producer mints an unsafe counter.
  * Incarnation-qualified target keys all belong to this document lineage, so
  * old node lives remain part of the observed floor (DQ-11 / ADR-021). A
@@ -70,12 +71,15 @@ export class DocDerivedLamportClockStore implements LamportClockStore {
   }
 }
 
-const GROW_REQUEST_KEY_PREFIX = '["grow_request",';
+// `__stamps` companion rows that ride beside a stamp but are not stamps: an
+// autogrow connect's requested slot shape (applier growRequestKey) and a deleted
+// subgraph instance's retained definition route (applier interiorRouteKey).
+const COMPANION_KEY_PREFIXES = ['["grow_request",', '["interior_route",'];
 
 /**
  * Maximum counter across winning stamps and reservations in a current-schema
  * document. Missing ledgers are empty; missing/unsupported schema is refused.
- * Autogrow request rows in `__stamps` carry no counter and are skipped.
+ * Companion rows in `__stamps` carry no counter and are skipped.
  * Reads neither write structs nor create absent roots.
  */
 export function observedDocCounter(doc: Y.Doc): number | undefined {
@@ -89,9 +93,7 @@ export function observedDocCounter(doc: Y.Doc): number | undefined {
     if (root._start !== null) throw new TypeError(`${name} root contains non-map content`);
     const ledger = doc.getMap<unknown>(name); // throws for a different concrete Y type
     ledger.forEach((value, key) => {
-      // An autogrow connect keeps its requested slot shape beside its stamp
-      // (applier growRequestKey); that row is not a stamp and has no counter.
-      if (name === ROOT_STAMPS && key.startsWith(GROW_REQUEST_KEY_PREFIX)) return;
+      if (name === ROOT_STAMPS && COMPANION_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) return;
       if (!Array.isArray(value) || value.length !== 3 || typeof value[1] !== "string" ||
           typeof value[2] !== "string" || value[2].length === 0) {
         throw new TypeError(`${name} contains a malformed stamp tuple`);
