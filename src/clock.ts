@@ -70,9 +70,12 @@ export class DocDerivedLamportClockStore implements LamportClockStore {
   }
 }
 
+const GROW_REQUEST_KEY_PREFIX = '["grow_request",';
+
 /**
  * Maximum counter across winning stamps and reservations in a current-schema
  * document. Missing ledgers are empty; missing/unsupported schema is refused.
+ * Autogrow request rows in `__stamps` carry no counter and are skipped.
  * Reads neither write structs nor create absent roots.
  */
 export function observedDocCounter(doc: Y.Doc): number | undefined {
@@ -86,6 +89,9 @@ export function observedDocCounter(doc: Y.Doc): number | undefined {
     if (root._start !== null) throw new TypeError(`${name} root contains non-map content`);
     const ledger = doc.getMap<unknown>(name); // throws for a different concrete Y type
     ledger.forEach((value, key) => {
+      // An autogrow connect keeps its requested slot shape beside its stamp
+      // (applier growRequestKey); that row is not a stamp and has no counter.
+      if (name === ROOT_STAMPS && key.startsWith(GROW_REQUEST_KEY_PREFIX)) return;
       if (!Array.isArray(value) || value.length !== 3 || typeof value[1] !== "string" ||
           typeof value[2] !== "string" || value[2].length === 0) {
         throw new TypeError(`${name} contains a malformed stamp tuple`);
