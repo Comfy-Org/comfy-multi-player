@@ -1,5 +1,5 @@
 import * as Y from "yjs";
-import { ROOT_CLOCK_RESERVATIONS, ROOT_STAMPS } from "./doc.js";
+import { GROW_REQUEST_TAG, INTERIOR_ROUTE_TAG, ROOT_CLOCK_RESERVATIONS, ROOT_STAMPS } from "./doc.js";
 import { assertReadableSchema } from "./schema-version.js";
 import type { Actor } from "./types.js";
 
@@ -71,10 +71,10 @@ export class DocDerivedLamportClockStore implements LamportClockStore {
   }
 }
 
-// `__stamps` companion rows that ride beside a stamp but are not stamps: an
-// autogrow connect's requested slot shape (applier growRequestKey) and a deleted
-// subgraph instance's retained definition route (applier interiorRouteKey).
-const COMPANION_KEY_PREFIXES = ['["grow_request",', '["interior_route",'];
+// Counterless `__stamps` rows (doc.ts companion tags), matched on the canonical
+// JSON.stringify key prefix the applier writes.
+const COMPANION_KEY_PREFIXES = [GROW_REQUEST_TAG, INTERIOR_ROUTE_TAG]
+  .map((tag) => `${JSON.stringify([tag]).slice(0, -1)},`);
 
 /** Result of a lenient floor read: the maximum valid counter and how many rows were unreadable. */
 export interface LenientDocCounter {

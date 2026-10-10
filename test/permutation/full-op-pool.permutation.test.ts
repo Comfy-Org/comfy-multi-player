@@ -288,7 +288,7 @@ function run(
     }
   }
   for (const group of groups) applyGroup(group);
-  // Every document the applier produces must keep a readable Lamport floor.
+  // Every document this pool produces must keep a readable Lamport floor.
   expect(() => observedDocCounter(doc)).not.toThrow();
   const appliedIds = new Set(doc.getMap("__applied").keys());
   for (const outcome of outcomes) {
