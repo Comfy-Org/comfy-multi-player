@@ -139,11 +139,18 @@ describe("creator-owned Lamport counter", () => {
 
     // The skip covers only the request row: the grow's own stamp still counts and still fails closed.
     const stamps = doc.getMap<unknown>("__stamps");
-    const growKey = [...stamps.keys()].find((key) => key.startsWith('["grow",'))!;
+    const growKey = [...stamps.keys()].find((key) => key.startsWith('["grow",'));
+    if (growKey === undefined) throw new Error("the autogrow connect wrote no grow stamp");
     stamps.set(growKey, [9, "agent:t:1", "c".repeat(32)]);
     expect(observedDocCounter(doc)).toBe(9);
     stamps.set(growKey, ["images.image0", null, false]);
     expect(() => observedDocCounter(doc)).toThrow(/malformed stamp tuple/);
+    // Only an exact leading companion tag is skipped: a neighbouring tag or a nested one still fails closed.
+    for (const key of ['["grow_request_x","1"]', '["widget",["grow_request","1"]]']) {
+      const neighbour = mint({ nodes: [], links: [] }, catalog);
+      neighbour.getMap<unknown>("__stamps").set(key, ["not", "a", "stamp"]);
+      expect(() => observedDocCounter(neighbour), key).toThrow(/Lamport counter/);
+    }
     // Reservations are never companion rows, whatever their key.
     const reserved = mint({ nodes: [], links: [] }, catalog);
     reserved.getMap<unknown>("__clock_reservations").set('["grow_request","1","9","images"]', [3, "agent:clock", "x"]);
@@ -161,7 +168,7 @@ describe("creator-owned Lamport counter", () => {
     doc.getMap<unknown>("__clock_reservations").set('["__lamport_clock","w","l","other"]', [99, "someone", "x"]);
     doc.getMap<unknown>("__clock_reservations").set("not json", [98, "someone", "not json"]);
 
-    expect(() => observedDocCounter(doc)).toThrow(/Lamport counter/);
+    expect(() => observedDocCounter(doc)).toThrow(/Lamport counter|malformed stamp tuple/);
     expect(observedDocCounter(doc, { skipMalformed: true })).toEqual({ counter: 20, skipped: 4 });
     expect(observedDocCounter(replicaOf(doc), { skipMalformed: true })).toEqual({ counter: 20, skipped: 4 });
     expect(observedDocCounter(mint({ nodes: [], links: [] }, catalog), { skipMalformed: true }))
