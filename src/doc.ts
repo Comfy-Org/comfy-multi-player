@@ -31,6 +31,8 @@ import {
   SCHEMA_VERSION,
   type WidgetCatalog,
   type WidgetCatalogEntry,
+  DYNAMIC_GROUP_STATE_KEY,
+  DYNAMIC_GROUP_SLOT_KEY,
   type WorkflowNode,
 } from "./types.js";
 import { widgetIdentityFromStorageKey, widgetOccurrenceAt, widgetStorageKey } from "./widget-identity.js";
@@ -814,6 +816,7 @@ function plainToYMap(obj: Record<string, unknown>, what: string): Y.Map<unknown>
 function slotToYMap(slot: unknown, what: string): Y.Map<unknown> | unknown {
   // A non-record slot is stored as an ITEM of the inputs/outputs Y.Array.
   if (!isPlainObject(slot)) return cloneForArray(slot, what);
+  if (Object.hasOwn(slot, DYNAMIC_GROUP_SLOT_KEY)) throw new TypeError(`${what}: reserved DynamicGroup slot marker`);
   const m = new Y.Map<unknown>();
   for (const [k, v] of Object.entries(slot)) {
     if (k === "links" && Array.isArray(v)) {
@@ -978,7 +981,7 @@ export function createNodeMap(node: WorkflowNode, widgetOrder?: readonly string[
       // `project()` from the derived form, so storing it again would be a
       // second copy of the layout that a later write could contradict.
       continue;
-    } else if (k === OPAQUE_WIDGETS_KEY || k === "widgets" || k === NODE_INCARNATION_KEY || k === WIDGET_FORM_KEY) {
+    } else if (k === OPAQUE_WIDGETS_KEY || k === "widgets" || k === NODE_INCARNATION_KEY || k === WIDGET_FORM_KEY || k === DYNAMIC_GROUP_STATE_KEY) {
       // Both are DOC-INTERNAL storage keys owned by this module (schema §1.2);
       // a workflow node carries `widgets_values`, never either of these. An
       // untrusted payload that sets them directly would shadow the name-keyed

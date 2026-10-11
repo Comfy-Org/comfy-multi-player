@@ -5,8 +5,8 @@
  * stamp shapes minted by `comfy_cli/workflow_ops.py` (`_new_op`), pinned by
  * SHA at comfy-cli `7e732242d971daf0d2d30f22f997abfacd78986e` (FC-10: never by
  * branch — the branch this file used to cite has since been deleted upstream).
- * `set_node_field` is the one package-local, provisional addition; ADR-032
- * records its closed field set and the upstream reconciliation requirement.
+ * `set_node_field` (ADR-032) and the five DynamicGroup row operations
+ * (schema A27) are package-local, provisional additions pending adoption.
  * Every `§` below is a section of that revision; see docs/upstream-pins.json
  * for the pin registry and the amendments upstream has added since.
  * The doc layout + op semantics reference is docs/multiplayer-schema.md.
@@ -20,7 +20,11 @@
  * Version of the Y.Doc layout. Bump requires FE sign-off and an explicit old-layout disposition.
  * The authoritative layout + op-semantics reference is docs/multiplayer-schema.md.
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
+
+/** Private row registers and input-placement markers, never workflow fields. */
+export const DYNAMIC_GROUP_STATE_KEY = "__dynamic_group_state";
+export const DYNAMIC_GROUP_SLOT_KEY = "__dynamic_group_slot";
 
 /** Version of an imported destination reconstruction descriptor in `__link_state`. */
 export const LINK_STATE_DESCRIPTOR_VERSION = 1;
@@ -44,7 +48,8 @@ export interface ImportedLinkState {
 export type OperationLinkDestination =
   | { kind: "concrete"; to_slot: number; slot: Record<string, unknown> }
   | { kind: "promoted"; to_slot: number; name: string; slot: Record<string, unknown> }
-  | { kind: "autogrow"; to_slot: number; slot: Record<string, unknown>; request: GrowSpec };
+  | { kind: "autogrow"; to_slot: number; slot: Record<string, unknown>; request: GrowSpec }
+  | { kind: "dynamic_group"; to_slot: number; slot: Record<string, unknown>; group: string; row_id: string; field: string; node_incarnation: string };
 
 /** Durable intent created by an installed connect, owned by its A18 operation stamp. */
 export interface OperationLinkState {
@@ -76,13 +81,19 @@ export const FROZEN_OPS = [
   "clear",
   "define_subgraph",
   "insert_workflow",
+  "dynamic_group_insert_rows",
+  "dynamic_group_set_row",
+  "dynamic_group_delete_rows",
+  "dynamic_group_connect",
+  "dynamic_group_disconnect",
 ] as const;
 
 /** Defined by the vocabulary but deferred (§1.6): rejected until un-deferred by amendment. */
 export const DEFERRED_OPS = ["reset_doc"] as const;
 
 /**
- * Kinds accepted inside a multi-op batch by comfy-cli's `apply_specs` — the
+ * Kinds accepted inside a multi-op batch; the five A27 row kinds remain
+ * provisional package extensions. The other kinds follow comfy-cli's `apply_specs` — the
  * **spec-authoring** surface (`comfy workflow apply` / `foreach`), which takes
  * edit *specs* and MINTS ops. `clear` and `reset_doc` rewrite the whole
  * document, so a spec batch containing either is rejected whole, before
@@ -111,6 +122,11 @@ export const BATCHABLE_OPS = [
   "set_node_field",
   "delete_node",
   "define_subgraph",
+  "dynamic_group_insert_rows",
+  "dynamic_group_set_row",
+  "dynamic_group_delete_rows",
+  "dynamic_group_connect",
+  "dynamic_group_disconnect",
 ] as const;
 
 /** A kind `applyOps` implements. */
@@ -198,6 +214,54 @@ export interface AddNodeOp extends OpBase {
   /** Full mint-time node snapshot — AUTHORITATIVE, inserted verbatim (vocabulary §8.5). */
   node: WorkflowNode;
 }
+
+export interface DynamicGroupAddress {
+  node_id: NodeId;
+  /** Container instances; node_id names the leaf, not another path segment. */
+  path?: [string, ...string[]];
+  node_incarnation: string;
+  group: string;
+}
+
+export interface DynamicGroupInsertRowsOp extends OpBase, DynamicGroupAddress {
+  op: "dynamic_group_insert_rows";
+  after_row_id: string | null;
+  /** Complete creator-supplied field values; IDs derive from op_id and ordinal. */
+  rows: Record<string, unknown>[];
+}
+
+export interface DynamicGroupSetRowOp extends OpBase, DynamicGroupAddress {
+  op: "dynamic_group_set_row";
+  row_id: string;
+  values: Record<string, unknown>;
+  /** Optional visible host; absent edits the owning node's defaults. */
+  host_path?: [string, ...string[]];
+  host_incarnation?: string;
+}
+
+export interface DynamicGroupDeleteRowsOp extends OpBase, DynamicGroupAddress {
+  op: "dynamic_group_delete_rows";
+  row_ids: string[];
+}
+
+export interface DynamicGroupConnectOp extends OpBase, DynamicGroupAddress {
+  op: "dynamic_group_connect";
+  row_id: string;
+  field: string;
+  from_node: NodeId;
+  from_slot: number;
+  link_id: NodeId;
+  link_type: string;
+  input_type: string;
+}
+
+export interface DynamicGroupDisconnectOp extends OpBase, DynamicGroupAddress {
+  op: "dynamic_group_disconnect";
+  row_id: string;
+  field: string;
+}
+
+export type DynamicGroupRowOp = DynamicGroupInsertRowsOp | DynamicGroupSetRowOp | DynamicGroupDeleteRowsOp | DynamicGroupConnectOp | DynamicGroupDisconnectOp;
 
 /**
  * Merge a workflow template (nodes, links, `definitions.subgraphs`) into an
@@ -554,7 +618,8 @@ export type Op =
   | DeleteNodeOp
   | ClearOp
   | DefineSubgraphOp
-  | InsertWorkflowOp;
+  | InsertWorkflowOp
+  | DynamicGroupRowOp;
 
 /**
  * A kind the vocabulary declares but this package refuses to apply

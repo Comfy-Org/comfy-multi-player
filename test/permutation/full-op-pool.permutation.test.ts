@@ -7,7 +7,7 @@
  * equivalence classes, both arrival orders, and both batch boundaries.
  * Longer streams are fixed-seed fast-check samples with shrinking
  * left enabled. The default tier rotates actor/stamp classes across all
- * 64 kind pairs × 8 states (2,048 executions), plus 128 seeded streams (256 executions).
+ * 196 kind pairs × 8 states (6,272 executions), plus 128 seeded streams (256 executions).
  * Every frozen kind still meets every state, both orders, and both batch modes.
  *
  * Amendment A6 / docs/decisions/EXCEPTIONS.md and schema §2.5 item 2 are the
@@ -54,8 +54,8 @@ const PRECONDITIONS = [
   "promoted-or-autogrow",
 ] as const;
 // Keep the full pre-separation domain in the dedicated exhaustive CI job:
-// 81 kind pairs × 8 states × 2 actor pairs × 4 stamp pairs × 2 orders × 2 batches.
-const PAIR_EXECUTIONS = 20_736;
+// 196 kind pairs × 8 states × 2 actor pairs × 4 stamp pairs × 2 orders × 2 batches.
+const PAIR_EXECUTIONS = 50_176;
 const SAMPLED_RUNS = 1_696;
 const SAMPLE_SEED = 0x4f70504;
 
@@ -69,6 +69,7 @@ const catalog: WidgetCatalog = {
     Source: { widget_order: ["value"] },
     Sink: { widget_order: ["count"] },
     Aux: { widget_order: ["value"] },
+    Rows: { widget_order: ["rows"], dynamic_groups: { rows: { min: 0, max: 4, widgets: ["value"], defaults: { value: 0 } } } },
   },
 };
 
@@ -105,6 +106,7 @@ function base(precondition: Precondition): WorkflowJSON {
     node(30, "Aux", [], [], [2]),
     node(40, "Aux", [], [], [3]),
     node(57, DEF, [{ name: "width", type: "INT", link: null, widget: { name: "width" } }], [], [640]),
+    { id: 60, type: "Rows", inputs: [{ name: "rows.0.value", type: "VALUE", widget: { name: "rows.0.value" }, link: null }], outputs: [], widgets_values: { rows: 1, "rows.0.value": 0 }, properties: { dynamicGroupRows: { rows: ["row"] } } },
   ];
   if (precondition === "source-missing") nodes.splice(nodes.findIndex((candidate) => candidate.id === 10), 1);
   if (precondition === "destination-missing") nodes.splice(nodes.findIndex((candidate) => candidate.id === 20), 1);
@@ -250,6 +252,16 @@ function makeOp(
       return { ...env, op: "insert_workflow", workflow: { nodes: [node(140 + serial, "Aux", [], [], [value])], links: [] } };
     case "reset_doc":
       return { ...env, op: "reset_doc", workflow: { nodes: [], links: [] } };
+    case "dynamic_group_insert_rows":
+      return { ...env, op: kind, node_id: 60, node_incarnation: "0", group: "rows", after_row_id: "row", rows: [{ value }] };
+    case "dynamic_group_set_row":
+      return { ...env, op: kind, node_id: 60, node_incarnation: "0", group: "rows", row_id: "row", values: { value } };
+    case "dynamic_group_delete_rows":
+      return { ...env, op: kind, node_id: 60, node_incarnation: "0", group: "rows", row_ids: ["row"] };
+    case "dynamic_group_connect":
+      return { ...env, op: kind, node_id: 60, node_incarnation: "0", group: "rows", row_id: "row", field: "value", from_node: 10, from_slot: 0, link_id: 100 + side, link_type: "VALUE", input_type: "VALUE" };
+    case "dynamic_group_disconnect":
+      return { ...env, op: kind, node_id: 60, node_incarnation: "0", group: "rows", row_id: "row", field: "value" };
   }
 }
 
@@ -383,10 +395,10 @@ function normalizeSourceDeleteAutogrow(workflow: WorkflowJSON, ops: readonly Wir
 
 function removedLinkAliases(ops: readonly WireOp[]): Set<string> {
   const aliases = new Set<string>();
-  for (const connect of ops.filter((op): op is Extract<WireOp, { op: "connect" }> =>
-    op.op === "connect" && op.grow?.promoted === true)) {
+  for (const connect of ops.filter((op): op is Extract<WireOp, { op: "connect" | "dynamic_group_connect" }> =>
+    op.op === "dynamic_group_connect" || (op.op === "connect" && op.grow?.promoted === true))) {
     for (const deletion of ops.filter((op): op is Extract<WireOp, { op: "delete_node" }> => op.op === "delete_node")) {
-      if (String(deletion.node_id) !== String(connect.to_node) &&
+      if (String(deletion.node_id) !== String(connect.op === "dynamic_group_connect" ? connect.node_id : connect.to_node) &&
           deletion.removed_links.some((linkId) => String(linkId) === String(connect.link_id))) {
         aliases.add(String(connect.link_id));
       }
@@ -508,8 +520,8 @@ const PERMUTATION_TIERS: Array<[
   expectedPairs: number,
   sampledRuns: number,
 ]> = [
-  // Scales as (frozen kinds)² × 32; nine kinds since `set_node_field`.
-  ["representative", [], 15_000, 2_592, 128],
+  // Scales as (frozen kinds)² × 32; fourteen implemented kinds.
+  ["representative", [], 15_000, 6_272, 128],
   ["exhaustive", ["exhaustive"], 900_000, PAIR_EXECUTIONS, SAMPLED_RUNS],
 ];
 

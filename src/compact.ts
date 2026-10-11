@@ -72,6 +72,7 @@ import { project } from "./project.js";
 import { docCatalogPin } from "./read.js";
 import { assertReadableSchema } from "./schema-version.js";
 import { LEGACY_NODE_INCARNATION, NODE_INCARNATION_KEY, type WidgetCatalog } from "./types.js";
+import { rowTopologySnapshot } from "./dynamic-row-topology.js";
 
 /** Meta internals that mint re-derives from the projection; copying them would shadow the fresh value. */
 const REDERIVED_META_INTERNALS: readonly string[] = ["__definitions_extra"];
@@ -86,6 +87,11 @@ export function compact(doc: Y.Doc, catalog: WidgetCatalog): Y.Doc {
   assertReadableSchema(doc, "compact");
   const fresh = mint(project(doc, catalog), catalog, docCatalogPin(doc));
   fresh.transact(() => {
+    if (rowTopologySnapshot(doc) !== null) {
+      replaceStorage(nodesMap(doc), nodesMap(fresh));
+      replaceStorage(doc.getMap("links"), fresh.getMap("links"));
+      replaceStorage(definitionsMap(doc), definitionsMap(fresh));
+    }
     carryNodeIncarnations(nodesMap(doc), nodesMap(fresh));
     carryDefinitionInternals(definitionsMap(doc), definitionsMap(fresh));
     carryMetaInternals(doc, fresh);
@@ -94,6 +100,25 @@ export function compact(doc: Y.Doc, catalog: WidgetCatalog): Y.Doc {
     carryLiveStamps(doc, fresh);
   });
   return fresh;
+}
+
+function cloneStorage(value: unknown): unknown {
+  if (value instanceof Y.Map) {
+    const clone = new Y.Map<unknown>();
+    value.forEach((child, key) => clone.set(key, cloneStorage(child)));
+    return clone;
+  }
+  if (value instanceof Y.Array) {
+    const clone = new Y.Array<unknown>();
+    clone.push(value.toArray().map(cloneStorage));
+    return clone;
+  }
+  return structuredClone(value);
+}
+
+function replaceStorage<T>(from: Y.Map<T>, to: Y.Map<T>): void {
+  for (const key of [...to.keys()]) to.delete(key);
+  from.forEach((value, key) => to.set(key, cloneStorage(value) as T));
 }
 
 function carryNodeIncarnations(from: Y.Map<Y.Map<unknown>>, to: Y.Map<Y.Map<unknown>>): void {

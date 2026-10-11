@@ -99,6 +99,7 @@ import {
   nodesMap,
   nodeIncarnation,
   resolveDefinition,
+  ROOT_LINK_STATE,
   stampsMap,
   widgetStorageOf,
 } from "./doc.js";
@@ -108,6 +109,7 @@ import {
   formFinalOccurrence,
   formIndexOf,
   storedWidgetFormOf,
+  WIDGET_FORM_KEY,
 } from "./widget-form.js";
 import { linkHasMissingEndpoint, remapInsertedWorkflowIds } from "./remap.js";
 import { sha256Hex } from "./digest.js";
@@ -154,6 +156,13 @@ import {
 import { addInteriorLinkOrder, removeInteriorLinkOrder } from "./interior-link-order.js";
 import { groupCountRefusal, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
 import { dynamicGroupRowsOf } from "./dynamic-group-rows.js";
+import { commitRowMutation, prepareRowMutation, validateRowOp, rowFieldStamp } from "./dynamic-row-ops.js";
+import { activeRowGroups, currentRowIds, storedRowGroup, groupRows, liveRowIds, rowSlot, encodeRowRecord, decodeRowRecord, type RowSlot } from "./dynamic-row-state.js";
+import type { ConcreteConnectOp, DynamicGroupRowOp } from "./types.js";
+import { promotedRowValueIndex, rowTopologySnapshot, rowControlledHostInputs } from "./dynamic-row-topology.js";
+import { DYNAMIC_GROUP_SLOT_KEY } from "./types.js";
+import { assertReadableSchema } from "./schema-version.js";
+import { dynamicGroupRowId } from "./dynamic-row-ops.js";
 import { optionOwnedWidgets, projectedLength, widgetLayoutForWidgets, widgetOrderForValues, widgetOrderForWidgets } from "./dynamic-combos.js";
 import { NODE_INCARNATION_KEY, WRITABLE_NODE_FIELDS } from "./types.js";
 
@@ -253,7 +262,7 @@ export function applyOps(doc: Y.Doc, ops: Op[], catalog?: WidgetCatalog, context
       }
       let outcome: Exclude<ApplyOutcome["outcome"], "rejected"> = "applied";
       doc.transact(() => {
-        outcome = dispatch(doc, op, catalog);
+        outcome = dispatch(doc, op, catalog, digest);
         // comfy-cli records the op_id even for delete-wins/LWW-dropped no-ops.
         mset(bookkeeping, op.op_id, digest);
       }, op.actor);
@@ -558,7 +567,7 @@ function validateEnvelope(op: WireOp): void {
 
 type SuccessfulOutcome = "applied" | "no-op" | "lww-dropped";
 
-function dispatch(doc: Y.Doc, op: Op, catalog?: WidgetCatalog): SuccessfulOutcome {
+function dispatch(doc: Y.Doc, op: Op, catalog: WidgetCatalog | undefined, digest: string): SuccessfulOutcome {
   switch (op.op) {
     case "add_node":
       return applyAddNode(doc, op, catalog);
@@ -578,6 +587,12 @@ function dispatch(doc: Y.Doc, op: Op, catalog?: WidgetCatalog): SuccessfulOutcom
       return applyDefineSubgraph(doc, op, catalog);
     case "insert_workflow":
       return applyInsertWorkflow(doc, op, catalog);
+    case "dynamic_group_insert_rows":
+    case "dynamic_group_set_row":
+    case "dynamic_group_delete_rows":
+    case "dynamic_group_connect":
+    case "dynamic_group_disconnect":
+      return applyDynamicGroupRows(doc, op, catalog, digest);
     default:
       // Exhaustiveness guard (issue #21): with every `Op` member cased above,
       // `op` is `never` here. Add a seventh IMPLEMENTED kind to `Op` and this
@@ -594,6 +609,227 @@ function dispatch(doc: Y.Doc, op: Op, catalog?: WidgetCatalog): SuccessfulOutcom
       // (`validateEnvelope`), pinned by `test/exhaustiveness.test.ts`.
       return assertNever(op, "applier.dispatch");
   }
+}
+
+function applyDynamicGroupRows(doc: Y.Doc, op: DynamicGroupRowOp, catalog: WidgetCatalog | undefined, digest: string): SuccessfulOutcome {
+  assertReadableSchema(doc, "DynamicGroup");
+  validateRowOp(op);
+  const resolved = resolveDynamicRowTarget(doc, op, catalog);
+  const node = resolved?.node;
+  if (!node || nodeIncarnation(node) !== op.node_incarnation) return "no-op";
+  const entry = catalogEntry(catalog, String(node.get("type")));
+  if (!entry) throw new OpRejectedError("catalog_required", "DynamicGroup: pinned group catalog is required");
+  preflightRowHostShapes(doc, op);
+  const owner = op.path ? resolved!.canonicalPath : String(op.node_id);
+  const stamps = stampsMap(doc);
+  const plan = prepareRowMutation(node, owner, op, entry, stamps, digest);
+  if (op.op === "dynamic_group_set_row" && op.host_path !== undefined) return applyPromotedDynamicRow(doc, node, owner, op, catalog, stamps);
+  const scope = op.path ? interiorConnectScope(resolveDefinition(doc, resolved!.canonicalPath[0]!)!, resolved!.canonicalPath[0]!) : undefined;
+  if (op.op === "dynamic_group_connect") return applyDynamicRowConnection(doc, node, owner, op, scope, plan, stamps);
+  if (op.op === "dynamic_group_disconnect") return applyDynamicRowDisconnect(doc, node, owner, op, scope, plan, stamps);
+  commitRowMutation(node, op.group, plan, stamps);
+  return plan.outcome;
+}
+
+function preflightRowHostShapes(doc: Y.Doc, op: DynamicGroupRowOp): void {
+  if (op.op !== "dynamic_group_insert_rows" && op.op !== "dynamic_group_delete_rows") return;
+  let nodes = nodesMap(doc);
+  for (const container of op.path ?? []) {
+    const host = nodes.get(container);
+    if (!host) return;
+    if (rowControlledHostInputs(doc, host).length > 0 && (host.has(WIDGET_FORM_KEY) || !Array.isArray(host.get(OPAQUE_WIDGETS_KEY)))) throw new OpRejectedError("malformed_op", "DynamicGroup: structural edits require positional promoted host storage");
+    const inner = resolveDefinition(doc, String(host.get("type")))?.get("nodes");
+    if (!(inner instanceof Y.Map)) return;
+    nodes = inner as Y.Map<Y.Map<unknown>>;
+  }
+}
+
+function applyDynamicRowDisconnect(doc: Y.Doc, node: Y.Map<unknown>, owner: string | string[], op: Extract<DynamicGroupRowOp, { op: "dynamic_group_disconnect" }>, scope: InteriorGraphScope | undefined, plan: ReturnType<typeof prepareRowMutation>, stamps: Y.Map<unknown>): SuccessfulOutcome {
+  commitRowMutation(node, op.group, plan, stamps);
+    const target = rowFieldStamp(owner, op.node_incarnation, op.group, op.row_id, op.field, "dynamic_group_input");
+    if (plan.stamps.has(target)) {
+      retireRowInputLinks(doc, op, scope, rowSlot(plan.group.records.get(op.row_id), op.field)?.original_index);
+      const prior = rowSlot(plan.group.records.get(op.row_id), op.field)?.data["link"];
+      if (prior !== undefined && prior !== null) { if (scope) removeLinkInScope(scope, prior); else removeLink(doc, prior); }
+    }
+
+  return plan.outcome;
+}
+
+function resolveDynamicRowTarget(doc: Y.Doc, op: DynamicGroupRowOp, catalog?: WidgetCatalog): InteriorResolution | null {
+  if (op.op === "dynamic_group_set_row" && op.host_path !== undefined) return readRowOwner(doc, op);
+  if (op.path) return resolveInteriorNode(doc, [...op.path, String(op.node_id)], catalog, op.node_incarnation);
+  const node = nodesMap(doc).get(String(op.node_id));
+  return node ? { node, canonicalPath: [String(op.node_id)] } : null;
+}
+
+function applyDynamicRowConnection(doc: Y.Doc, node: Y.Map<unknown>, owner: string | string[], op: Extract<DynamicGroupRowOp, { op: "dynamic_group_connect" }>, scope: InteriorGraphScope | undefined, plan: ReturnType<typeof prepareRowMutation>, stamps: Y.Map<unknown>): SuccessfulOutcome {
+  const nodes = scope?.nodes ?? nodesMap(doc);
+  const source = nodes.get(String(op.from_node));
+  const proxy: ConcreteConnectOp = { ...op, op: "connect", to_node: op.node_id, to_slot: 0 };
+  const outputs = source ? requireOutputSlot(source, proxy) : null;
+  const refusal = arrayItemRefusal(op.link_id) ?? mapValueRefusal(op.link_id);
+  if (refusal) throw new OpRejectedError("malformed_op", refusal);
+  const prior = rowSlot(plan.group.records.get(op.row_id), op.field)?.data["link"];
+  const inputTarget = rowFieldStamp(owner, op.node_incarnation, op.group, op.row_id, op.field, "dynamic_group_input");
+  const inputWon = plan.stamps.has(inputTarget);
+  if (inputWon) {
+    commitRowMutation(node, op.group, plan, stamps);
+    retireRowInputLinks(doc, op, scope, rowSlot(plan.group.records.get(op.row_id), op.field)?.original_index);
+    if (prior !== undefined && prior !== null && String(prior) !== String(op.link_id)) {
+      if (scope) removeLinkInScope(scope, prior); else removeLink(doc, prior);
+    }
+  }
+  const claimed = claimLinkIdentity(doc, proxy, scope);
+  if (!inputWon) return "lww-dropped";
+  const slot = setRowSlotLink(node, op.group, op.row_id, op.field, claimed && source ? op.link_id : null)!;
+  if (claimed) installDynamicRowConnection(doc, op, scope, slot, outputs, stamps);
+  return plan.outcome;
+}
+
+function retireRowInputLinks(doc: Y.Doc, op: Extract<DynamicGroupRowOp, { op: "dynamic_group_connect" | "dynamic_group_disconnect" }>, scope: InteriorGraphScope | undefined, baselineIndex: number | null | undefined): void {
+  const states = scope ? scope.definition.get(ROOT_LINK_STATE) : linkStateMap(doc);
+  if (!(states instanceof Y.Map)) return;
+  const retired: string[] = [];
+  states.forEach((raw, id) => {
+    const state = raw as OperationLinkState;
+    if (String(state.tuple[3]) !== String(op.node_id) || (op.op === "dynamic_group_connect" && id === String(op.link_id))) return;
+    const dst = state.destination;
+    const matches = dst.kind === "dynamic_group"
+      ? dst.node_incarnation === op.node_incarnation && dst.group === op.group && dst.row_id === op.row_id && dst.field === op.field
+      : baselineIndex != null && dst.to_slot === baselineIndex;
+    if (matches) retired.push(id);
+  });
+  for (const id of retired) { if (scope) removeLinkInScope(scope, id); else removeLink(doc, id); }
+}
+
+function setRowSlotLink(node: Y.Map<unknown>, group: string, rowId: string, field: string, link: unknown): RowSlot | null {
+  const rows = storedRowGroup(node, group)?.get("records");
+  if (!(rows instanceof Y.Map)) return null;
+  const raw = rows.get(rowId);
+  const row = raw === undefined ? undefined : decodeRowRecord(raw);
+  if (!rowSlot(row, field)) return null;
+  const next = structuredClone(row!);
+  next.slots[field]!.data["link"] = link;
+  mset(rows, rowId, encodeRowRecord(next));
+  return next.slots[field]!;
+}
+
+function installDynamicRowConnection(doc: Y.Doc, op: Extract<DynamicGroupRowOp, { op: "dynamic_group_connect" }>, scope: InteriorGraphScope | undefined, slot: RowSlot, outputs: Y.Array<unknown> | null, stamps: Y.Map<unknown>): void {
+  const links = scope?.links ?? linksMap(doc);
+  const toSlot = slot.original_index ?? 0;
+  const tuple: LinkTuple = [op.link_id, op.from_node, op.from_slot, op.node_id, toSlot, op.link_type];
+  if (outputs) mset(links, String(op.link_id), scope ? { id: op.link_id, origin_id: op.from_node, origin_slot: op.from_slot, target_id: op.node_id, target_slot: toSlot, type: op.link_type } : tuple);
+  const states = scope ? scopedRowLinkState(scope.definition) : linkStateMap(doc);
+  const state: OperationLinkState = { version: LINK_STATE_DESCRIPTOR_VERSION, authority: { kind: "operation", stamp: stampKey(op) }, tuple,
+    destination: { kind: "dynamic_group", to_slot: toSlot, slot: structuredClone(slot.data), group: op.group, row_id: op.row_id, field: op.field, node_incarnation: op.node_incarnation } };
+  mset(states, String(op.link_id), state);
+  if (!outputs) return;
+  const output = outputs.get(op.from_slot) as Y.Map<unknown>;
+  let refs = output.get("links");
+  if (!(refs instanceof Y.Array)) { refs = new Y.Array<unknown>(); mset(output, "links", refs); }
+  if (!(refs as Y.Array<unknown>).toArray().some((id) => String(id) === String(op.link_id))) apush(refs as Y.Array<unknown>, op.link_id);
+  if (scope) recordInteriorLinkOrder(scope.definition, stamps, String(op.link_id), stampKey(op));
+}
+
+function applyPromotedDynamicRow(doc: Y.Doc, node: Y.Map<unknown>, owner: string | string[], op: Extract<DynamicGroupRowOp, { op: "dynamic_group_set_row" }>, catalog: WidgetCatalog | undefined, stamps: Y.Map<unknown>): SuccessfulOutcome {
+  const plan = promotedRowWrite(doc, node, owner, op, catalog, stamps);
+  if (!plan) return "no-op";
+  if (plan.writes.size === 0) return "lww-dropped";
+  mset(plan.host, OPAQUE_WIDGETS_KEY, plan.next);
+  for (const [key, stamp] of plan.writes) mset(stamps, key, stamp);
+  return "applied";
+}
+
+function promotedRowWrite(doc: Y.Doc, node: Y.Map<unknown>, owner: string | string[], op: Extract<DynamicGroupRowOp, { op: "dynamic_group_set_row" }>, catalog: WidgetCatalog | undefined, stamps: Pick<Y.Map<unknown>, "get">): { host: Y.Map<unknown>; next: unknown[]; writes: Map<string, StampKey> } | null {
+  const hostPath = op.host_path!;
+  const hostTarget = resolveInteriorNode(doc, hostPath, catalog, op.host_incarnation, false);
+  const host = hostTarget?.node;
+  if (!host || nodeIncarnation(host) !== op.host_incarnation) return null;
+  const raw = host.get(OPAQUE_WIDGETS_KEY);
+  if (!Array.isArray(raw)) throw new OpRejectedError("malformed_op", "DynamicGroup: promoted host requires positional values");
+  const next = structuredClone(raw);
+  const writes = new Map<string, StampKey>();
+  for (const [field, value] of Object.entries(op.values)) {
+    const index = promotedRowValueIndex(doc, host, node, op.group, op.row_id, field);
+    if (index === null || index >= next.length) throw new OpRejectedError("malformed_op", "DynamicGroup: row field is not materialized on the requested host");
+    const hostOwner = hostPath.length === 1 ? hostPath[0]! : hostTarget!.canonicalPath;
+    const key = JSON.stringify(["dynamic_group_host", hostOwner, op.host_incarnation, owner, op.node_incarnation, op.group, op.row_id, field]);
+    const prior = stamps.get(key) as StampKey | undefined;
+    if (prior && compareStampKeys(stampKey(op), prior) <= 0) continue;
+    next[index] = structuredClone(value);
+    writes.set(key, stampKey(op));
+  }
+  return { host, next, writes };
+}
+
+/** Run inside the writer's existing sequence-CAS admission before persisting an op. */
+export function admitDynamicGroupRowOp(doc: Y.Doc, op: DynamicGroupRowOp, catalog: WidgetCatalog): void {
+  assertReadableSchema(doc, "admitDynamicGroupRowOp");
+  inspectOps([op]);
+  validateRowOp(op);
+  if (!doc.share.has("nodes")) throw new OpRejectedError("malformed_op", "DynamicGroup: owner is absent");
+  if (op.path && !doc.share.has("definitions")) throw new OpRejectedError("malformed_op", "DynamicGroup: interior owner is absent");
+  let target: InteriorResolution | null = null;
+  if (op.path) target = resolveInteriorNode(doc, [...op.path, String(op.node_id)], catalog, op.node_incarnation, false);
+  if (op.op === "dynamic_group_set_row" && op.host_path !== undefined) target = readRowOwner(doc, op);
+  const node = op.path ? target?.node : nodesMap(doc).get(String(op.node_id));
+  if (!node || nodeIncarnation(node) !== op.node_incarnation) throw new OpRejectedError("malformed_op", "DynamicGroup: owner lifetime is stale");
+  const entry = catalogEntry(catalog, String(node.get("type")));
+  if (!entry) throw new OpRejectedError("catalog_required", "DynamicGroup: pinned catalog is required");
+  preflightRowHostShapes(doc, op);
+  const data = groupRows(node, op.group, entry);
+  const meta = entry.dynamic_groups![op.group]!;
+  checkRowAdmissionBounds(op, data, meta.min, meta.max);
+  const owner = target?.canonicalPath ?? String(op.node_id);
+  const stamps = doc.share.has("__stamps") ? doc.getMap("__stamps") : new Map<string, unknown>();
+  prepareRowMutation(node, owner, op, entry, stamps, opDigest(op));
+  if (op.op === "dynamic_group_connect") preflightAdmittedRowConnection(doc, op, target);
+  if (op.op === "dynamic_group_set_row" && op.host_path && !promotedRowWrite(doc, node, owner, op, catalog, stamps)) throw new OpRejectedError("malformed_op", "DynamicGroup: promoted host lifetime is stale");
+}
+
+function preflightAdmittedRowConnection(doc: Y.Doc, op: Extract<DynamicGroupRowOp, { op: "dynamic_group_connect" }>, target: InteriorResolution | null): void {
+  const scope = op.path ? interiorConnectScope(resolveDefinition(doc, target!.canonicalPath[0]!)!, target!.canonicalPath[0]!) : undefined;
+  const source = (scope?.nodes ?? nodesMap(doc)).get(String(op.from_node));
+  if (!source) throw new OpRejectedError("malformed_op", "DynamicGroup: connection source is absent");
+  requireOutputSlot(source, { ...op, op: "connect", to_node: op.node_id, to_slot: 0 });
+}
+
+function checkRowAdmissionBounds(op: DynamicGroupRowOp, data: ReturnType<typeof groupRows>, min: number, max: number): void {
+  const live = new Set(liveRowIds(data));
+  let count = live.size;
+  if (op.op === "dynamic_group_insert_rows") {
+    if (op.after_row_id !== null && data.records.get(op.after_row_id)?.created === undefined) throw new OpRejectedError("malformed_op", "DynamicGroup: insertion anchor is unknown");
+    count += op.rows.filter((_row, index) => data.records.get(dynamicGroupRowId(op.op_id, index))?.created === undefined).length;
+    if (count > max) throw new OpRejectedError("malformed_op", "DynamicGroup: insertion exceeds max rows");
+  } else if (op.op === "dynamic_group_delete_rows") {
+    if (op.row_ids.some((id) => data.records.get(id)?.created === undefined)) throw new OpRejectedError("malformed_op", "DynamicGroup: deletion targets an unknown row");
+    count -= op.row_ids.filter((id) => live.has(id)).length;
+    if (count < min) throw new OpRejectedError("malformed_op", "DynamicGroup: deletion falls below min rows");
+  } else if (data.records.get(op.row_id)?.created === undefined) {
+    throw new OpRejectedError("malformed_op", "DynamicGroup: target row is unknown");
+  }
+}
+
+function readRowOwner(doc: Y.Doc, op: DynamicGroupRowOp): InteriorResolution | null {
+  let nodes = nodesMap(doc);
+  let owner: string[] | null = null;
+  for (const container of op.path ?? []) {
+    const host = nodes.get(container);
+    const definition = resolveDefinition(doc, host ? String(host.get("type")) : container);
+    const interior = definition?.get("nodes");
+    if (!(interior instanceof Y.Map)) return null;
+    nodes = interior as Y.Map<Y.Map<unknown>>;
+    owner = [String(definition!.get("id")), String(op.node_id)];
+  }
+  const node = nodes.get(String(op.node_id));
+  return node ? { node, canonicalPath: owner ?? [String(op.node_id)] } : null;
+}
+
+function scopedRowLinkState(definition: Y.Map<unknown>): Y.Map<unknown> {
+  let state = definition.get("__link_state");
+  if (!(state instanceof Y.Map)) { state = new Y.Map<unknown>(); mset(definition, "__link_state", state); }
+  return state as Y.Map<unknown>;
 }
 
 function applyDefineSubgraph(
@@ -1918,6 +2154,7 @@ function applyPromotedHostWrite(
       mset(stamps, targetKey, key);
       return "applied";
     case "positional": {
+      if (rowControlledHostInputs(doc, target).length > 0) throw new OpRejectedError("malformed_op", "promoted row values require a row-ID operation");
       const current = target.get(OPAQUE_WIDGETS_KEY);
       const next: unknown[] = Array.isArray(current) ? structuredClone(current) : [];
       if (next.length <= promoted.valueIndex) {
@@ -1966,11 +2203,17 @@ function validateWidgetOp(op: SetWidgetOp) {
 }
 
 function validateDynamicGroupValue(node: Y.Map<unknown>, catalog: WidgetCatalog | undefined, widget: string, occurrence: number, value: unknown): void {
-  const rows = dynamicGroupRowsOf(node.get("properties"));
+  const rows = currentRowIds(node);
   if (rows && Object.hasOwn(rows, widget) && (occurrence !== 0 || value !== rows[widget]!.length)) {
     throw new OpRejectedError("malformed_op", "row count changes require an atomic DynamicGroup row operation");
   }
   const entry = catalogEntry(catalog, String(node.get("type") ?? ""));
+  if (rows && !entry && Object.keys(rows).some((name) => widget.startsWith(`${name}.`) && /^(0|[1-9]\d*)\./.test(widget.slice(name.length + 1)))) {
+    throw new OpRejectedError("catalog_required", "indexed row writes require a compatible group catalog and row ID");
+  }
+  if (rows && isDynamicGroupField(entry, widget)) {
+    throw new OpRejectedError("malformed_op", "indexed row fields require a row-ID operation");
+  }
   const refusal = groupCountRefusal(entry, widget, value);
   if (refusal) throw new OpRejectedError("malformed_op", refusal);
   if (groupOf(entry, widget) && storedWidgetFormOf(node)) {
@@ -1979,6 +2222,30 @@ function validateDynamicGroupValue(node: Y.Map<unknown>, catalog: WidgetCatalog 
       throw new OpRejectedError("malformed_op", "row count changes require an updated widgets_values_form declaration");
     }
   }
+}
+
+function rejectUnstableInputIndex(doc: Y.Doc, node: Y.Map<unknown>, index: number, catalog?: WidgetCatalog): void {
+  const input = node.get("inputs");
+  if (!(input instanceof Y.Array)) return;
+  const entry = catalogEntry(catalog, String(node.get("type")));
+  const ids = currentRowIds(node);
+  let boundary = Infinity;
+  const hostRows = rowControlledHostInputs(doc, node);
+  if (hostRows.length > 0) boundary = Math.min(boundary, ...hostRows);
+  input.forEach((slot, position) => {
+    if (!(slot instanceof Y.Map)) return;
+    const name = slot.get("name");
+    if (slot.has(DYNAMIC_GROUP_SLOT_KEY) || (ids && typeof name === "string" && isDynamicGroupField(entry, name))) boundary = Math.min(boundary, position);
+  });
+  const projection = rowTopologySnapshot(doc)?.nodes.find((candidate) => String(candidate.id) === String(node.get("id")));
+  if (projection && Array.isArray(projection.inputs)) {
+    for (let position = 0; position < input.length; position++) {
+      const old = input.get(position);
+      const current = projection.inputs[position] as Record<string, unknown> | undefined;
+      if (old instanceof Y.Map && old.get("name") !== current?.["name"]) { boundary = Math.min(boundary, position); break; }
+    }
+  }
+  if (index >= boundary) throw new OpRejectedError("malformed_op", "row-controlled inputs require a row-ID connection address");
 }
 
 function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): SuccessfulOutcome {
@@ -2494,7 +2761,7 @@ function interiorConnectScope(definition: Y.Map<unknown>, definitionId: string):
   return { nodes: nodes as Y.Map<Y.Map<unknown>>, links, definition };
 }
 
-function applyInteriorConnect(doc: Y.Doc, op: ConnectOp, scope: InteriorGraphScope): SuccessfulOutcome {
+function applyInteriorConnect(doc: Y.Doc, op: ConnectOp, scope: InteriorGraphScope, catalog?: WidgetCatalog): SuccessfulOutcome {
   const linkRefusal = arrayItemRefusal(op.link_id) ?? mapValueRefusal(op.link_id);
   if (linkRefusal !== null) {
     throw new OpRejectedError("malformed_op", `connect: link_id: ${linkRefusal}`);
@@ -2503,6 +2770,7 @@ function applyInteriorConnect(doc: Y.Doc, op: ConnectOp, scope: InteriorGraphSco
   const src = scope.nodes.get(String(op.from_node));
   const dst = scope.nodes.get(String(op.to_node));
   if (!dst) return "no-op";
+  rejectUnstableInputIndex(doc, dst, op.to_slot as number, catalog);
   const sourceOutputs = src ? requireOutputSlot(src, op) : null;
   const toIdx = op.to_slot as number;
   const inputs = dst.get("inputs");
@@ -2642,7 +2910,7 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
   if (op.path && op.path.length > 0) {
     const scope = resolveInteriorGraphScope(doc, op, catalog);
     if (scope === null) return "no-op";
-    return applyInteriorConnect(doc, op, scope);
+    return applyInteriorConnect(doc, op, scope, catalog);
   }
 
   const nodes = nodesMap(doc);
@@ -2709,9 +2977,10 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
       // Autogrow is NOT a shared register: every grow mints its own slot keyed by
       // `grow_id`, so two concurrent grows onto one base both survive and there
       // is nothing to gate (vocabulary §1.2 / amendment v1.2's carve-out).
-      if (!claimLinkIdentity(doc, op)) return "lww-dropped";
-      if (!src) return "no-op"; // source concurrently deleted → no-op (delete wins)
-      return growInputSlot(doc, dst, op, count, catalog);
+      const identityWon = claimLinkIdentity(doc, op);
+      if (!src) return identityWon ? "no-op" : "lww-dropped";
+      const index = growInputSlot(doc, dst, op, count, catalog);
+      return identityWon ? index : "lww-dropped";
     }
     // `to_slot`'s type was settled by `requireOpOnlyValid`.
     const toIdx = op.to_slot as number;
@@ -2720,6 +2989,7 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
   }
 
   function claimConcreteInput(dst: Y.Map<unknown>, toIdx: number): boolean {
+    rejectUnstableInputIndex(doc, dst, toIdx, catalog);
     const ins = dst.get("inputs");
     // STATE-DEPENDENT half only: the op-only domain (integer, non-negative) was
     // settled by `requireOpOnlyValid` above, before any document read.
@@ -2734,7 +3004,7 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
       throw new OpRejectedError("input_slot_missing", `connect: input slot ${toIdx} is not a slot record`);
     }
 
-    if (!claimLinkIdentity(doc, op)) return false;
+    const identityWon = claimLinkIdentity(doc, op);
 
     // ---- The concrete-input LWW register (op-vocabulary-v1.md amendment v1.2)
     //
@@ -2768,7 +3038,8 @@ function applyConnect(doc: Y.Doc, op: ConnectOp, catalog?: WidgetCatalog): Succe
     mset(stamps, targetKey, key);
     const prev = slot.get("link");
     if (prev != null && prev !== op.link_id) removeLink(doc, prev);
-    return true;
+    if (!identityWon) mset(slot, "link", null);
+    return identityWon;
   }
 
   const toIdx = claimDestination(dst);
@@ -2835,7 +3106,7 @@ function operationLinkDestination(
 function claimLinkIdentity(doc: Y.Doc, op: ConnectOp, scope?: InteriorGraphScope): boolean {
   const stamps = stampsMap(doc);
   const normalizedId = String(op.link_id);
-  const targetKey = JSON.stringify(["link", ...(scope && op.path ? [op.path.map(String)] : []), normalizedId]);
+  const targetKey = JSON.stringify(["link", ...(scope ? [[String(scope.definition.get("id"))]] : []), normalizedId]);
   const prior = stamps.get(targetKey) as StampKey | undefined;
   const key = stampKey(op);
   if (prior != null && compareStampKeys(key, prior) <= 0) return false;
@@ -3081,7 +3352,7 @@ function normalizeGrowFamily(
     }
     const linkId = snapshot["grow_id"];
     const link = linksMap(doc).get(String(linkId));
-    if (Array.isArray(link)) {
+    if (Array.isArray(link) && String(link[3]) === String(toNode)) {
       const updated = [...link];
       updated[4] = positions[rank];
       mset(linksMap(doc), String(linkId), updated);
@@ -3209,6 +3480,8 @@ function removeLink(doc: Y.Doc, linkId: unknown): void {
 function removeLinkInScope(scope: InteriorGraphScope, linkId: unknown): void {
   const key = String(linkId);
   if (scope.links.has(key)) mdel(scope.links, key);
+  const states = scope.definition.get("__link_state");
+  if (states instanceof Y.Map && states.has(key)) mdel(states, key);
   scrubNodeLinkRefs(scope.nodes, (candidate) => candidate != null && String(candidate) === key);
   const linkOrder = scope.definition.get("link_order");
   if (Array.isArray(linkOrder)) {
@@ -3226,6 +3499,16 @@ function scrubNodeLinkRefs(
   shouldRemove: (linkId: unknown) => boolean,
 ): void {
   nodes.forEach((node) => {
+    for (const [group, data] of activeRowGroups(node)) {
+      const rows = storedRowGroup(node, group)!.get("records") as Y.Map<unknown>;
+      for (const [id, raw] of data.records) {
+        const selected = Object.entries(raw.slots).filter(([_field, slot]) => shouldRemove(slot.data["link"]));
+        if (selected.length === 0) continue;
+        const next = structuredClone(raw);
+        for (const [field] of selected) next.slots[field]!.data["link"] = null;
+        mset(rows, id, encodeRowRecord(next));
+      }
+    }
     const ins = node.get("inputs");
     if (ins instanceof Y.Array) {
       ins.forEach((slot: unknown) => {
@@ -3457,14 +3740,10 @@ function restoreDurableLinks(doc: Y.Doc, nodeId: unknown): void {
 
     const outs = src.get("outputs");
     if (!(outs instanceof Y.Array) || !(outs.get(tuple[2]) instanceof Y.Map)) return;
-    const slot = restoreDestinationInput(dst, state);
-    if (slot === null) return;
-    const incumbent = slot.get("link");
-    if (incumbent != null && String(incumbent) !== String(tuple[0])) return;
+    if (!restoreLinkDestination(dst, state)) return;
 
     const links = linksMap(doc);
     if (!links.has(linkKey)) mset(links, linkKey, structuredClone(tuple));
-    mset(slot, "link", tuple[0]);
     const outPort = outs.get(tuple[2]) as Y.Map<unknown>;
     let outLinks = outPort.get("links");
     if (!(outLinks instanceof Y.Array)) {
@@ -3475,6 +3754,27 @@ function restoreDurableLinks(doc: Y.Doc, nodeId: unknown): void {
       apush(outLinks as Y.Array<unknown>, tuple[0]);
     }
   });
+}
+
+function restoreLinkDestination(dst: Y.Map<unknown>, state: OperationLinkState): boolean {
+  if (state.destination.kind === "dynamic_group") return restoreRowDestination(dst, state);
+  const slot = restoreDestinationInput(dst, state);
+  if (slot === null) return false;
+  const incumbent = slot.get("link");
+  if (incumbent != null && String(incumbent) !== String(state.tuple[0])) return false;
+  mset(slot, "link", state.tuple[0]);
+  return true;
+}
+
+function restoreRowDestination(dst: Y.Map<unknown>, state: OperationLinkState): boolean {
+  const destination = state.destination;
+  if (destination.kind !== "dynamic_group" || nodeIncarnation(dst) !== destination.node_incarnation) return false;
+  const group = activeRowGroups(dst).get(destination.group);
+  const row = group?.records.get(destination.row_id);
+  const slot = rowSlot(row, destination.field);
+  if (!row || row.created === undefined || row.deleted || !slot) return false;
+  if (slot.data["link"] != null && String(slot.data["link"]) !== String(state.tuple[0])) return false;
+  return setRowSlotLink(dst, destination.group, destination.row_id, destination.field, state.tuple[0]) !== null;
 }
 
 function restoreDestinationInput(dst: Y.Map<unknown>, state: OperationLinkState): Y.Map<unknown> | null {
@@ -3494,7 +3794,7 @@ function restoreDestinationInput(dst: Y.Map<unknown>, state: OperationLinkState)
     inputArray.insert(slotIndex, [slot]);
   }
   const slot = inputArray.get(destination.to_slot);
-  return slot instanceof Y.Map ? slot : null;
+  return slot instanceof Y.Map && !slot.has(DYNAMIC_GROUP_SLOT_KEY) ? slot : null;
 }
 
 /**
@@ -3577,6 +3877,7 @@ function applyDisconnect(doc: Y.Doc, op: DisconnectOp): SuccessfulOutcome {
   const nodes = nodesMap(doc);
   const dst = nodes.get(String(op.to_node));
   if (!dst) return retireStrandedLink(doc, op) ? "applied" : "no-op";
+  rejectUnstableInputIndex(doc, dst, op.to_slot);
 
   const ins = dst.get("inputs");
   if (!(ins instanceof Y.Array) || op.to_slot >= ins.length) {

@@ -9,11 +9,11 @@ import {
 import { OPAQUE_WIDGETS_KEY, SCHEMA_VERSION, linksMap, nodesMap } from "../src/index.js";
 
 describe("schema", () => {
-  it("pins SCHEMA_VERSION at 6", () => {
-    expect(SCHEMA_VERSION).toBe(6);
+  it("pins SCHEMA_VERSION at 7", () => {
+    expect(SCHEMA_VERSION).toBe(7);
   });
 
-  it("initDoc creates the schema v6 layout with lazy clock reservations", () => {
+  it("initDoc creates the schema v7 layout with lazy clock reservations", () => {
     const doc = new Y.Doc();
     initDoc(doc, "object_info@2026-08-01");
     expect(nodesMap(doc)).toBeInstanceOf(Y.Map);

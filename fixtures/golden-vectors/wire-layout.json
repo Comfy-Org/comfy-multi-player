@@ -1,7 +1,7 @@
 {
   "format_version": 1,
-  "comment": "Canonical WIRE layout of the multiplayer Y.Doc (schema \u00a71). `roots` maps each logical role to the Y.Doc ROOT TYPE NAME as it is spelled inside an encoded Yjs update; `reserved_node_keys` names the per-node keys the doc owns. These strings are a cross-implementation contract, not an internal detail: two replicas that disagree about them cannot exchange a document, because a follower forking from the bootstrap snapshot (KA-10) resolves roots by name. Renaming any of them is a layout break: schema \u00a710 requires a SCHEMA_VERSION bump, an explicit old-layout disposition, updated fixtures or a fixture-format note, an amendment section in the schema document, and FE sign-off, plus a matching edit here and in docs/INVARIANTS.md KA-3. test/wire-layout-contract.test.ts holds the four-way name agreement and the SCHEMA_VERSION triple's consistency; it does NOT enforce the bump itself, so read \u00a710 rather than treating a green suite as permission. A second implementation should read this file rather than transcribing the names. Schema v4 adds clock_reservations; schema v5 adds occurrence-addressed widget keys. Amendment A24 adds the reserved per-node key `widget_form` WITHOUT a schema bump, on Amendment A2's precedent: it is reachable only on a node whose payload declared `widgets_values_form`, so no earlier v5 document can contain it. Private-alpha old layouts are refused, not migrated. The reservation root is created on first successful admission and empty roots are absent from snapshots. Amendment A26 uses schema v6 to fence older writers from resizing groups whose producer-owned row IDs are persisted in node properties; root names and reserved node keys are unchanged.",
-  "schema_version": 6,
+  "comment": "Canonical WIRE layout of the multiplayer Y.Doc (schema \u00a71). `roots` maps each logical role to the Y.Doc ROOT TYPE NAME as it is spelled inside an encoded Yjs update; `reserved_node_keys` names the per-node keys the doc owns. These strings are a cross-implementation contract, not an internal detail: two replicas that disagree about them cannot exchange a document, because a follower forking from the bootstrap snapshot (KA-10) resolves roots by name. Renaming any of them is a layout break: schema \u00a710 requires a SCHEMA_VERSION bump, an explicit old-layout disposition, updated fixtures or a fixture-format note, an amendment section in the schema document, and FE sign-off, plus a matching edit here and in docs/INVARIANTS.md KA-3. test/wire-layout-contract.test.ts holds the four-way name agreement and the SCHEMA_VERSION triple's consistency; it does NOT enforce the bump itself, so read \u00a710 rather than treating a green suite as permission. A second implementation should read this file rather than transcribing the names. Schema v4 adds clock_reservations; schema v5 adds occurrence-addressed widget keys. Amendment A24 adds the reserved per-node key `widget_form` WITHOUT a schema bump, on Amendment A2's precedent: it is reachable only on a node whose payload declared `widgets_values_form`, so no earlier v5 document can contain it. Private-alpha old layouts are refused, not migrated. The reservation root is created on first successful admission and empty roots are absent from snapshots. Amendment A26 uses schema v6 to fence older writers from resizing groups whose producer-owned row IDs are persisted in node properties; root names and reserved node keys are unchanged. Amendment A27 uses schema v7 for private dynamic_group_state node registers and dynamic_group_slot input markers; old readers cannot interpret them. These reserved fields are created only by row operations and never emitted as workflow fields.",
+  "schema_version": 7,
   "roots": {
     "nodes": "nodes",
     "links": "links",
@@ -15,6 +15,10 @@
   "reserved_node_keys": {
     "opaque_widgets": "__widgets_opaque",
     "node_incarnation": "__incarnation",
-    "widget_form": "__widgets_form"
+    "widget_form": "__widgets_form",
+    "dynamic_group_state": "__dynamic_group_state"
+  },
+  "reserved_input_keys": {
+    "dynamic_group_slot": "__dynamic_group_slot"
   }
 }

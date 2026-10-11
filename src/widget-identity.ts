@@ -4,6 +4,14 @@ export interface WidgetIdentity {
   occurrence: number;
 }
 
+/** Read-only widget values, backed by either stored Yjs data or a derived row view. */
+export interface WidgetValues {
+  readonly size: number;
+  get(key: string): unknown;
+  has(key: string): boolean;
+  forEach(callback: (value: unknown, key: string) => void): void;
+}
+
 /**
  * Occurrence zero keeps the legacy key so selectors and single-name catalogs
  * retain their existing storage. Reserved-looking names are escaped into the

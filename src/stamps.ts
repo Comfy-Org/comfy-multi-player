@@ -152,6 +152,12 @@ export function writeTarget(op: WireOp): unknown[] {
       return [op.op];
     case "define_subgraph":
       return ["definition", op.subgraph_id];
+    case "dynamic_group_insert_rows":
+    case "dynamic_group_delete_rows":
+    case "dynamic_group_set_row":
+    case "dynamic_group_connect":
+    case "dynamic_group_disconnect":
+      return dynamicRowTarget(op);
     default:
       // Exhaustiveness guard (issue #21): with every `WireOp` member cased
       // above — the six `Op` kinds plus the deferred `reset_doc` — `op` is
@@ -189,4 +195,12 @@ export function widgetTargetKey(nodeId: unknown, incarnation: string, widget: st
 /** The `__stamps` map key for an op's write target (stable JSON serialization). */
 export function stampTargetKey(op: WireOp): string {
   return JSON.stringify(writeTarget(op));
+}
+
+function dynamicRowTarget(op: Extract<WireOp, { op: "dynamic_group_insert_rows" | "dynamic_group_set_row" | "dynamic_group_delete_rows" | "dynamic_group_connect" | "dynamic_group_disconnect" }>): unknown[] {
+  const owner = op.path ? [...op.path.map(String), String(op.node_id)] : String(op.node_id);
+  const target: unknown[] = [op.op, owner, op.node_incarnation, op.group];
+  if (op.op === "dynamic_group_insert_rows") return [...target, op.op_id];
+  if (op.op === "dynamic_group_delete_rows") return [...target, [...op.row_ids].sort()];
+  return [...target, op.row_id];
 }

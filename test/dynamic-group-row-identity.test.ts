@@ -13,6 +13,8 @@ const fixture = JSON.parse(readFileSync(new URL("./fixtures/dynamic-group-compos
 };
 const { catalog } = fixture;
 const ids = { loras: ["row-a", "row-c"], weights: ["row-a"] };
+const rowEdit: Op = { op: "dynamic_group_set_row", op_id: fixture.op.op_id, actor: fixture.op.actor, stamp: fixture.op.stamp, base_version: fixture.op.base_version,
+  node_id: 1, node_incarnation: "0", group: "weights", row_id: "row-a", values: { weight: 0.9 } };
 
 function workflow(shape: "array" | "object" | "declared" = "array"): WorkflowJSON {
   const result = structuredClone(shape === "declared" ? fixture.explicit_form_workflow : fixture.workflow);
@@ -62,7 +64,7 @@ describe("DynamicGroup row identity reader", () => {
       definitions: { subgraphs: [{ id: "group-definition", nodes: workflow().nodes, links: [] }] },
     };
     const doc = mint(source, catalog);
-    const op: Op = { ...fixture.op, path: ["9", "1"], inner_widget: "weights.0.weight", promoted: null };
+    const op: Op = { ...rowEdit, path: ["9"] };
     expect(applyOps(doc, [op], catalog).outcomes[0]?.outcome).toBe("applied");
     expect(project(doc, catalog)).toMatchObject({ definitions: { subgraphs: [{ nodes: [{
       properties: { dynamicGroupRows: ids }, widgets_values_named: { "weights.0.weight": 0.9 },
@@ -222,7 +224,7 @@ describe("DynamicGroup row identity reader", () => {
     const seed = mint(workflow(), catalog);
     const bytes = Y.encodeStateAsUpdate(seed);
     const count: Op = { ...fixture.op, op_id: "b".repeat(32), widget: "loras", value: 2 };
-    for (const ops of [[fixture.op, count], [count, fixture.op]]) {
+    for (const ops of [[rowEdit, count], [count, rowEdit]]) {
       const doc = new Y.Doc();
       Y.applyUpdate(doc, bytes);
       expect(applyOps(doc, ops, catalog).outcomes.map((outcome) => outcome.outcome)).toEqual(["applied", "applied"]);
@@ -232,10 +234,10 @@ describe("DynamicGroup row identity reader", () => {
     seed.destroy();
   });
 
-  it("uses schema v6 and refuses an old document without relabelling", () => {
-    expect(SCHEMA_VERSION).toBe(6);
+  it("uses schema v7 and refuses an old document without relabelling", () => {
+    expect(SCHEMA_VERSION).toBe(7);
     const doc = mint(workflow(), catalog);
-    doc.getMap("meta").set("schema_version", 5);
+    doc.getMap("meta").set("schema_version", 6);
     const before = Y.encodeStateAsUpdate(doc);
     expect(() => project(doc, catalog)).toThrow(SchemaVersionError);
     expect(() => readGraph(doc)).toThrow(SchemaVersionError);

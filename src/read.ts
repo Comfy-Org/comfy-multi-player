@@ -57,8 +57,10 @@
  */
 
 import * as Y from "yjs";
-import { assertDynamicGroupRowCounts, dynamicGroupRowsOf } from "./dynamic-group-rows.js";
+import { assertDynamicGroupRowCounts } from "./dynamic-group-rows.js";
 import { widgetStorageKey } from "./widget-identity.js";
+import { currentRowIds, rowWidgetForm, rowWidgetValues } from "./dynamic-row-state.js";
+import { rowTopologySnapshot } from "./dynamic-row-topology.js";
 import {
   OPAQUE_WIDGETS_KEY,
   ROOT_APPLIED,
@@ -69,7 +71,7 @@ import {
   ROOT_STAMPS,
 } from "./doc.js";
 import { assertReadableSchema } from "./schema-version.js";
-import { LINK_STATE_DESCRIPTOR_VERSION } from "./types.js";
+import { DYNAMIC_GROUP_STATE_KEY, LINK_STATE_DESCRIPTOR_VERSION } from "./types.js";
 import { WIDGET_FORM_KEY } from "./widget-form.js";
 
 /**
@@ -377,9 +379,16 @@ export function readGraph(doc: Y.Doc): GraphSnapshot {
     for (const key of NODE_SNAPSHOT_KEYS) {
       if (node.has(key)) out[key] = snapshot(node.get(key), 1);
     }
-    const rows = dynamicGroupRowsOf(node.get("properties"));
-    const widgets = node.get("widgets");
-    assertDynamicGroupRowCounts(rows, (name) => widgets instanceof Y.Map ? widgets.get(widgetStorageKey(name, 0)) : undefined);
+    const rows = currentRowIds(node);
+    const widgets = rowWidgetValues(node);
+    if (node.has(DYNAMIC_GROUP_STATE_KEY)) {
+      const values: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+      widgets.forEach((value, key) => { values[key] = value; });
+      out["widgets"] = snapshot(values, 1);
+    }
+    const form = rowWidgetForm(node);
+    if (form) out[WIDGET_FORM_KEY] = snapshot(form, 1);
+    assertDynamicGroupRowCounts(rows, (name) => widgets.get(widgetStorageKey(name, 0)));
     if (rows) out["dynamicGroupRows"] = snapshot(rows, 1);
     nodes[id] = Object.freeze(out) as NodeSnapshot;
   });
@@ -388,6 +397,17 @@ export function readGraph(doc: Y.Doc): GraphSnapshot {
   rootMap(doc, ROOT_LINKS)?.forEach((raw, id) => {
     links[id] = snapshot(raw, 1);
   });
+  const topology = rowTopologySnapshot(doc);
+  if (topology) {
+    for (const key of Object.keys(links)) delete links[key];
+    for (const raw of topology.links) if (Array.isArray(raw)) links[String(raw[0])] = snapshot(raw, 1);
+    for (const node of topology.nodes) {
+      const prior = nodes[String(node.id)];
+      if (prior?.[OPAQUE_WIDGETS_KEY] !== undefined && node.widgets_values !== undefined) {
+        nodes[String(node.id)] = Object.freeze({ ...prior, [OPAQUE_WIDGETS_KEY]: snapshot(node.widgets_values, 1) });
+      }
+    }
+  }
 
   return Object.freeze({ nodes: Object.freeze(nodes), links: Object.freeze(links) });
 }
@@ -537,9 +557,10 @@ export function readLinkState(doc: Y.Doc): Readonly<Record<string, unknown>> {
         !validId(tuple[3]) || !validSlot(tuple[4]) || destination === undefined ||
         !validSlot(destination["to_slot"]) || destination["to_slot"] !== tuple[4] || !validSlotRecord ||
         (slotRecord !== undefined && String(slotRecord["link"]) !== String(tuple[0])) ||
-        !["concrete", "promoted", "autogrow"].includes(String(destination["kind"])) ||
+        !["concrete", "promoted", "autogrow", "dynamic_group"].includes(String(destination["kind"])) ||
         !validRequest ||
-        (destination["kind"] === "promoted" && typeof destination["name"] !== "string")) {
+        (destination["kind"] === "promoted" && typeof destination["name"] !== "string") ||
+        (destination["kind"] === "dynamic_group" && ["group", "row_id", "field", "node_incarnation"].some((key) => typeof destination[key] !== "string" || destination[key] === ""))) {
       throw new TypeError(`readLinkState: link ${id} has an unsupported or malformed descriptor`);
     }
   }

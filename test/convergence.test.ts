@@ -66,6 +66,13 @@ function touchedNodes(op: WireOp): string[] {
       return [];
     case "define_subgraph":
       return [String(op.subgraph_id)];
+    case "dynamic_group_connect":
+      return [String(op.from_node), String(op.path?.[0] ?? op.node_id)];
+    case "dynamic_group_insert_rows":
+    case "dynamic_group_set_row":
+    case "dynamic_group_delete_rows":
+    case "dynamic_group_disconnect":
+      return [String(op.path?.[0] ?? op.node_id)];
     default:
       return assertNever(op, "convergence.touchedNodes");
   }
