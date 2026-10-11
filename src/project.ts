@@ -49,6 +49,7 @@ import { projectInteriorLinkOrder } from "./interior-link-order.js";
 import { assertReadableSchema } from "./schema-version.js";
 import { NODE_INCARNATION_KEY, type WidgetCatalog, type WorkflowJSON, type WorkflowNode } from "./types.js";
 import { isDynamicGroupField } from "./dynamic-groups.js";
+import { assertDynamicGroupRowCatalog, assertDynamicGroupRowCounts, dynamicGroupRowsOf } from "./dynamic-group-rows.js";
 import { hasDynamicWidgetLayout, optionOwnedWidgets, projectedLength, widgetLayoutForWidgets } from "./dynamic-combos.js";
 import { widgetIdentityFromStorageKey, widgetOccurrenceAt, widgetStorageKey, widgetIndexOf } from "./widget-identity.js";
 import {
@@ -225,6 +226,10 @@ function projectWidgets(
 function projectNode(ym: Y.Map<unknown>, catalog: WidgetCatalog): WorkflowNode {
   const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   const nodeType = String(ym.get("type") ?? "");
+  const rows = dynamicGroupRowsOf(ym.get("properties"));
+  assertDynamicGroupRowCatalog(rows, Object.hasOwn(catalog.types, nodeType) ? catalog.types[nodeType]?.dynamic_groups : undefined);
+  const widgets = ym.get("widgets");
+  assertDynamicGroupRowCounts(rows, (name) => widgets instanceof Y.Map ? widgets.get(widgetStorageKey(name, 0)) : undefined);
   ym.forEach((v, k) => {
     if (k === NODE_INCARNATION_KEY) {
       return;

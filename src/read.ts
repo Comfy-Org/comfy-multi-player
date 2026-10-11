@@ -57,6 +57,8 @@
  */
 
 import * as Y from "yjs";
+import { assertDynamicGroupRowCounts, dynamicGroupRowsOf } from "./dynamic-group-rows.js";
+import { widgetStorageKey } from "./widget-identity.js";
 import {
   OPAQUE_WIDGETS_KEY,
   ROOT_APPLIED,
@@ -325,12 +327,14 @@ function assertSnapshotReadable(doc: Y.Doc, context: string): void {
 const NODE_SNAPSHOT_KEYS: readonly string[] = ["type", "pos", "widgets", OPAQUE_WIDGETS_KEY, WIDGET_FORM_KEY];
 
 /**
- * One node, as plain frozen data. Every field is typed `unknown` because the
+ * One node, as plain frozen data. Unvalidated fields are typed `unknown` because the
  * document is untrusted input: a caller must validate exactly as it would when
  * reading the Y.Map directly. Absent keys are absent, not `undefined`, so key
  * presence round-trips.
  */
 export interface NodeSnapshot {
+  /** Validated live row IDs in group order; absent on untagged nodes. */
+  readonly dynamicGroupRows?: Readonly<Record<string, readonly string[]>>;
   /** Node class name (`class_type`). */
   readonly type?: unknown;
   /** Canvas position, verbatim (`[x, y]` for a well-formed node). */
@@ -373,6 +377,10 @@ export function readGraph(doc: Y.Doc): GraphSnapshot {
     for (const key of NODE_SNAPSHOT_KEYS) {
       if (node.has(key)) out[key] = snapshot(node.get(key), 1);
     }
+    const rows = dynamicGroupRowsOf(node.get("properties"));
+    const widgets = node.get("widgets");
+    assertDynamicGroupRowCounts(rows, (name) => widgets instanceof Y.Map ? widgets.get(widgetStorageKey(name, 0)) : undefined);
+    if (rows) out["dynamicGroupRows"] = snapshot(rows, 1);
     nodes[id] = Object.freeze(out) as NodeSnapshot;
   });
 
