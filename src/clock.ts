@@ -73,8 +73,7 @@ export class DocDerivedLamportClockStore implements LamportClockStore {
 
 // Counterless `__stamps` rows (doc.ts companion tags), matched on the canonical
 // JSON.stringify key prefix the applier writes.
-const COMPANION_KEY_PREFIXES = [GROW_REQUEST_TAG, INTERIOR_ROUTE_TAG]
-  .map((tag) => `${JSON.stringify([tag]).slice(0, -1)},`);
+const COMPANION_KEY_PREFIXES = [GROW_REQUEST_TAG, INTERIOR_ROUTE_TAG].map((tag) => `["${tag}",`);
 
 /** Result of a lenient floor read: the maximum valid counter and how many rows were unreadable. */
 export interface LenientDocCounter {
@@ -90,7 +89,8 @@ export interface LenientDocCounter {
  *
  * By default a malformed row throws (fail closed, ADR-021). With
  * `skipMalformed`, a producer that must keep minting gets the maximum over the
- * readable rows instead, plus the count of rows it passed over; an unreadable
+ * readable rows instead, plus the count of malformed rows skipped (companion
+ * rows are not counted); an unreadable
  * schema or ledger root still throws.
  */
 export function observedDocCounter(doc: Y.Doc): number | undefined;
