@@ -107,7 +107,8 @@ export function mint(workflow: WorkflowJSON, catalog: WidgetCatalog, catalogVers
     const nodes = nodesMap(doc);
     for (const node of workflow.nodes ?? []) {
       nodes.set(String(node.id), createNodeMap(node,
-        declaresWidgetForm(node) ? undefined : widgetOrderFor(catalog, node.type, node.widgets_values)));
+        declaresWidgetForm(node) ? undefined : widgetOrderFor(catalog, node.type, node.widgets_values),
+        Object.hasOwn(catalog.types, node.type) ? catalog.types[node.type]?.dynamic_groups : undefined));
     }
 
     const links = linksMap(doc);
@@ -257,7 +258,8 @@ function mintDefinitionNodes(dm: Y.Map<unknown>, nodes: WorkflowNode[], catalog:
     if (order.includes(key)) throw new TypeError(`mint: duplicate definition node id '${key}'`);
     order.push(key);
     nm.set(key, createNodeMap(node,
-      declaresWidgetForm(node) ? undefined : widgetOrderFor(catalog, node.type, node.widgets_values)));
+      declaresWidgetForm(node) ? undefined : widgetOrderFor(catalog, node.type, node.widgets_values),
+      Object.hasOwn(catalog.types, node.type) ? catalog.types[node.type]?.dynamic_groups : undefined));
   }
   dm.set("nodes", nm);
   dm.set("node_order", order);

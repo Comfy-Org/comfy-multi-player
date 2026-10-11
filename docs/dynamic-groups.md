@@ -12,7 +12,7 @@ Like dynamic-combo selections, count changes only change projection. Fields in h
 
 An explicit `widgets_values_form` remains authoritative for names, occurrences, and projection order. Supplied group metadata is used for count validation only: allocation bounds are checked, and a change from the addressed occurrence's stored count that requires replacing the declaration is refused before mutation. A catalog-free declaration cannot identify group controllers, so that path does not provide count safety. This PR does not introduce an op for changing producer-owned forms.
 
-No wire key or op kind changes. New catalog content changes the catalog hash. Consumers must adopt this reader before receiving a DynamicGroup catalog; old documents remain tied to their original catalog and must be re-minted to adopt a new layout (KA-11, KA-12, FC-10).
+A25 does not change wire keys or op kinds; A26 below introduces the opt-in row identity manifest and schema v6. New catalog content changes the catalog hash. Consumers must adopt this reader before receiving a DynamicGroup catalog; old documents remain tied to their original catalog and must be re-minted to adopt a new layout (KA-11, KA-12, FC-10).
 
 ## Namespace safety
 
@@ -20,7 +20,7 @@ Relative group fields must be distinct. A controller cannot also be a DynamicCom
 
 ## Reader and producer adoption
 
-The released reader `0.3.10` and this draft both use schema v5. The schema gate and a catalog hash do **not** prove that an old reader understands `dynamic_groups`. An offline probe with the CLI composite fixture demonstrated that the old reader can mint a new positional workflow, acknowledge an `after` edit, and write that value into the first row's enabled position while leaving the real trailing value unchanged. Omitting group metadata produces the same unsupported mapping even with the current reader.
+The released reader `0.3.10` uses schema v5. A25 originally used v5 as well; A26 in this draft requires v6. The schema gate and a catalog hash do **not** prove that an old reader understands `dynamic_groups`. An offline probe with the CLI composite fixture demonstrated that the old reader can mint a new positional workflow, acknowledge an `after` edit, and write that value into the first row's enabled position while leaving the real trailing value unchanged. Omitting group metadata produces the same unsupported mapping even with the current reader.
 
 | Producer declaration | Reader/catalog combination | Supported scope |
 | --- | --- | --- |
@@ -53,3 +53,11 @@ JS
 ```
 
 The released reader acknowledges the write at position 4, replacing the enabled value. This reader edits the final `tail` position. Both readers accept an existing-field edit with the fixture's explicit form; that is a separate supported path, not evidence of live row-resize support.
+
+## Draft row identity reader
+
+Schema A26 accepts an opt-in `properties.dynamicGroupRows` manifest, for example `{"loras": ["row-a", "row-c"]}` alongside a stored `loras=2`. IDs are opaque producer-owned strings scoped to the node lifetime and group. The reader validates distinct nonempty IDs, known catalog groups, stored counts and allocation bounds. It preserves saved rows above a changed advertised maximum and does not assign IDs to untagged workflows.
+
+`readGraph` exposes a deeply frozen `dynamicGroupRows` field for tagged nodes. Scalar count edits that would contradict a listed group's IDs are refused, even without a catalog at apply time. Existing field edits keep their current numeric addresses; stable-ID editing is not implemented by this reader. The next stage must implement atomic row insertion/deletion, stable field targets, links/promotions and admission together.
+
+This is a reader preparation draft, not a released row-operation capability. Schema v6 prevents v5 readers from accepting a tagged document; current readers refuse older documents, which the host must re-mint from source. Reader, document-host and producer pins must be coordinated and reviewed before adoption. No CLI, frontend or agent producer is enabled by this PR.

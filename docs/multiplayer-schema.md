@@ -1,6 +1,6 @@
-# Multiplayer workflow-document schema — v5
+# Multiplayer workflow-document schema — v6
 
-`SCHEMA_VERSION = 5`
+`SCHEMA_VERSION = 6`
 
 > **State: DRAFT — awaiting FE sign-off (FE-1330).**
 >
@@ -892,7 +892,7 @@ the epoch; cross-epoch struct updates never merge.
 
 ## 10. Versioning and `migrate()`
 
-- `SCHEMA_VERSION = 5`, stored in `meta.schema_version` at mint.
+- `SCHEMA_VERSION = 6`, stored in `meta.schema_version` at mint.
 - Private-alpha policy keeps one current format: old layouts are re-minted at
   their source and compatibility readers/migrations are not provided.
 - `migrate(doc, fromVersion)` contract: exact no-op when
@@ -2503,3 +2503,15 @@ here.
 An opt-in `dynamic_groups` catalog entry expands a saved row-count controller into indexed widget identities. These use the existing name-keyed registers; no op kind or on-document key changes. The new catalog hash requires coordinated reader adoption. Existing documents retain their original catalog and are re-minted to adopt the new layout.
 
 Count writes change the projected layout, retaining hidden registers and applying fresh-row defaults only at read time. They do not delete rows or links. Explicit `widgets_values_form` declarations remain authoritative; supplied group metadata adds allocation-bound validation and rejects a count change requiring a new declaration before mutation. This is A24's one catalog-validation exception, applied to the addressed occurrence in top-level, interior, and promoted writes. Without group metadata, the package cannot identify count fields; compatible producer/catalog/reader admission remains the caller's responsibility. See [DynamicGroup catalog support](dynamic-groups.md) for the producer contract, bounds, and fixture provenance.
+
+## Amendment A26 — 2026-10-11 — DynamicGroup row identity reader (schema v6)
+
+An opt-in node carries `properties.dynamicGroupRows`, mapping catalog group names to ordered arrays of distinct, nonempty row ID strings. IDs are scoped to the node lifetime and group; different groups or nodes may use the same string. The producer supplies the IDs, and this reader never invents or replaces them. Each listed group requires pinned catalog metadata and an explicitly stored count equal to its ID array length. Existing allocation bounds apply; a changed advertised min/max does not discard saved rows.
+
+Mint, definition import, `add_node` and `insert_workflow` validate before attaching node maps. Projection validates catalog membership and stored counts again. `readGraph` exposes only the validated, deeply frozen ID manifest as `NodeSnapshot.dynamicGroupRows`, without copying unrelated properties. Its catalog-free validation covers shape and count; catalog admission remains the caller's responsibility. Workflow insertion preserves this closed ID mapping while continuing to scrub unrelated private keys.
+
+Ordinary scalar count changes on tagged groups are refused before mutation on top-level, interior and promoted paths, including when the apply caller omits the catalog. Unchanged counts and existing-field edits retain the current registers and replay behavior. Untagged nodes keep A25 behavior. No new operation kind is implemented here: atomic insertion/deletion, stable-ID field addressing, row-aware links/promotions and writer admission remain required follow-ups.
+
+Schema v6 is an adoption boundary. A v5 reader would accept a tagged group's scalar resize and leave its row IDs attached to the wrong positions. Readers and document hosts must adopt v6 together before a producer emits the manifest. Per §10 and KA-11, v1–v5 documents are refused without relabelling; the host re-mints their source workflows. A package source change is not consumer sign-off or permission to release. Existing JSON conformance fixtures remain workflow/op inputs and are re-minted at the current schema; the wire-layout vector records v6. No corpus expectation is regenerated from this applier.
+
+`test/dynamic-group-row-identity.test.ts` covers imports, round trips, two groups with a sibling DynamicCombo and seed companion, malformed manifests, unchanged-count/field edits in both orders, byte-identical rejection/retry/abort, frozen snapshots and old-schema refusal. The existing schema, clock and wire-layout suites retain the shared read gate.

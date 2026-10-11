@@ -30,9 +30,11 @@ import {
   NODE_INCARNATION_KEY,
   SCHEMA_VERSION,
   type WidgetCatalog,
+  type WidgetCatalogEntry,
   type WorkflowNode,
 } from "./types.js";
 import { widgetIdentityFromStorageKey, widgetOccurrenceAt, widgetStorageKey } from "./widget-identity.js";
+import { assertDynamicGroupRowCatalog, assertDynamicGroupRowCounts, dynamicGroupRowsOf } from "./dynamic-group-rows.js";
 import {
   WIDGET_FORM_FIELD,
   WIDGET_FORM_KEY,
@@ -946,8 +948,9 @@ function storeWidgetValues(
  * `widgetOrder` (the pinned catalog's `widget_order` for the node's type) is
  * required to decompose a non-empty positional `widgets_values` array; a node
  * whose `widgets_values` is already a name-keyed record needs no catalog.
+ * A row-ID manifest additionally requires its pinned DynamicGroup metadata.
  */
-export function createNodeMap(node: WorkflowNode, widgetOrder?: readonly string[]): Y.Map<unknown> {
+export function createNodeMap(node: WorkflowNode, widgetOrder?: readonly string[], groups?: WidgetCatalogEntry["dynamic_groups"]): Y.Map<unknown> {
   const m = new Y.Map<unknown>();
   // Read and validate the A24 declaration BEFORE the loop, for two reasons
   // that are both correctness and not tidiness: `Object.entries` order decides
@@ -959,6 +962,16 @@ export function createNodeMap(node: WorkflowNode, widgetOrder?: readonly string[
   if (declared && !Object.hasOwn(node, "widgets_values")) {
     throw new TypeError(`${WIDGET_FORM_FIELD}: declared on a node that carries no widgets_values`);
   }
+  const rows = dynamicGroupRowsOf(node["properties"]);
+  assertDynamicGroupRowCatalog(rows, groups);
+  const order = declared?.order ?? widgetOrder;
+  assertDynamicGroupRowCounts(rows, (name) => {
+    const index = order?.indexOf(name) ?? -1;
+    if (declared && (index < 0 || index !== order?.lastIndexOf(name))) return undefined;
+    const values = node.widgets_values;
+    if (!Array.isArray(values)) return values && Object.hasOwn(values, name) ? values[name] : undefined;
+    return index >= 0 && index === order?.lastIndexOf(name) ? values[index] : undefined;
+  });
   for (const [k, v] of Object.entries(node)) {
     if (k === WIDGET_FORM_FIELD) {
       // Consumed by the `widgets_values` branch below and re-emitted by

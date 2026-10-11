@@ -153,6 +153,7 @@ import {
 } from "./types.js";
 import { addInteriorLinkOrder, removeInteriorLinkOrder } from "./interior-link-order.js";
 import { groupCountRefusal, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
+import { dynamicGroupRowsOf } from "./dynamic-group-rows.js";
 import { optionOwnedWidgets, projectedLength, widgetLayoutForWidgets, widgetOrderForValues, widgetOrderForWidgets } from "./dynamic-combos.js";
 import { NODE_INCARNATION_KEY, WRITABLE_NODE_FIELDS } from "./types.js";
 
@@ -952,12 +953,19 @@ function numericId(value: unknown): number | undefined {
   return undefined;
 }
 
-function scrubPrivateKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(scrubPrivateKeys);
+function scrubPrivateKeys(value: unknown, parentKey?: string): unknown {
+  if (Array.isArray(value)) return value.map((child) => scrubPrivateKeys(child));
   if (typeof value !== "object" || value === null) return value;
   const clean: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value)) {
-    if (!key.startsWith("__")) clean[key] = scrubPrivateKeys(child);
+    if (parentKey === "properties" && key === "dynamicGroupRows") {
+      try {
+        dynamicGroupRowsOf({ dynamicGroupRows: child });
+        clean[key] = structuredClone(child);
+      } catch (err) {
+        throw new OpRejectedError("invalid_node_payload", `insert_workflow: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else if (!key.startsWith("__")) clean[key] = scrubPrivateKeys(child, key);
   }
   return clean;
 }
@@ -1138,7 +1146,7 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
     }
     try {
       nodeWrites.push([String(node.id), node.id, createNodeMap(node,
-        declaresWidgetForm(node) ? undefined : widgetOrderForValues(entry, node.widgets_values))]);
+        declaresWidgetForm(node) ? undefined : widgetOrderForValues(entry, node.widgets_values), entry?.dynamic_groups)]);
     } catch (err) {
       throw new OpRejectedError("invalid_node_payload", `insert_workflow(${node.type}): ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1315,7 +1323,7 @@ function createAddedNode(op: AddNodeOp, catalog?: WidgetCatalog): Y.Map<unknown>
     rejectUnprojectableWidgets(op.node, op.node.type, wv, entry);
   }
   try {
-    return createNodeMap(op.node, order);
+    return createNodeMap(op.node, order, entry?.dynamic_groups);
   } catch (err) {
     throw new OpRejectedError(
       "invalid_node_payload",
@@ -1958,6 +1966,10 @@ function validateWidgetOp(op: SetWidgetOp) {
 }
 
 function validateDynamicGroupValue(node: Y.Map<unknown>, catalog: WidgetCatalog | undefined, widget: string, occurrence: number, value: unknown): void {
+  const rows = dynamicGroupRowsOf(node.get("properties"));
+  if (rows && Object.hasOwn(rows, widget) && (occurrence !== 0 || value !== rows[widget]!.length)) {
+    throw new OpRejectedError("malformed_op", "row count changes require an atomic DynamicGroup row operation");
+  }
   const entry = catalogEntry(catalog, String(node.get("type") ?? ""));
   const refusal = groupCountRefusal(entry, widget, value);
   if (refusal) throw new OpRejectedError("malformed_op", refusal);
