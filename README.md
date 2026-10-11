@@ -380,6 +380,11 @@ ADR-032 and schema Amendment A21.
 | `delete_node` | `node_id`, `removed_links` | yes |
 | `clear` | `removed_nodes` | no |
 | `insert_workflow` | `workflow` containing required raw-ID `nodes` plus optional `links`, `groups`, and `definitions`; the applier remaps IDs deterministically from `op_id` | no |
+| `dynamic_group_insert_rows` | Row owner/lifetime/group, immutable anchor, complete field values; row IDs derive from op ID and ordinal. Provisional schema-v7 extension | yes |
+| `dynamic_group_set_row` | Row owner/lifetime/group/ID and field values; optional promoted host address. Provisional schema-v7 extension | yes |
+| `dynamic_group_delete_rows` | Row owner/lifetime/group and row IDs, delete-wins. Provisional schema-v7 extension | yes |
+| `dynamic_group_connect` | Row/field address, source output, link identity and input/link types. Provisional schema-v7 extension | yes |
+| `dynamic_group_disconnect` | Row/field address. Provisional schema-v7 extension | yes |
 | `reset_doc` | see [open questions](docs/api-contract-proposal.md) — currently rejected `op_deferred` by this package | no |
 
 `FROZEN_OPS`, `DEFERRED_OPS`, and `BATCHABLE_OPS` are exported so you can check

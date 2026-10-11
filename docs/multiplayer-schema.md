@@ -1,6 +1,6 @@
-# Multiplayer workflow-document schema — v6
+# Multiplayer workflow-document schema — v7
 
-`SCHEMA_VERSION = 6`
+`SCHEMA_VERSION = 7`
 
 > **State: DRAFT — awaiting FE sign-off (FE-1330).**
 >
@@ -892,7 +892,7 @@ the epoch; cross-epoch struct updates never merge.
 
 ## 10. Versioning and `migrate()`
 
-- `SCHEMA_VERSION = 6`, stored in `meta.schema_version` at mint.
+- `SCHEMA_VERSION = 7`, stored in `meta.schema_version` at mint.
 - Private-alpha policy keeps one current format: old layouts are re-minted at
   their source and compatibility readers/migrations are not provided.
 - `migrate(doc, fromVersion)` contract: exact no-op when
@@ -2515,3 +2515,34 @@ Ordinary scalar count changes on tagged groups are refused before mutation on to
 Schema v6 is an adoption boundary. A v5 reader would accept a tagged group's scalar resize and leave its row IDs attached to the wrong positions. Readers and document hosts must adopt v6 together before a producer emits the manifest. Per §10 and KA-11, v1–v5 documents are refused without relabelling; the host re-mints their source workflows. A package source change is not consumer sign-off or permission to release. Existing JSON conformance fixtures remain workflow/op inputs and are re-minted at the current schema; the wire-layout vector records v6. No corpus expectation is regenerated from this applier.
 
 `test/dynamic-group-row-identity.test.ts` covers imports, round trips, two groups with a sibling DynamicCombo and seed companion, malformed manifests, unchanged-count/field edits in both orders, byte-identical rejection/retry/abort, frozen snapshots and old-schema refusal. The existing schema, clock and wire-layout suites retain the shared read gate.
+
+
+## Amendment A27 — 2026-10-11 — Atomic DynamicGroup row operations (schema v7)
+
+This is a provisional package contract, stacked on A26. It is not yet an adopted producer vocabulary or a release approval. Core `object_info`, numbered prompt inputs and node execution arguments do not change.
+
+Five new operations require `node_id`, `node_incarnation` and `group`. An optional nonempty `path` lists containing subgraph instances; `node_id` identifies the leaf separately. Structural/default writes retain §5.3's shared-definition refusal.
+
+| Operation | Payload | Effect |
+| --- | --- | --- |
+| `dynamic_group_insert_rows` | `after_row_id: string | null`, `rows: Record<string, unknown>[]` | Inserts complete creator-supplied field values after an immutable row anchor. Each ID is `row:<op_id>:<ordinal>`; receivers never allocate IDs or write current defaults. |
+| `dynamic_group_set_row` | `row_id`, `values` | Claims one LWW register per supplied field. An optional `host_path` plus `host_incarnation` writes a materialized promoted host value instead of the shared definition default. |
+| `dynamic_group_delete_rows` | distinct nonempty `row_ids` | Permanently tombstones those row identities; a late edit cannot target their successors. |
+| `dynamic_group_connect` | `row_id`, `field`, `from_node`, `from_slot`, `link_id`, `link_type`, `input_type` | Claims the logical row input and the existing normalized complete-link identity independently. |
+| `dynamic_group_disconnect` | `row_id`, `field` | Clears that logical input, retaining its winning stamp. It does not create a converted socket for an unconverted widget. |
+
+Insertion anchors survive deletion. Concurrent siblings sort by descending creator stamp, with the immutable baseline continuation last. A row's field writes, links and delete-wins state can arrive before its insertion; pending records remain hidden until their anchor chain reaches the baseline. Distinct fields merge independently. Delete-wins is permanent for an ID, so reinsertion uses a new operation ID. Reusing an insertion identity with a different digest remains refused after compaction.
+
+The private node key `__dynamic_group_state` holds a Y.Map per group, with `fields`, `initial_ids` and row-ID-keyed `records`. Records retain immutable insertion anchor/stamp/digest, winning field values, converted slot data and semantic deletion tombstones. Field dictionaries are stored as entry arrays so literal names such as `__proto__` survive lib0 decoding. Baseline node properties, host positions and input placement stay immutable internally. Existing converted inputs become private `__dynamic_group_slot` markers. Projection derives the live manifest/count, numbered names, declared form and named/ordered sidecars. A workflow payload cannot forge either private key.
+
+Row fields claim `["dynamic_group_widget", owner, incarnation, group, row_id, field]`; row connections claim the corresponding `dynamic_group_input` target. Interior `owner` is the canonical definition/leaf pair. Promoted values use a separate target including both host and leaf owners/lifetimes. Every register reads the creator's in-op stamp, including when transport envelope fields disagree. The existing op ledger still makes exact retries byte-identical.
+
+A `dynamic_group` durable link destination adds group, row ID, field and target incarnation to the existing version-1 descriptor. Interior link identity is scoped by canonical definition ID rather than the route spelling. Its baseline tuple index is placement only; the stable fields determine the projected index. Reassigning a normalized link ID scrubs the previous row owner too. Concrete input claims and Autogrow materialization remain independent of the complete-link winner; reranking a grown family cannot move a link owned by another destination. Winning input claims retire previous reconstruction descriptors even while their sources are absent. Source restoration can recover the logical connection, but cannot write a private input marker or attach it to a deleted row/new target lifetime.
+
+Projection removes a deleted row's converted inputs and backing links, then walks definition input ports, exposures, proxy widgets, host values and external links bottom-up, including two-level promotions. Unrelated inputs, dangling tuples and serializer fields are retained. Materialized instance paths refuse structural row edits on self-described or non-positional promoted hosts before mutation; a stable host write refuses missing or ambiguous bindings. Legacy numeric row input writes and positional promoted writes into row-controlled hosts are refused, so a shifted index cannot write a different row. Untagged nodes retain the old paths.
+
+`admitDynamicGroupRowOp` is read-only preflight for the writer's existing sequence-CAS transaction. It checks current lifetimes, known anchors/rows, supplied template fields, current min/max and source/host bindings before persistence. Writers must rerun it after a CAS conflict. It does not reserve a server sequence or replace host authorization. Replay applies an already-admitted op set without rechecking transient min/max: shrink/growth can arrive in the reverse order. This PR does not wire admission into a live host, CLI or frontend, and does not enable tools or producers.
+
+Schema v7 fences v6 readers that cannot interpret private row markers/registers or stable link destinations. Every old document remains fail-closed and must be re-minted from source with coordinated readers/hosts; no relabelling migration is provided. `compact` starts a new Yjs lineage but copies raw row-aware graph storage, winning stamps, immutable anchors and semantic tombstones. This removes Yjs struct history and the old applied ledger, not semantic row history. Tombstone retention, realistic churn/performance, consumer parity and end-to-end producer adoption still require validation before release.
+
+Tests use the existing composite catalog fixture and rejection oracle. The dedicated suite covers middle-row changes, opposite-order replay, pending rows, per-field conflicts, exact retry bytes, compaction/reconnect, converted links, source lifecycles, one/two-level promotions, mixed socket/widget host ordinals and read-only admission. The full op-pool matrix includes all five kinds. Its standing `delete_node.removed_links` alias risk is retained explicitly rather than claimed fixed. No corpus expectation is regenerated from this applier.

@@ -2,8 +2,9 @@
  * @comfyorg/comfy-multi-player — shared workflow-document package.
  *
  * One implementation of op→doc semantics, used identically by the browser
- * and the server doc host. The public vocabulary declares nine operation
- * kinds: eight implemented kinds plus the deferred `reset_doc` kind. The
+ * and the server doc host. The surface declares fourteen implemented operation
+ * kinds plus the deferred `reset_doc` kind, including the provisional A27
+ * row contract. The
  * normative contract is comfy-cli's `docs/op-vocabulary-v1.md` and the stamp
  * shapes minted by `comfy_cli/workflow_ops.py` (`_new_op`), both pinned at
  * comfy-cli commit `7e732242d971daf0d2d30f22f997abfacd78986e` — by SHA and
@@ -20,7 +21,7 @@
  *  - `compact(doc, catalog)` — fresh-checkpoint re-mint (schema §4 rule 2):
  *    a new-lineage Y.Doc with the same projection, live stamps, incarnations,
  *    link state and clock reservations but an empty `__applied` ledger and no
- *    tombstone history; the host owns the replica cutover;
+ *    old Yjs struct history; semantic row tombstones remain. The host owns cutover;
  *  - `applyOps(doc, ops, catalog?)` — idempotent, LWW-gated, abort-remainder
  *    op application (schema §2–§4);
  *  - `inspectOps(ops)` — pure validation and canonical bytes/digest/stamp
@@ -95,6 +96,8 @@ export {
   type WidgetValuesForm,
 } from "./widget-form.js";
 export { applyOps, inspectOps } from "./applier.js";
+export { admitDynamicGroupRowOp } from "./applier.js";
+export { dynamicGroupRowId } from "./dynamic-row-ops.js";
 export { project } from "./project.js";
 export { mint } from "./mint.js";
 export { compact } from "./compact.js";

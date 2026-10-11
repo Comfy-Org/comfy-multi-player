@@ -49,16 +49,19 @@ import { projectInteriorLinkOrder } from "./interior-link-order.js";
 import { assertReadableSchema } from "./schema-version.js";
 import { NODE_INCARNATION_KEY, type WidgetCatalog, type WorkflowJSON, type WorkflowNode } from "./types.js";
 import { isDynamicGroupField } from "./dynamic-groups.js";
-import { assertDynamicGroupRowCatalog, assertDynamicGroupRowCounts, dynamicGroupRowsOf } from "./dynamic-group-rows.js";
+import { assertDynamicGroupRowCatalog, assertDynamicGroupRowCounts } from "./dynamic-group-rows.js";
 import { hasDynamicWidgetLayout, optionOwnedWidgets, projectedLength, widgetLayoutForWidgets } from "./dynamic-combos.js";
 import { widgetIdentityFromStorageKey, widgetOccurrenceAt, widgetStorageKey, widgetIndexOf } from "./widget-identity.js";
 import {
   WIDGET_FORM_FIELD,
   WIDGET_FORM_KEY,
   projectWidgetForm,
-  storedWidgetFormOf,
 } from "./widget-form.js";
 import { numericId } from "./remap.js";
+import { activeRowGroups, currentRowIds, rowInputProjection, rowWidgetForm, rowWidgetValues, rowField, liveRowIds } from "./dynamic-row-state.js";
+import { DYNAMIC_GROUP_STATE_KEY } from "./types.js";
+import type { WidgetValues } from "./widget-identity.js";
+import { projectRowTopology } from "./dynamic-row-topology.js";
 
 /** Sorted-by-id comparator: numeric when both ids are numbers, else string order. */
 function idCompare(a: unknown, b: unknown): number {
@@ -130,7 +133,7 @@ function positionalIndexOf(order: readonly string[], name: string): number {
 /** Identity-keyed widgets map → positional widgets_values (§7 rule 2). */
 function widgetsToPositional(
   nodeType: string,
-  widgets: Y.Map<unknown>,
+  widgets: WidgetValues,
   catalog: WidgetCatalog,
 ): unknown[] {
   if (widgets.size === 0) return [];
@@ -203,19 +206,19 @@ function projectWidgets(
       // (schema §1.2): emitted VERBATIM, no catalog lookup, no re-keying.
       return structuredClone(ym.get(OPAQUE_WIDGETS_KEY));
     case "named":
-      return widgetsToPositional(nodeType, ym.get("widgets") as Y.Map<unknown>, catalog);
+      return widgetsToPositional(nodeType, rowWidgetValues(ym), catalog);
     case "self": {
       // A24: rebuilt in the shape the producer serialized, from the node's own
       // declared order plus the stored residue. No catalog lookup — the
       // mapping this needs arrived with the node.
-      const form = storedWidgetFormOf(ym);
-      const widgets = ym.get("widgets");
+      const form = rowWidgetForm(ym);
+      const widgets = rowWidgetValues(ym);
       // An unreadable form is not self-described (`storedWidgetFormOf`), so
       // `widgetStorageOf` and this read can only disagree on doc state no
       // writer here produces. Fall back to the catalog path rather than
       // inventing a shape, which keeps the KA-12 refusal loud.
-      if (!form) return widgetsToPositional(nodeType, widgets as Y.Map<unknown>, catalog);
-      return projectWidgetForm(form, widgets instanceof Y.Map ? widgets : undefined);
+      if (!form) return widgetsToPositional(nodeType, widgets, catalog);
+      return projectWidgetForm(form, widgets);
     }
     default:
       return assertNever(storage, "project: widget-storage strategy");
@@ -226,12 +229,12 @@ function projectWidgets(
 function projectNode(ym: Y.Map<unknown>, catalog: WidgetCatalog): WorkflowNode {
   const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   const nodeType = String(ym.get("type") ?? "");
-  const rows = dynamicGroupRowsOf(ym.get("properties"));
+  const rows = currentRowIds(ym);
   assertDynamicGroupRowCatalog(rows, Object.hasOwn(catalog.types, nodeType) ? catalog.types[nodeType]?.dynamic_groups : undefined);
-  const widgets = ym.get("widgets");
-  assertDynamicGroupRowCounts(rows, (name) => widgets instanceof Y.Map ? widgets.get(widgetStorageKey(name, 0)) : undefined);
+  const widgets = rowWidgetValues(ym);
+  assertDynamicGroupRowCounts(rows, (name) => widgets.get(widgetStorageKey(name, 0)));
   ym.forEach((v, k) => {
-    if (k === NODE_INCARNATION_KEY) {
+    if (k === NODE_INCARNATION_KEY || k === DYNAMIC_GROUP_STATE_KEY) {
       return;
     } else if (k === OPAQUE_WIDGETS_KEY || k === "widgets" || k === WIDGET_FORM_KEY) {
       // All three storage keys project to the same workflow key; which one is
@@ -241,7 +244,7 @@ function projectNode(ym: Y.Map<unknown>, catalog: WidgetCatalog): WorkflowNode {
       // through `project()` -> `mint()` (which is what `compact()` is) has to
       // give it back or the next mint loses the layout.
       out["widgets_values"] = projectWidgets(nodeType, ym, catalog);
-      const form = storedWidgetFormOf(ym);
+      const form = rowWidgetForm(ym);
       if (form) out[WIDGET_FORM_FIELD] = { order: [...form.order] };
     } else if (v instanceof Y.Array) {
       const projector = k === "outputs" ? projectOutputSlot : projectSlot;
@@ -252,7 +255,55 @@ function projectNode(ym: Y.Map<unknown>, catalog: WidgetCatalog): WorkflowNode {
       out[k] = structuredClone(v);
     }
   });
+  projectRowSidecars(ym, out, widgets, rows);
   return out as WorkflowNode;
+}
+
+function projectRowSidecars(ym: Y.Map<unknown>, out: Record<string, unknown>, widgets: WidgetValues, rows: ReturnType<typeof currentRowIds>): void {
+  const groups = activeRowGroups(ym);
+  if (groups.size > 0) {
+    if (out["inputs"] !== undefined) out["inputs"] = rowInputProjection(ym).inputs;
+    if (rows) out["properties"] = { ...out["properties"] as object, dynamicGroupRows: rows };
+    projectNamedRows(out, widgets, groups);
+    projectOrderedRows(out, widgets, groups);
+  }
+}
+
+function projectOrderedRows(out: Record<string, unknown>, widgets: WidgetValues, groups: ReturnType<typeof activeRowGroups>): void {
+  if (!Array.isArray(out["widgets_values_ordered"])) return;
+  let ordered = structuredClone(out["widgets_values_ordered"]) as Record<string, unknown>[];
+  for (const [name, group] of groups) {
+    const previous = ordered;
+    const firstRow = previous.findIndex((entry) => typeof entry["name"] === "string" && rowField(entry["name"], name, group.fields));
+    ordered = previous.filter((entry) => typeof entry["name"] !== "string" || !rowField(entry["name"], name, group.fields));
+    const controller = ordered.findIndex((entry) => entry["name"] === name && entry["occurrence"] === 0);
+    if (controller < 0 && firstRow < 0) continue;
+    if (controller >= 0) ordered[controller] = { ...ordered[controller], value: widgets.get(widgetStorageKey(name)) };
+    const entries = liveRowIds(group).flatMap((id, index) => group.fields.map((field) => {
+      const oldIndex = group.initial_ids.indexOf(id);
+      const oldName = `${name}.${String(oldIndex)}.${field}`;
+      const prior = previous.find((entry) => entry["name"] === oldName && entry["occurrence"] === 0);
+      const widget = `${name}.${String(index)}.${field}`;
+      return { ...prior, name: widget, occurrence: 0, value: structuredClone(widgets.get(widgetStorageKey(widget))) };
+    }));
+    ordered.splice(controller >= 0 ? controller + 1 : firstRow, 0, ...entries);
+  }
+  out["widgets_values_ordered"] = ordered;
+}
+
+function projectNamedRows(out: Record<string, unknown>, widgets: WidgetValues, groups: ReturnType<typeof activeRowGroups>): void {
+  const named = out["widgets_values_named"];
+  if (typeof named === "object" && named !== null && !Array.isArray(named)) {
+    const rebuilt = { ...named as Record<string, unknown> };
+    for (const [name, group] of groups) {
+      for (const key of Object.keys(rebuilt)) if (rowField(key, name, group.fields)) delete rebuilt[key];
+      widgets.forEach((value, key) => {
+        const identity = widgetIdentityFromStorageKey(key);
+        if (identity.occurrence === 0 && (identity.name === name || rowField(identity.name, name, group.fields))) rebuilt[identity.name] = structuredClone(value);
+      });
+    }
+    out["widgets_values_named"] = rebuilt;
+  }
 }
 
 /**
@@ -470,5 +521,5 @@ export function project(doc: Y.Doc, catalog: WidgetCatalog): WorkflowJSON {
     wf["definitions"] = out;
   }
 
-  return wf as WorkflowJSON;
+  return projectRowTopology(doc, wf as WorkflowJSON);
 }

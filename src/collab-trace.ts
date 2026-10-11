@@ -5,6 +5,8 @@
  * format and intentionally exposes no replay, merge, comparator, Yjs, or mint
  * API. Consumers render captured decisions; they must never recompute them.
  */
+import { validateRowOp } from "./dynamic-row-ops.js";
+import type { DynamicGroupRowOp } from "./types.js";
 import { assertNever } from "./exhaustive.js";
 import { compareStampKeys } from "./stamps.js";
 import { FROZEN_OPS, WRITABLE_NODE_FIELDS, type Op, type StampKey } from "./types.js";
@@ -460,6 +462,14 @@ function assertOpPayload(value: unknown, context: string) {
       break;
     case "clear":
       assertNodeIdArray(required(payload, "removed_nodes", context), `${context}.removed_nodes`);
+      break;
+    case "dynamic_group_insert_rows":
+    case "dynamic_group_set_row":
+    case "dynamic_group_delete_rows":
+    case "dynamic_group_connect":
+    case "dynamic_group_disconnect":
+      try { validateRowOp(payload as unknown as DynamicGroupRowOp); }
+      catch (error) { invalid(context, error instanceof Error ? error.message : "invalid row operation"); }
       break;
     case "define_subgraph":
       asString(required(payload, "subgraph_id", context), `${context}.subgraph_id`);

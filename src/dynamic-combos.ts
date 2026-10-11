@@ -20,11 +20,9 @@
  * An entry without `dynamic_combos` or `dynamic_groups` is unchanged, so
  * the value-blind behaviour (BE-9176 `_extra_N` placeholders) is untouched.
  */
-import * as Y from "yjs";
-
 import { assertDynamicGroupCatalog, groupCountRefusal, groupLayout, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
 import type { DynamicComboEntry, WidgetCatalogEntry } from "./types.js";
-import { widgetOccurrenceAt, widgetStorageKey } from "./widget-identity.js";
+import { widgetOccurrenceAt, widgetStorageKey, type WidgetValues } from "./widget-identity.js";
 
 type Combos = Record<string, DynamicComboEntry>;
 
@@ -131,7 +129,7 @@ export function widgetOrderForValues(entry: WidgetCatalogEntry | undefined, wv: 
 }
 
 /** The layout for a document node's name-keyed widgets map: order plus read-time defaults. */
-export function widgetLayoutForWidgets(entry: WidgetCatalogEntry, widgets: Y.Map<unknown> | undefined): WidgetLayout {
+export function widgetLayoutForWidgets(entry: WidgetCatalogEntry, widgets: WidgetValues | undefined): WidgetLayout {
   const combos = combosOf(entry);
   if (!hasDynamicWidgetLayout(entry)) return { order: entry.widget_order, defaults: new Map() };
   return expand(entry, combos ?? {}, (name, _index, occurrence) =>
@@ -142,7 +140,7 @@ export function widgetLayoutForWidgets(entry: WidgetCatalogEntry, widgets: Y.Map
 /** The order for a document node's name-keyed widgets map. */
 export function widgetOrderForWidgets(
   entry: WidgetCatalogEntry,
-  widgets: Y.Map<unknown> | undefined,
+  widgets: WidgetValues | undefined,
 ): readonly string[] {
   return widgetLayoutForWidgets(entry, widgets).order;
 }
@@ -151,7 +149,7 @@ export function widgetOrderForWidgets(
  * The node's projected `widgets_values` length: one past the highest slot
  * that holds a stored value OR shows a read-time default.
  */
-export function projectedLength(layout: WidgetLayout, widgets: Y.Map<unknown> | undefined): number {
+export function projectedLength(layout: WidgetLayout, widgets: WidgetValues | undefined): number {
   let max = -1;
   layout.order.forEach((name, index) => {
     if (

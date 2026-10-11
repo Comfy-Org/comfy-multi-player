@@ -63,7 +63,7 @@
  */
 
 import type * as Y from "yjs";
-import { widgetIndexOf, widgetOccurrenceAt, widgetStorageKey } from "./widget-identity.js";
+import { widgetIndexOf, widgetOccurrenceAt, widgetStorageKey, type WidgetValues } from "./widget-identity.js";
 
 /** Producer-supplied node field carrying the declaration (workflow JSON). */
 export const WIDGET_FORM_FIELD = "widgets_values_form";
@@ -278,7 +278,7 @@ export function formFinalOccurrence(form: StoredWidgetForm, name: string, occurr
  */
 export function projectWidgetForm(
   form: StoredWidgetForm,
-  widgets: Y.Map<unknown> | undefined,
+  widgets: WidgetValues | undefined,
 ): unknown {
   const read = (name: string, occurrence: number): unknown => {
     const key = widgetStorageKey(name, occurrence);
