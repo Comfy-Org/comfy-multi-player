@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
-import { applyOps, mint, project, type Op, type TopLevelSetWidgetOp, type WidgetCatalog, type WidgetCatalogEntry, type WorkflowJSON } from "../src/index.js";
+import { applyOps, mint, project, type Op, type SetWidgetOp, type TopLevelSetWidgetOp, type WidgetCatalog, type WidgetCatalogEntry, type WorkflowJSON } from "../src/index.js";
 import { canonicalize } from "./helpers.js";
 import { assertRejectedWithoutMutation } from "./rejection-test-helpers.js";
 
@@ -35,6 +35,78 @@ const edit = (widget: string, value: unknown, counter = 1) => ({
 } satisfies TopLevelSetWidgetOp);
 
 describe("DynamicGroup catalog layout", () => {
+  it("refuses a controller duplicated only by the selected combo composition", () => {
+    const entry: WidgetCatalogEntry = {
+      ...groupEntry,
+      widget_order: ["before", "mode", "other_mode", "after"],
+      dynamic_combos: {
+        ...conditionalCatalog.types["DevToolsNodeWithDynamicGroup"]!.dynamic_combos,
+        other_mode: { default: "off", options: {
+          off: { widgets: [], defaults: {} },
+          on: { widgets: ["loras"], defaults: { loras: 0 } },
+        } },
+      },
+    };
+    const selectedCatalog: WidgetCatalog = { types: { DevToolsNodeWithDynamicGroup: entry } };
+    const workflow = structuredClone(cases.empty);
+    const values = { before: "first", mode: "on", loras: 0, other_mode: "off", after: "last" };
+    workflow.nodes[0]!.widgets_values = values;
+    const doc = mint(workflow, selectedCatalog);
+    expect(project(doc, selectedCatalog).nodes[0]!.widgets_values).toEqual(["first", "on", 0, "off", "last"]);
+    doc.destroy();
+
+    workflow.nodes[0]!.widgets_values = { ...values, other_mode: "on" };
+    expect(() => mint(workflow, selectedCatalog)).toThrow("controller 'loras' is duplicated in the selected layout");
+  });
+
+  it.each([
+    ["top-level", 0], ["top-level", 1],
+    ["interior", 0], ["interior", 1],
+    ["promoted", 0], ["promoted", 1],
+  ] as const)("checks a declared count for %s occurrence %s", (route, occurrence) => {
+    let workflow = structuredClone(cases.empty);
+    const node = workflow.nodes[0]!;
+    node.widgets_values = [0, 1, "tail"];
+    node.widgets_values_form = { order: ["loras", "loras", "after"] };
+    delete node["widgets_values_named"];
+    let op: SetWidgetOp = { ...edit("loras", occurrence), widget_occurrence: occurrence };
+    let trailing: SetWidgetOp = { ...edit("after", "edited tail", 2), actor: "agent:b", base_version: 1, stamp: [1, "agent:b"] };
+    if (route === "interior") {
+      workflow = {
+        nodes: [{ id: 9, type: "def", inputs: [], outputs: [], widgets_values: [] }], links: [],
+        definitions: { subgraphs: [{ id: "def", nodes: [node], links: [] }] },
+      };
+      op = { ...op, path: ["9", "1"], inner_widget: "loras", promoted: null };
+      trailing = { ...trailing, path: ["9", "1"], inner_widget: "after", promoted: null };
+    } else if (route === "promoted") {
+      op = { ...op, promoted: { value_index: occurrence, instance_path: ["1"], host_widgets_values: [0, 1, "tail"] } };
+      trailing = { ...trailing, promoted: { value_index: 2, instance_path: ["1"], host_widgets_values: [0, 1, "edited tail"] } };
+    }
+    const seed = mint(workflow, catalog);
+    const snapshot = Y.encodeStateAsUpdate(seed);
+    for (const ordered of [[op, trailing], [trailing, op]]) {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, snapshot);
+      expect(applyOps(doc, ordered, catalog).outcomes.map((outcome) => outcome.outcome)).toEqual(["applied", "applied"]);
+      const projected = project(doc, catalog);
+      const target = route === "interior"
+        ? (projected["definitions"] as { subgraphs: WorkflowJSON[] }).subgraphs[0]!.nodes[0]!
+        : projected.nodes[0]!;
+      expect(target.widgets_values).toEqual([0, 1, "edited tail"]);
+      const beforeRetry = Y.encodeStateAsUpdate(doc);
+      applyOps(doc, ordered, catalog);
+      expect(Y.encodeStateAsUpdate(doc)).toEqual(beforeRetry);
+      doc.destroy();
+    }
+    seed.destroy();
+
+    const invalid: SetWidgetOp = route === "promoted" ? {
+      ...edit("loras", 1 - occurrence), widget_occurrence: occurrence,
+      promoted: { value_index: occurrence, instance_path: ["1"], host_widgets_values: [1 - occurrence, 1 - occurrence, "tail"] },
+    } : { ...op, value: 1 - occurrence };
+    assertRejectedWithoutMutation(workflow, invalid, "malformed_op", catalog, trailing);
+  });
+
   it.each([
     ["duplicate controller", { ...groupEntry, widget_order: ["before", "loras", "loras", "after"] }],
     ["duplicate relative field", { ...groupEntry, dynamic_groups: { loras: { ...loras, widgets: ["strength", "strength"] } } }],

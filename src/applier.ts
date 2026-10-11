@@ -1902,7 +1902,7 @@ function applyPromotedHostWrite(
         const occurrence = op.widget_occurrence ?? 0;
         requirePromotedFormAgreement(target, op.widget, occurrence, promoted.valueIndex);
         validateWidgetName(catalog, String(target.get("type") ?? ""), op.widget, target, occurrence);
-        validateDynamicGroupValue(target, catalog, op.widget, op.value);
+        validateDynamicGroupValue(target, catalog, op.widget, occurrence, op.value);
         mset(widgetsOf(target), widgetStorageKey(op.widget, occurrence), structuredClone(op.value));
         updateOrderedWidgetValue(target, op.widget, occurrence, op.value);
         updateNamedWidgetValue(target, catalog, op.widget, occurrence, op.value);
@@ -1957,13 +1957,13 @@ function validateWidgetOp(op: SetWidgetOp) {
   return { interior, promoted };
 }
 
-function validateDynamicGroupValue(node: Y.Map<unknown>, catalog: WidgetCatalog | undefined, widget: string, value: unknown): void {
+function validateDynamicGroupValue(node: Y.Map<unknown>, catalog: WidgetCatalog | undefined, widget: string, occurrence: number, value: unknown): void {
   const entry = catalogEntry(catalog, String(node.get("type") ?? ""));
   const refusal = groupCountRefusal(entry, widget, value);
   if (refusal) throw new OpRejectedError("malformed_op", refusal);
   if (groupOf(entry, widget) && storedWidgetFormOf(node)) {
     const widgets = node.get("widgets");
-    if (widgets instanceof Y.Map && widgets.get(widgetStorageKey(widget, 0)) !== value) {
+    if (widgets instanceof Y.Map && widgets.get(widgetStorageKey(widget, occurrence)) !== value) {
       throw new OpRejectedError("malformed_op", "row count changes require an updated widgets_values_form declaration");
     }
   }
@@ -2020,7 +2020,7 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
     // than falling through the `if (entry)` block as an accepted write (#13).
     const occurrence = op.widget_occurrence ?? 0;
     validateWidgetName(catalog, nodeType, widget, target, occurrence);
-    validateDynamicGroupValue(target, catalog, widget, op.value);
+    validateDynamicGroupValue(target, catalog, widget, occurrence, op.value);
     // OWN-property lookup (#13): an inherited key such as `__proto__` must read
     // as "absent from the catalog", not resolve to a prototype object.
     const entry = catalogEntry(catalog, nodeType);
@@ -2060,7 +2060,7 @@ function applySetWidget(doc: Y.Doc, op: SetWidgetOp, catalog?: WidgetCatalog): S
   rejectIfOpaqueWidgets(node, op.widget);
   const occurrence = op.widget_occurrence ?? 0;
   validateWidgetName(catalog, String(node.get("type") ?? ""), op.widget, node, occurrence);
-  validateDynamicGroupValue(node, catalog, op.widget, op.value);
+  validateDynamicGroupValue(node, catalog, op.widget, occurrence, op.value);
   // Top-level writes may extend past the current positional length — comfy-cli
   // pads with None; here the name-keyed map makes padding a projection concern.
   mset(widgetsOf(node), widgetStorageKey(op.widget, occurrence), structuredClone(op.value));

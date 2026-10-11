@@ -2372,10 +2372,13 @@ A node carrying the field is **self-described**, and for it:
   the verbatim residue of keys `order` does not name (`extra`). The residue is
   one whole plain value under one key — whole-value LWW, never merged
   element-wise, the same justification A2 gives `__widgets_opaque`;
-- `set_widget` resolves `(widget, widget_occurrence)` against `order` and does
-  **not consult the catalog at all**, so neither `opaque_widgets` nor
+- `set_widget` resolves `(widget, widget_occurrence)` against `order` without
+  using the catalog for that mapping, so neither `opaque_widgets` nor
   `uncatalogued_widget_write` can arise. A name or occurrence `order` does not
-  list is `unknown_widget`, exactly as a missing `widget_order` entry would be;
+  list is `unknown_widget`, exactly as a missing `widget_order` entry would be.
+  A25 uses supplied `dynamic_groups` metadata only for count validation: it
+  checks the allocation bound and refuses a change from the addressed
+  occurrence's stored count that would require replacing the declaration;
 - `project()` rebuilds `widgets_values` in the shape the producer serialized —
   an array of `order.length`, or the object in its original key order with each
   declared widget taking its live value and every other key its verbatim
@@ -2499,4 +2502,4 @@ here.
 
 An opt-in `dynamic_groups` catalog entry expands a saved row-count controller into indexed widget identities. These use the existing name-keyed registers; no op kind or on-document key changes. The new catalog hash requires coordinated reader adoption. Existing documents retain their original catalog and are re-minted to adopt the new layout.
 
-Count writes change the projected layout, retaining hidden registers and applying fresh-row defaults only at read time. They do not delete rows or links. Explicit `widgets_values_form` declarations remain authoritative; a count write requiring a new declaration is rejected before mutation. See [DynamicGroup catalog support](dynamic-groups.md) for the producer contract, bounds, and fixture provenance.
+Count writes change the projected layout, retaining hidden registers and applying fresh-row defaults only at read time. They do not delete rows or links. Explicit `widgets_values_form` declarations remain authoritative; supplied group metadata adds allocation-bound validation and rejects a count change requiring a new declaration before mutation. This is A24's one catalog-validation exception, applied to the addressed occurrence in top-level, interior, and promoted writes. Without group metadata, the package cannot identify count fields; compatible producer/catalog/reader admission remains the caller's responsibility. See [DynamicGroup catalog support](dynamic-groups.md) for the producer contract, bounds, and fixture provenance.
