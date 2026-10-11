@@ -101,6 +101,8 @@ import {
   resolveDefinition,
   stampsMap,
   widgetStorageOf,
+  GROW_REQUEST_TAG,
+  INTERIOR_ROUTE_TAG,
 } from "./doc.js";
 import {
   declaresWidgetForm,
@@ -2077,7 +2079,7 @@ interface InteriorResolution {
 }
 
 function interiorRouteKey(instanceId: string, incarnation: string): string {
-  return JSON.stringify(["interior_route", instanceId, incarnation]);
+  return JSON.stringify([INTERIOR_ROUTE_TAG, instanceId, incarnation]);
 }
 
 function resolveInteriorNode(
@@ -2987,7 +2989,7 @@ type GrowRequest = [string, string | null, boolean];
 
 /** `__stamps` key holding a grow's own request, companion to its `["grow", ...]` stamp. */
 function growRequestKey(toNode: unknown, growId: unknown, family: string): string {
-  return JSON.stringify(["grow_request", String(toNode), String(growId), family]);
+  return JSON.stringify([GROW_REQUEST_TAG, String(toNode), String(growId), family]);
 }
 
 /**

@@ -17,7 +17,8 @@
  *   ├── Y.Map '__applied'   — op_id → sha256 of the canonical op payload
  *   │                         (idempotency + op_id-reuse detection, §4
  *   │                         amendment A8; a legacy `1` is a pre-A8 record)
- *   ├── Y.Map '__stamps'    — write-target key → [base_version, actor, op_id] (§4)
+ *   ├── Y.Map '__stamps'    — write-target key → [base_version, actor, op_id] (§4),
+ *   │                         plus counterless grow_request / interior_route rows
  *   ├── Y.Map '__link_state' — normalized link id → durable descriptor (§1.5)
  *   └── Y.Map '__clock_reservations' — producer identity → reserved counter tuple (§1.6)
  */
@@ -278,6 +279,9 @@ export const ROOT_META = "meta";
 export const ROOT_APPLIED = "__applied";
 export const ROOT_STAMPS = "__stamps";
 export const ROOT_LINK_STATE = "__link_state";
+/** `__stamps` companion-row key tags: counterless rows written beside a stamp. */
+export const GROW_REQUEST_TAG = "grow_request";
+export const INTERIOR_ROUTE_TAG = "interior_route";
 /** Created lazily by a successful clock admission, never exported from the entrypoint. */
 export const ROOT_CLOCK_RESERVATIONS = "__clock_reservations";
 

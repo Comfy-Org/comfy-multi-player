@@ -2494,3 +2494,15 @@ on that path and the retention on every other — rather than papered over.
 map directly, maintains neither passthrough register (A23's gap), and does not
 consult a declared order either. Pre-existing, one op over, and not addressed
 here.
+
+## Amendment A25 — 2026-10-10 — Lamport floor reads past companion rows; opt-in lenient read (no schema change)
+
+§1.6 says `observedDocCounter()` validates every tuple and that a malformed entry fails the entire scan. The applier itself writes two `__stamps` rows that are not stamp tuples and carry no counter:
+- `["grow_request", to_node, grow_id, family]`: an autogrow connect's requested slot shape, `[name, widget | null, isInputcount]`.
+- `["interior_route", instance_id, incarnation]`: a deleted subgraph instance's retained definition id, a string.
+
+So one autogrow connect or one subgraph-instance delete made the floor unreadable for every later producer admission on that document.
+
+`observedDocCounter()` now passes over `__stamps` rows whose key begins with either tag. The tags are `GROW_REQUEST_TAG` and `INTERIOR_ROUTE_TAG` in `doc.ts`, shared with the applier's key builders, and are matched on the canonical `JSON.stringify` key prefix. Every other row is validated exactly as §1.6 says, so the default read still fails closed. `__clock_reservations` rows are never skipped. The counters those operations carry are still counted through their own stamps (`["grow", …]`, `["node", …]`).
+
+A producer that must keep minting rather than refuse may call `observedDocCounter(doc, { skipMalformed: true })`. It returns `{ counter, skipped }`: the maximum over the readable rows of both ledgers, and the number of malformed rows it skipped (companion rows are not counted). An unreadable schema or ledger root still throws in this mode: a root that cannot be read is not a row that can be skipped. `DocDerivedLamportClockStore` keeps the strict read.

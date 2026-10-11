@@ -2,10 +2,12 @@ import * as Y from "yjs";
 import { describe, expect, it, vi } from "vitest";
 import { applyOps, DocDerivedLamportClockStore, freezeLamportEnvelope, MAX_LAMPORT_COUNTER,
   mint, migrate, observedDocCounter, observeLamport, persistLamportTick, project, readStamps,
-  SCHEMA_VERSION, tickLamport, validateLamportCounter, type LamportClockStore } from "../src/index.js";
+  SCHEMA_VERSION, tickLamport, validateLamportCounter, type LamportClockStore, type WidgetCatalog,
+  type WorkflowJSON } from "../src/index.js";
 import { loadCatalog } from "./helpers.js";
 
 const catalog = loadCatalog();
+const growCatalog: WidgetCatalog = { types: { Source: { widget_order: [] }, Destination: { widget_order: [] } } };
 const identity = { workflow_id: "w", lineage_id: "l", producer_id: "agent:clock" };
 const reservationKey = '["__lamport_clock","w","l","agent:clock"]';
 
@@ -115,6 +117,66 @@ describe("creator-owned Lamport counter", () => {
       { workflow_id: "w", lineage_id: "l", producer_id: "p" },
       async (stored) => ({ counter: tickLamport(stored ?? 0), value: stored }),
     )).rejects.toThrow(/Lamport counter/);
+  });
+
+  it("skips autogrow request rows when taking the floor of a real document", () => {
+    const io = (name: string, links: object) => ({ name, type: "IMAGE", ...links });
+    const doc = mint({
+      nodes: [
+        { id: 1, type: "Source", pos: [0, 0], inputs: [], outputs: [io("out", { links: [] })], widgets_values: [] },
+        { id: 2, type: "Destination", pos: [0, 0], inputs: [io("fixed", { link: null })], outputs: [], widgets_values: [] },
+      ],
+      links: [],
+    } as unknown as WorkflowJSON, growCatalog);
+    applyOps(doc, [{
+      op: "connect", op_id: "c".repeat(32), actor: "agent:t:1", base_version: 7, stamp: [7, "agent:t:1"],
+      link_id: 9, from_node: 1, from_slot: 0, to_node: 2, link_type: "IMAGE",
+      grow: { name: "images.image0", type: "IMAGE", widget: "upload" },
+    }], growCatalog);
+    expect([...doc.getMap("__stamps").keys()].some((key) => key.startsWith('["grow_request",'))).toBe(true);
+    expect(observedDocCounter(doc)).toBe(7);
+    expect(observedDocCounter(replicaOf(doc))).toBe(7);
+
+    // The skip covers only the request row: the grow's own stamp still counts and still fails closed.
+    const stamps = doc.getMap<unknown>("__stamps");
+    const growKey = [...stamps.keys()].find((key) => key.startsWith('["grow",'));
+    if (growKey === undefined) throw new Error("the autogrow connect wrote no grow stamp");
+    stamps.set(growKey, [9, "agent:t:1", "c".repeat(32)]);
+    expect(observedDocCounter(doc)).toBe(9);
+    stamps.set(growKey, ["images.image0", null, false]);
+    expect(() => observedDocCounter(doc)).toThrow(/malformed stamp tuple/);
+    // Only an exact leading companion tag is skipped: a neighbouring tag or a nested one still fails closed.
+    for (const key of ['["grow_request_x","1"]', '["widget",["grow_request","1"]]']) {
+      const neighbour = mint({ nodes: [], links: [] }, catalog);
+      neighbour.getMap<unknown>("__stamps").set(key, ["not", "a", "stamp"]);
+      expect(() => observedDocCounter(neighbour), key).toThrow(/Lamport counter/);
+    }
+    // Reservations are never companion rows, whatever their key.
+    const reserved = mint({ nodes: [], links: [] }, catalog);
+    reserved.getMap<unknown>("__clock_reservations").set('["grow_request","1","9","images"]', [3, "agent:clock", "x"]);
+    expect(() => observedDocCounter(reserved)).toThrow(TypeError);
+  });
+
+  it("skips malformed rows only when asked, across both ledgers", async () => {
+    const doc = mint({ nodes: [], links: [] }, catalog);
+    await persistLamportTick(new DocDerivedLamportClockStore(doc), identity, [19]);
+    const stamps = doc.getMap<unknown>("__stamps");
+    stamps.set('["widget","1","0","seed"]', [12, "agent:t:1", "a".repeat(32)]);
+    stamps.set('["grow_request","1","9","images"]', ["images.image0", null, false]);
+    stamps.set("bad", [Number.NaN, "agent:bad", "c".repeat(32)]);
+    stamps.set("null-row", null);
+    doc.getMap<unknown>("__clock_reservations").set('["__lamport_clock","w","l","other"]', [99, "someone", "x"]);
+    doc.getMap<unknown>("__clock_reservations").set("not json", [98, "someone", "not json"]);
+
+    expect(() => observedDocCounter(doc)).toThrow(/Lamport counter|malformed stamp tuple/);
+    expect(observedDocCounter(doc, { skipMalformed: true })).toEqual({ counter: 20, skipped: 4 });
+    expect(observedDocCounter(replicaOf(doc), { skipMalformed: true })).toEqual({ counter: 20, skipped: 4 });
+    expect(observedDocCounter(mint({ nodes: [], links: [] }, catalog), { skipMalformed: true }))
+      .toEqual({ counter: undefined, skipped: 0 });
+    expect(() => observedDocCounter(new Y.Doc(), { skipMalformed: true })).toThrow(/schema/);
+    const brokenRoot = mint({ nodes: [], links: [] }, catalog);
+    brokenRoot.getArray("__clock_reservations").push([[5, "agent:clock", "x"]]);
+    expect(() => observedDocCounter(replicaOf(brokenRoot), { skipMalformed: true })).toThrow(/non-map content/);
   });
 
   it("keeps reservations out of public readStamps and preserves their identity tuple", async () => {
