@@ -11,8 +11,12 @@ function isGroupField(prefix: string, fields: readonly string[], name: string): 
   const suffix = name.slice(prefix.length + 1);
   const dot = suffix.indexOf(".");
   const index = suffix.slice(0, dot);
-  return dot > 0 && /^(0|[1-9]\d*)$/.test(index) && Number.isSafeInteger(Number(index))
+  return dot > 0 && /^(0|[1-9]\d*)$/.test(index) && Number(index) < maxRows(fields)
     && fields.includes(suffix.slice(dot + 1));
+}
+
+function maxRows(fields: readonly string[]): number {
+  return fields.length === 0 ? 0 : Math.floor(MAX_OVERFLOW_WIDGETS / fields.length);
 }
 
 export function isDynamicGroupField(entry: WidgetCatalogEntry | undefined, name: string): boolean {
@@ -47,6 +51,9 @@ export function assertDynamicGroupCatalog(entry: WidgetCatalogEntry): void {
         || new Set(group.widgets).size !== group.widgets.length) {
       throw new TypeError(`DynamicGroup '${name}' must declare distinct nonempty relative widget names`);
     }
+    if (!Number.isSafeInteger(group.min) || !Number.isSafeInteger(group.max) || group.min < 0 || group.min > group.max) {
+      throw new TypeError(`DynamicGroup '${name}' must declare integer row bounds with 0 <= min <= max`);
+    }
     if (Object.hasOwn(entry.dynamic_combos ?? {}, name) || isDynamicGroupField(entry, name)) {
       throw new TypeError(`DynamicGroup controller '${name}' collides with another dynamic widget`);
     }
@@ -62,9 +69,8 @@ export function assertDynamicGroupCatalog(entry: WidgetCatalogEntry): void {
 export function groupCountRefusal(entry: WidgetCatalogEntry | undefined, name: string, value: unknown): string | null {
   const group = groupOf(entry, name);
   if (!group) return null;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0
-      || group.widgets.length === 0 || value > Math.floor(MAX_OVERFLOW_WIDGETS / group.widgets.length)) {
-    return `${name}: expected a non-negative integer row count within the widget allocation bound`;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < group.min || value > maxRows(group.widgets)) {
+    return `${name}: expected an integer row count from the group minimum to the widget allocation bound`;
   }
   return null;
 }

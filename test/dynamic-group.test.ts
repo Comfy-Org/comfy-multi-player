@@ -131,6 +131,9 @@ describe("DynamicGroup catalog layout", () => {
       widget_order: ["before", "loras", "loras.0.strength", "after"],
       dynamic_groups: { ...groupEntry.dynamic_groups, "loras.0.strength": { min: 0, max: 3, widgets: ["value"], defaults: { value: 1 } } },
     }],
+    ["minimum above maximum", { ...groupEntry, dynamic_groups: { loras: { ...loras, min: 4, max: 3 } } }],
+    ["negative minimum", { ...groupEntry, dynamic_groups: { loras: { ...loras, min: -1 } } }],
+    ["fractional maximum", { ...groupEntry, dynamic_groups: { loras: { ...loras, max: 2.5 } } }],
   ] satisfies [string, WidgetCatalogEntry][])("refuses %s catalog metadata before naming values", (_label, entry) => {
     const malformed = structuredClone(catalog);
     malformed.types["DevToolsNodeWithDynamicGroup"] = entry;
@@ -285,6 +288,40 @@ describe("DynamicGroup catalog layout", () => {
   it.each([-1, 1.5, "2", 1_000_000])("refuses unsafe row count %s before writing", (count) => {
     assertRejectedWithoutMutation(cases.populated, edit("loras", count), "malformed_op", catalog,
       edit("after", "must not run", 2));
+  });
+
+  const interiorWorkflow: WorkflowJSON = {
+    nodes: [{ id: 9, type: "group-definition" }], links: [],
+    definitions: { subgraphs: [{ id: "group-definition", nodes: cases.populated.nodes, links: [] }] },
+  };
+  it.each([
+    ["top-level", cases.populated, edit("loras", 0), edit("after", "must not run", 2)],
+    ["interior", interiorWorkflow, { ...edit("loras", 0), path: ["9", "1"], inner_widget: "loras" },
+      { ...edit("after", "must not run", 2), path: ["9", "1"], inner_widget: "after" }],
+    ["promoted", cases.populated, { ...edit("loras", 0), promoted: { value_index: 1, instance_path: ["1"], host_widgets_values: ["head", 0, "tail"] } },
+      edit("after", "must not run", 2)],
+  ] satisfies [string, WorkflowJSON, Op, Op][])("refuses %s counts below the group minimum", (_route, workflow, op, trailing) => {
+    const minimumOne = structuredClone(catalog);
+    minimumOne.types["DevToolsNodeWithDynamicGroup"]!.dynamic_groups!["loras"]!.min = 1;
+    assertRejectedWithoutMutation(workflow, op, "malformed_op", minimumOne, trailing);
+  });
+
+  it("refuses a saved count below the group minimum before minting", () => {
+    const minimumOne = structuredClone(catalog);
+    minimumOne.types["DevToolsNodeWithDynamicGroup"]!.dynamic_groups!["loras"]!.min = 1;
+    const workflow = structuredClone(cases.empty);
+    delete workflow.nodes[0]!["widgets_values_named"];
+    workflow.nodes[0]!.widgets_values = { before: "first", loras: 0, after: "last" };
+
+    expect(() => mint(workflow, minimumOne)).toThrow(/row count/);
+  });
+
+  it("refuses row fields beyond the allocation bound without mutation", () => {
+    assertRejectedWithoutMutation(cases.populated, edit("loras.1000000.strength", 0.5), "unknown_widget", catalog,
+      edit("after", "must not run", 2));
+    const doc = mint(cases.populated, catalog);
+    expect(applyOps(doc, [edit("loras.1364.strength", 0.5)], catalog).outcomes[0]?.outcome).toBe("applied");
+    doc.destroy();
   });
 
   it("refuses a malformed saved count before minting a misaligned document", () => {
