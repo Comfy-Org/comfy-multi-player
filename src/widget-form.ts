@@ -57,11 +57,9 @@
  * merge corruption cannot arise and the residue cannot drift from the values
  * (it never holds one).
  *
- * It does not relax KA-12. A self-described node does not consult the catalog
- * because it does not need to: the name↔position mapping arrived WITH the
- * node from the only party that knows it. KA-12 exists to stop this package
- * guessing a mapping it was never given, and a declaration is not a guess. An
- * undeclared node is unaffected — same catalog, same rejections.
+ * It does not relax KA-12. The declaration supplies name↔position mapping.
+ * A25 still uses supplied DynamicGroup metadata to validate count writes
+ * without replacing that mapping. An undeclared node keeps catalog resolution.
  */
 
 import type * as Y from "yjs";
