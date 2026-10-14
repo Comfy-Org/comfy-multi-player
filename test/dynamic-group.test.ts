@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
-import { applyOps, mint, project, type Op, type SetWidgetOp, type TopLevelSetWidgetOp, type WidgetCatalog, type WidgetCatalogEntry, type WorkflowJSON } from "../src/index.js";
+import { applyOps, mint, project, type Op, type SetWidgetOp, type TopLevelSetWidgetOp, type WidgetCatalog, type WidgetCatalogEntry, type WorkflowJSON, type WorkflowNode } from "../src/index.js";
 import { canonicalize } from "./helpers.js";
 import { assertRejectedWithoutMutation } from "./rejection-test-helpers.js";
 
@@ -104,7 +104,7 @@ describe("DynamicGroup catalog layout", () => {
       ...edit("loras", 1 - occurrence), widget_occurrence: occurrence,
       promoted: { value_index: occurrence, instance_path: ["1"], host_widgets_values: [1 - occurrence, 1 - occurrence, "tail"] },
     } : { ...op, value: 1 - occurrence };
-    assertRejectedWithoutMutation(workflow, invalid, "malformed_op", catalog, trailing);
+    assertRejectedWithoutMutation(workflow, invalid, "dynamic_group_form_mismatch", catalog, trailing);
   });
 
   it.each([
@@ -206,7 +206,7 @@ describe("DynamicGroup catalog layout", () => {
     const workflow = structuredClone(composite.explicit_form_workflow);
     const before = structuredClone(workflow);
     assertRejectedWithoutMutation(workflow, composite.standalone_count_op,
-      "malformed_op", composite.catalog, { ...composite.op, op_id: "d".repeat(32) });
+      "dynamic_group_form_mismatch", composite.catalog, { ...composite.op, op_id: "d".repeat(32) });
     expect(workflow).toEqual(before);
   });
 
@@ -286,7 +286,7 @@ describe("DynamicGroup catalog layout", () => {
   });
 
   it.each([-1, 1.5, "2", 1_000_000])("refuses unsafe row count %s before writing", (count) => {
-    assertRejectedWithoutMutation(cases.populated, edit("loras", count), "malformed_op", catalog,
+    assertRejectedWithoutMutation(cases.populated, edit("loras", count), "dynamic_group_count_out_of_range", catalog,
       edit("after", "must not run", 2));
   });
 
@@ -303,7 +303,7 @@ describe("DynamicGroup catalog layout", () => {
   ] satisfies [string, WorkflowJSON, Op, Op][])("refuses %s counts below the group minimum", (_route, workflow, op, trailing) => {
     const minimumOne = structuredClone(catalog);
     minimumOne.types["DevToolsNodeWithDynamicGroup"]!.dynamic_groups!["loras"]!.min = 1;
-    assertRejectedWithoutMutation(workflow, op, "malformed_op", minimumOne, trailing);
+    assertRejectedWithoutMutation(workflow, op, "dynamic_group_count_out_of_range", minimumOne, trailing);
   });
 
   it("refuses a saved count below the group minimum before minting", () => {
@@ -328,6 +328,24 @@ describe("DynamicGroup catalog layout", () => {
     const workflow = structuredClone(cases.populated);
     (workflow.nodes[0]!.widgets_values as unknown[])[1] = -1;
     expect(() => mint(workflow, catalog)).toThrow(/row count/);
+  });
+
+  const definitionId = "11111111-1111-4111-8111-111111111111";
+  it.each([
+    ["add_node", (node: WorkflowNode) => ({ op: "add_node", node_id: 5, class_type: node.type, pos: [0, 0], node })],
+    ["insert_workflow", (node: WorkflowNode) => ({ op: "insert_workflow", workflow: { nodes: [node], links: [] } })],
+    ["definition insert_workflow", (node: WorkflowNode) => ({ op: "insert_workflow", workflow: {
+      nodes: [{ id: 6, type: definitionId, inputs: [], outputs: [] }], links: [],
+      definitions: { subgraphs: [{ id: definitionId, nodes: [node], links: [], inputs: [], outputs: [], widgets: [] }] },
+    } })],
+  ] as const)("refuses positional and named %s payload counts outside the group range", (_label, payload) => {
+    const positional = ["head", -1, "A.safetensors", 1, true, "C.safetensors", 0.5, false, "tail"];
+    for (const widgets_values of [positional, { before: "head", loras: -1, after: "tail" }]) {
+      const node: WorkflowNode = { id: 5, type: "DevToolsNodeWithDynamicGroup", inputs: [], outputs: [], widgets_values };
+      const op = { ...payload(node), op_id: "c".repeat(32), actor: "agent:a", base_version: 1, stamp: [1, "agent:a"] } as unknown as Op;
+      assertRejectedWithoutMutation(cases.populated, op, "dynamic_group_count_out_of_range", catalog,
+        edit("after", "must not run", 2));
+    }
   });
 
   it.each([-1, 1.5, "2", 1_000_000])("refuses inactive named group count %s during mint", (count) => {
@@ -422,7 +440,7 @@ describe("DynamicGroup catalog layout", () => {
     expect(project(doc, catalog).nodes[0]!.widgets_values).toEqual([
       "head", 2, "A.safetensors", 1, true, "C.safetensors", 0.7, false, "tail",
     ]);
-    assertRejectedWithoutMutation(workflow, edit("loras", 0), "malformed_op", catalog,
+    assertRejectedWithoutMutation(workflow, edit("loras", 0), "dynamic_group_form_mismatch", catalog,
       edit("after", "must not run", 2));
     doc.destroy();
   });
@@ -440,7 +458,7 @@ describe("DynamicGroup catalog layout", () => {
         host_widgets_values: ["head", count, "A.safetensors", 1, true, "C.safetensors", 0.5, false, "tail"],
       },
     };
-    assertRejectedWithoutMutation(workflow, op, "malformed_op", catalog,
+    assertRejectedWithoutMutation(workflow, op, count === 0 ? "dynamic_group_form_mismatch" : "dynamic_group_count_out_of_range", catalog,
       edit("after", "must not run", 2));
   });
 
@@ -482,7 +500,7 @@ describe("DynamicGroup catalog layout", () => {
       "head", 2, "A.safetensors", 1, true, "C.safetensors", 0.7, false, "tail",
     ]);
     const invalid: Op = { ...edit("loras", -1), path: ["9", "1"], inner_widget: "loras" };
-    assertRejectedWithoutMutation(workflow, invalid, "malformed_op", catalog, { ...op, op_id: "b".repeat(32) });
+    assertRejectedWithoutMutation(workflow, invalid, "dynamic_group_count_out_of_range", catalog, { ...op, op_id: "b".repeat(32) });
     doc.destroy();
   });
 });
