@@ -1,6 +1,9 @@
 import { MAX_OVERFLOW_WIDGETS } from "./limits.js";
 import type { WidgetCatalogEntry } from "./types.js";
 
+/** A row count outside `min` to the allocation bound; `applyOps` rejects it `dynamic_group_count_out_of_range`. */
+export class DynamicGroupCountError extends TypeError {}
+
 export function groupOf(entry: WidgetCatalogEntry | undefined, name: string) {
   const groups = entry?.dynamic_groups;
   return groups && Object.hasOwn(groups, name) ? groups[name] : undefined;
@@ -122,7 +125,7 @@ export function groupLayout(entry: WidgetCatalogEntry, name: string, value: unkn
   if (!group) return undefined;
   const count = value === undefined ? group.min : value;
   const refusal = groupCountRefusal(entry, name, count);
-  if (refusal) throw new TypeError(refusal);
+  if (refusal) throw new DynamicGroupCountError(refusal);
   const order: string[] = [];
   const defaults = new Map<string, unknown>();
   defaults.set(name, group.min);
