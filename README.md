@@ -453,7 +453,7 @@ replays already-minted ops under [abort-remainder](#what-applyops-returns), the
 same as comfy-cli's `apply_op`, which replays `clear` in any position. So a
 `clear` in the middle of an op array is applied here, deliberately: the
 `edit-heavy` conformance session contains exactly that, and
-[`docs/portability.md`](docs/portability.md) requires every language
+[`ADR-PORTABILITY-0001`](docs/adr/PORTABILITY-0001-op-layer-contract.md) requires every language
 implementation to replay it with no failures. If you are building a submission
 surface in front of the applier, that admission layer is where `BATCHABLE_OPS`
 belongs. `test/batch-policy.test.ts` pins all of this.

@@ -43,9 +43,12 @@ reviews:
         chooses among viable system designs, or creates compatibility or
         migration policy without recording the tradeoff in docs/adr/, ask for
         an ADR. Do not demand an ADR for implementation detail, transient
-        evidence, tests, or routine maintenance. For ADR files, verify that
-        context, decision, alternatives, consequences, compatibility impact,
-        and supersession links are concrete and mutually consistent.
+        evidence, tests, or routine maintenance. Context, Decision,
+        Alternatives considered, and Consequences are recommended prompts, not
+        required headings; do not fail an ADR solely because one is omitted or
+        renamed. Review whether rationale, impact, compatibility, and
+        supersession are concrete and mutually consistent for the decision at
+        hand.
     - path: "{fixtures/**,.agents/checks/catalog-pinning.md}"
       # source: .agents/checks/catalog-pinning.md
       instructions: >-

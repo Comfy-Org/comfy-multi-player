@@ -1,7 +1,8 @@
 # Replay fixtures
 
 The canonical cross-language parity contract is
-`golden-vectors/conformance.json`; see [`docs/portability.md`](../docs/portability.md).
+`golden-vectors/conformance.json`; see
+[`ADR-PORTABILITY-0001`](../docs/adr/PORTABILITY-0001-op-layer-contract.md).
 It references the replay-corpus sessions below plus package-local vectors kept
 alongside the manifest, so every language runner consumes the same inputs and
 recorded outputs rather than maintaining a private corpus.

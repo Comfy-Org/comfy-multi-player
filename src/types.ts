@@ -95,7 +95,7 @@ export const DEFERRED_OPS = ["reset_doc"] as const;
  * position. Gating dispatch on this list would diverge from `apply_op` (KA-3
  * one-implementation parity) and would reject `fixtures/golden-vectors/
  * conformance.json`'s `edit-heavy` case, which carries a `clear` at index 36
- * of a 61-op stream that `docs/portability.md` requires every conforming
+ * of a 61-op stream that ADR-PORTABILITY-0001 requires every conforming
  * runner to apply "in file order with no failures or skips".
  *
  * Exported for a HOST that fronts the applier with its own submission surface:

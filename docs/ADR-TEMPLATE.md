@@ -1,5 +1,11 @@
 # ADR-<DOMAIN>[-<SUBDOMAIN>]-<NNNN>: Decision title
 
+The sections below are recommended prompts, not a required schema. Keep the
+sections that preserve useful decision context, rename or omit those that do
+not fit, and add domain-specific evidence where it helps. The ADR validator
+enforces only the filename, heading, date, status, identifier uniqueness,
+companion-directory ownership, and resolvable ADR links.
+
 Date: YYYY-MM-DD
 
 ## Status

@@ -955,7 +955,7 @@ and first-class definitions (§5.1) only shrink these):
 | `connect` (autogrow) | ~4 → **+2 under A7** | yes — `grow_id` identity keeps replays non-clobbering; A7 adds the `("grow", …)` stamp and the `("grow_request", …)` row, plus renames bounded by the family's concurrent-grow count |
 | `delete_node` | 4.7–5 / 6 → **+1 under A7** | yes — writes bounded by the node's degree, plus the `("node", id)` stamp; the dangling-reference *scan* is O(nodes) read cost, accepted |
 | `set_node_field` (package-local, A21) | 2 — one node/nested-flag write + one field stamp | yes |
-| `clear` | O(doc), **+1 stamp per `removed_nodes` entry under A7** | **no — inherent.** Rare; standalone-only at the *authoring* surface (vocabulary §1.5: `apply_specs` rejects a spec batch containing it, code `workflow_clear_not_batchable`) — the *replay* surface (`apply_op` / `applyOps`, §4 abort-remainder) accepts it in any position and must, per `docs/portability.md`. SHOULD be host-mediated and never merged casually |
+| `clear` | O(doc), **+1 stamp per `removed_nodes` entry under A7** | **no — inherent.** Rare; standalone-only at the *authoring* surface (vocabulary §1.5: `apply_specs` rejects a spec batch containing it, code `workflow_clear_not_batchable`) — the *replay* surface (`apply_op` / `applyOps`, §4 abort-remainder) accepts it in any position and must, per `docs/adr/PORTABILITY-0001-op-layer-contract.md`. SHOULD be host-mediated and never merged casually |
 
 ---
 

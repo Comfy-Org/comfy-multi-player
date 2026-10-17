@@ -12,7 +12,7 @@
  * `apply_op`, whose batch protocol is §4 abort-remainder with no kind
  * restriction. Gating `applyOps` on `BATCHABLE_OPS` would diverge from
  * `apply_op` (KA-3 — one implementation, golden-vector parity) and would
- * reject the `edit-heavy` conformance case, which `docs/portability.md`
+ * reject the `edit-heavy` conformance case, which ADR-PORTABILITY-0001
  * requires every language runner to replay "in file order with no failures or
  * skips".
  *

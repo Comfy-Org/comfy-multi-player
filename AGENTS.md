@@ -56,7 +56,14 @@ domain. The heading must be `# ADR-<IDENTIFIER>: Title`, followed by a
 `Rejected`, `Deprecated`, or `Superseded`. Start from `docs/ADR-TEMPLATE.md`.
 Run `npm run check:adrs`; CI enforces naming, metadata, identifier uniqueness,
 companion-directory ownership, and links to ADR files. Superseded records stay
-in place and link to their replacement.
+in place and link to their replacement. `Context`, `Decision`, `Alternatives
+considered`, and `Consequences` are recommended prompts, not mandatory
+headings; the validator deliberately does not enforce content-section shape.
+
+Comfy repositories standardize this ADR behavior and lifecycle, not one tool
+implementation. Keep the validator, tests, and CI integration native to this
+repository's language and package manager; this TypeScript package uses Node,
+Vitest, npm scripts, and GitHub Actions.
 
 ## Permutation and property testing
 

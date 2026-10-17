@@ -106,6 +106,9 @@ Significant, durable architecture choices live in `docs/adr/`. Start from
 and use the canonical filename, heading, date, and status shape documented in
 `AGENTS.md`. Run `npm run check:adrs` before review. Keep superseded records and
 link them to their replacements so old source and PR references remain useful.
+The template's content sections are recommended prompts rather than required
+headings. Across Comfy repositories the ADR behavior is consistent, while the
+validator and CI wiring remain native to each repository's language and tools.
 
 ## Cutting a release
 
