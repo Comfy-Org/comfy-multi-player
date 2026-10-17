@@ -231,7 +231,7 @@ const CASES: Row[] = [
     },
   },
   {
-    // ADR-033 (amended): `derivedLinkId` is now a PURE function of the op's
+    // ADR-WORKFLOW-0033 (amended): `derivedLinkId` is now a PURE function of the op's
     // own content, with no retry against document state (removing the
     // arrival-order dependence Christian Byrne's review of the original
     // revision found — see `remap.ts`'s `derivedLinkId` doc comment). A

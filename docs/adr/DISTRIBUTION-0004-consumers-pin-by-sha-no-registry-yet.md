@@ -1,14 +1,20 @@
-# ADR-004: Consumers pin by git SHA; no registry publish yet
+# ADR-DISTRIBUTION-0004: Consumers pin by git SHA; no registry publish yet
 
-**Status:** Superseded by [ADR-006](ADR-006-publish-to-npm-pin-exact-versions.md)
-**Date:** 2026-08-20
+Date: 2026-08-20
+
+## Status
+
+Superseded
+
+Superseded by [ADR-DISTRIBUTION-0006](DISTRIBUTION-0006-publish-to-npm-pin-exact-versions.md).
+
 **Invariant:** KA-1, FC-3 (both hosts run the *same* applier bytes)
 
 ## Context
 
 Both hosts of this document — the browser (ComfyUI frontend) and the stateless
 Node doc-host sidecar in cloud — must run the identical op-to-document
-implementation (ADR-001). Consumers therefore need a way to depend on this
+implementation (ADR-APPLIER-0001). Consumers therefore need a way to depend on this
 package that makes "same bytes on both hosts" mechanically checkable, without
 prematurely committing to a registry and publish pipeline while the schema and
 op vocabulary are still stabilizing.
@@ -30,10 +36,10 @@ Verified 2026-08-20 (frontend `poc/fe-crdt-follower`, PR #15457):
   `project`, because a follower never writes the shared doc (KA-6). Consuming
   the package for *types and layout* does not imply running the applier.
 
-  **Amended 2026-08-20 (see [ADR-005](ADR-005-read-only-snapshot-surface.md)):**
+  **Amended 2026-08-20 (see [ADR-API-0005](ADR-API-0005-read-only-snapshot-surface.md)):**
   that bullet describes the surface at the pinned SHA `6793d754`. Issue #18
-  removed most doc-layout helpers from the entrypoint; the ADR-004 follower trio
-  remains public for compatibility. ADR-005 adds `readGraph()` as the safer
+  removed most doc-layout helpers from the entrypoint; the ADR-DISTRIBUTION-0004 follower trio
+  remains public for compatibility. ADR-API-0005 adds `readGraph()` as the safer
   migration target: unlike `nodesMap`, it returns plain frozen data. **With one
   caveat a migrating follower must handle:** `nodesMap` never throws, and
   `readGraph` does — it carries the KA-11 read gate (Amendment A12), so a
@@ -52,7 +58,7 @@ Consumers depend on this package by **immutable git SHA**, and the package is
 - Pin by SHA: `npm install github:Comfy-Org/comfy-multi-player#<sha>` (pnpm:
   `github:Comfy-Org/comfy-multi-player#<sha>`).
 - The frontend and the server MUST pin the same SHA. This is load-bearing for
-  outcome agreement, not just hygiene (ADR-001; README "Install").
+  outcome agreement, not just hygiene (ADR-APPLIER-0001; README "Install").
 - A git dependency runs this package's `prepare` script to build `dist` on
   install. Consumers whose package manager gates install-time build scripts must
   allow this build explicitly. For pnpm this is an `allowBuilds` entry in

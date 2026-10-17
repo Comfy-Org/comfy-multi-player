@@ -13,7 +13,7 @@
  * The frontend then keeps its own copy of the graph and stops taking the
  * document's projection, so later edits land in the document but never on the
  * canvas. Groups now get the same pure numeric derivation links do
- * (ADR-033): a function of the op's own content, never of document state.
+ * (ADR-WORKFLOW-0033): a function of the op's own content, never of document state.
  *
  * A document that already stores the old string form projects it through the
  * same hash, so it reads back as the number a fresh insert of that op derives.

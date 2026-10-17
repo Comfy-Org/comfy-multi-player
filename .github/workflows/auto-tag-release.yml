@@ -4,7 +4,7 @@ name: Auto-tag release PR
 # release PR. It does NOT make merging a release: the deliberate act is the
 # maintainer applying the `release` label to a version-bump PR and approving
 # it. Nothing here fires without that label. See the amendment in
-# docs/decisions/ADR-006-publish-to-npm-pin-exact-versions.md.
+# docs/adr/DISTRIBUTION-0006-publish-to-npm-pin-exact-versions.md.
 #
 # WHY IT DISPATCHES INSTEAD OF RELYING ON THE TAG PUSH: a ref created with the
 # default GITHUB_TOKEN never raises `push`, so Release would not start from the

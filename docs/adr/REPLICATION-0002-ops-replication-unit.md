@@ -1,7 +1,11 @@
-# ADR-002: Ops are the replication unit; raw Yjs updates only host→follower
+# ADR-REPLICATION-0002: Ops are the replication unit; raw Yjs updates only host→follower
 
-**Status:** Accepted
-**Date:** 2026-08-20
+Date: 2026-08-20
+
+## Status
+
+Accepted
+
 **Invariants:** KA-1, KA-6, FC-1
 
 ## Context

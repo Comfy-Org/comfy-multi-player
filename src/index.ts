@@ -24,7 +24,7 @@
  *  - `applyOps(doc, ops, catalog?)` — idempotent, LWW-gated, abort-remainder
  *    op application (schema §2–§4);
  *  - `inspectOps(ops)` — pure validation and canonical bytes/digest/stamp
- *    extraction for storage preflight (ADR-022);
+ *    extraction for storage preflight (ADR-API-0022);
  *  - `project(doc, catalog)` — canonical workflow JSON projection (schema §7),
  *    fail-closed on a schema this package cannot read (KA-11);
  *  - `migrate(doc, fromVersion)` — layout versioning, fail-closed (schema §10);
@@ -37,12 +37,12 @@
  *    hosts that need conflict identity or watermark bookkeeping;
  *  - evidence-only collaboration trace declarations and
  *    `assertCollabReplayTraceV1` for fail-closed trace reads;
- *  - the ADR-004 follower read surface (`nodesMap`, `linksMap`,
+ *  - the ADR-DISTRIBUTION-0004 follower read surface (`nodesMap`, `linksMap`,
  *    `OPAQUE_WIDGETS_KEY`) for consuming the wire layout without applying ops;
  *  - the safer snapshot surface (`readGraph`, `readMeta`, `docCatalogPin`,
  *    `hasNode`, `hasAppliedOp`, `appliedOpIds`, `readApplied`, `readStamps`) for
  *    consumers
- *    that do not need ADR-004's live follower handles — see src/read.ts;
+ *    that do not need ADR-DISTRIBUTION-0004's live follower handles — see src/read.ts;
  *  - operation, workflow, catalog, and result types.
  *
  * Every other Y.Doc layout and low-level mutation helper is deliberately
@@ -67,7 +67,7 @@ export {
 } from "./events.js";
 export * from "./collab-trace.js";
 /**
- * ADR-004 follower read-surface. These helpers expose the established wire
+ * ADR-DISTRIBUTION-0004 follower read-surface. These helpers expose the established wire
  * layout only so the frontend follower can consume host updates. They are
  * read-only by contract: followers never write and never call `applyOps`
  * (KA-1, KA-6, FC-5); the host remains the sole op applier.

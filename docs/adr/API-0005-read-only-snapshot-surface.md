@@ -1,13 +1,17 @@
-# ADR-005: Reads get a snapshot surface, not the document handles back
+# ADR-API-0005: Reads get a snapshot surface, not the document handles back
 
-**Status:** Accepted
-**Date:** 2026-08-20
+Date: 2026-08-20
+
+## Status
+
+Accepted
+
 **Invariant:** KA-1, KA-2, KA-4, KA-6, KA-12, FC-5 (and KA-3 — the surface is pure)
-**Supersedes in part:** ADR-004 §Context, third bullet
+**Supersedes in part:** ADR-DISTRIBUTION-0004 §Context, third bullet
 
 ## Context
 
-Issue #18 stopped the entrypoint wholesale re-exporting `src/doc.ts`. ADR-004's
+Issue #18 stopped the entrypoint wholesale re-exporting `src/doc.ts`. ADR-DISTRIBUTION-0004's
 `nodesMap`, `linksMap`, and `OPAQUE_WIDGETS_KEY` remain public for follower
 compatibility. The vulnerability
 was reachability, not intent: the same import that hands a caller `nodesMap` for
@@ -25,7 +29,7 @@ are reads**:
 | cloud `services/agent/dochost/src/server.ts` `requirePin()` | `meta.catalog_version` | It is the KA-12 guard that decides whether projecting under the request's catalog is safe at all — it must run *before* `project()`. |
 | cloud `server.ts` `detectIDCollision()` | `nodes.has(id)`, `__applied.has(op_id)` | Two `has()` probes per op on the pre-apply path; projecting the whole document per op is the wrong shape and needs a catalog it may not trust yet. There is no projection of `__applied`. |
 | cloud `scripts/introspect-state.mjs` | `__applied` keys, `__stamps`, `meta` | The cross-language conformance harness compares the bookkeeping ledgers. No projection contains them. |
-| frontend `crdt/docSchema.ts` `readDocSnapshot()` | `nodes`, `links`, `__widgets_opaque` | The follower holds no catalog for the document it renders, so it cannot call `project()` — and ADR-004 records that it deliberately does not. |
+| frontend `crdt/docSchema.ts` `readDocSnapshot()` | `nodes`, `links`, `__widgets_opaque` | The follower holds no catalog for the document it renders, so it cannot call `project()` — and ADR-DISTRIBUTION-0004 records that it deliberately does not. |
 
 The op layer is for writes. "Migrate the consumers to ops" is not available for
 any of these.
@@ -64,7 +68,7 @@ proved by attempting the violation in `test/readonly-surface.test.ts`:
    therefore refuses — same `SchemaVersionError`, same message shape — **when
    the document carries content under a schema this package cannot read**, and
    returns its empty value **when the document carries nothing**. The second
-   clause is not a softening: ADR-004's follower reads a document that has no
+   clause is not a softening: ADR-DISTRIBUTION-0004's follower reads a document that has no
    roots at all before its first frame, there is no content there to mis-key,
    and the surface already reads it as empty on `main` with two tests pinning
    that. (`migrate()` *does* refuse that document — #30 — but that is a role
@@ -86,7 +90,7 @@ proved by attempting the violation in `test/readonly-surface.test.ts`:
    one definition of "readable".
 
 `test/public-api.regression.test.ts` keeps deriving the forbidden set from
-`src/doc.ts` at runtime, with ADR-004's exact three-entry follower allowlist
+`src/doc.ts` at runtime, with ADR-DISTRIBUTION-0004's exact three-entry follower allowlist
 plus the KA-1 `encodingLosses` diagnostic retained by main.
 `test/readonly-surface.test.ts`
 additionally fails on any entrypoint export it has not been told how to
@@ -98,7 +102,7 @@ classify, so a future export cannot widen the surface unreviewed.
   restores `mset`/`mdel`/`initDoc`/`createNodeMap` reachability behind a longer
   specifier, which is exactly what #18 exists to remove.
   `.agents/checks/api-contract.md` already classifies it as a blocking finding.
-- **Using the retained raw accessors for new consumers.** ADR-004 keeps these
+- **Using the retained raw accessors for new consumers.** ADR-DISTRIBUTION-0004 keeps these
   public for compatibility, but property 2 above shows why they are not the
   preferred surface: even a caller who only reads gets a mutable reference into
   the document's own storage.
@@ -117,7 +121,7 @@ classify, so a future export cannot widen the surface unreviewed.
 
 - The pin bump is unblocked: the FE follower and the cloud doc-host can both
   move past #18 without hand-mirroring schema v1 in raw `yjs`, which is what
-  ADR-004 closed. The migration is import-level; see the PR body for the exact
+  ADR-DISTRIBUTION-0004 closed. The migration is import-level; see the PR body for the exact
   before/after per call site.
 - `readGraph` costs about **2x** a raw live-handle read of the same four
   fields. Re-measured on Node 25 at this commit over three runs each
@@ -180,7 +184,7 @@ classify, so a future export cannot widen the surface unreviewed.
   `schemaGuard` already refuses that state today, more strictly than this gate
   does (it has no empty-document escape at all). What the empty-document clause
   covers is "no frame has arrived yet", not "a frame arrived out of order".
-- **`readGraph` can throw where `nodesMap` could not**, so ADR-004's
+- **`readGraph` can throw where `nodesMap` could not**, so ADR-DISTRIBUTION-0004's
   description of it as a migration target for the frontend follower now comes
   with that caveat; see the migration note below.
 - **Migration note for the consumer that adopts this surface.** The frontend

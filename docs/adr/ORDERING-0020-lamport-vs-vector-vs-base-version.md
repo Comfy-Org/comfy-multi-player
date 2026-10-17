@@ -1,14 +1,20 @@
-# ADR-020: Lamport vs vector clocks vs `base_version` for graph ordering
+# ADR-ORDERING-0020: Lamport vs vector clocks vs `base_version` for graph ordering
 
-**Status:** Proposed (Christian rules; pending shadow-comparison verification)
-**Date:** 2026-08-29
+Date: 2026-08-29
+
+## Status
+
+Proposed
+
+Status note: Christian rules; pending shadow-comparison verification.
+
 **Decider:** Christian Byrne
 **Verification owner:** shadow-comparison lane
 
-> **Mirror note (superseded in part):** [ADR-021](ADR-021-doc-derived-lamport-clock-store.md)
+> **Mirror note (superseded in part):** [ADR-ORDERING-0021](ADR-ORDERING-0021-doc-derived-lamport-clock-store.md)
 > (accepted) supersedes and narrows this ADR to a concrete doc-derived Lamport clock store.
 > The `Proposed` status and shadow-comparison verification gate below are preserved as the
-> historical decision record; the current decision state is ADR-021 together with the
+> historical decision record; the current decision state is ADR-ORDERING-0021 together with the
 > portability constraints (KA-2) and foreclose rules (FC-2, FC-9) it operates under.
 
 ## Context
@@ -24,7 +30,7 @@ The decision is not whether the package should grow a second applier. There is o
 portable `@comfyorg/comfy-multi-player` applier. At pinned cmp commit
 [`8636af3e`](https://github.com/Comfy-Org/comfy-multi-player/tree/8636af3e42e1f81d942bd861aa604f770de73769),
 `clock.ts` contains pure Lamport helpers and a `LamportClockStore` interface; state is supplied by
-the caller. cmp ADR-0005 settles the package shape: Lamport is the smallest creator-owned clock,
+the caller. cmp ADR-ORDERING-0005 settles the package shape: Lamport is the smallest creator-owned clock,
 the total key is `[counter, actor, op_id]`, there is no concurrency detection, and there is no
 schema-v3 or compatibility reader. This ADR is the program-level ordering and rollback decision;
 it must not contradict or replace that package decision.
@@ -87,7 +93,7 @@ sequence may coordinate persistence, but it is not the permanent conflict key.
 ## Decision
 
 The proposal is to use **Lamport-as-merged for V1**, conditional on the shadow-comparison gate
-below, while retaining the cmp ADR-0005 package contract. The Lamport numeric component remains
+below, while retaining the cmp ADR-ORDERING-0005 package contract. The Lamport numeric component remains
 the creator-owned counter in the existing tuple `[counter, actor, op_id]`; `op_id` is minted once
 by the creator and never regenerated. DQ-11 incarnation-qualified target keys remain required:
 Lamport ordering chooses a winner *within* the correct incarnation namespace; it does not replace
@@ -194,7 +200,7 @@ widens. Any rollout must preserve the host-is-writer and semantic-op replication
 - Workspace [ADR-007: Op-based CRDT for in-app-agent graph state](https://github.com/christian-byrne/in-app-agent-program/blob/main/decisions/ADR-007-op-based-crdt-v1.md)
   (workspace repo, `decisions/ADR-007-op-based-crdt-v1.md` — not mirrored here), especially its
   portability, semantic-op, and logical-clock constraints.
-- [`comfy-multi-player` ADR-0005 at `8636af3e`](https://github.com/Comfy-Org/comfy-multi-player/blob/8636af3e42e1f81d942bd861aa604f770de73769/docs/adr/0005-lamport-ordering-v1-migration.md),
+- [`comfy-multi-player` ADR-0005 at `8636af3e`](https://github.com/Comfy-Org/comfy-multi-player/blob/8636af3e42e1f81d942bd861aa604f770de73769/docs/adr/ORDERING-0005-lamport-ordering-v1-migration.md),
   the package-level Lamport decision this ADR preserves.
 - [DQ-10 Lamport feasibility evidence](https://github.com/christian-byrne/in-app-agent-program/blob/main/reports/spikes/dq10-lamport-feasibility.md)
   (workspace repo), including the DQ-11 conditional result and persistence-loss boundary.
@@ -231,4 +237,3 @@ widens. Any rollout must preserve the host-is-writer and semantic-op replication
 - **LWW:** Last-writer-wins selection using a deterministic total ordering key.
 - **`op_id`:** The creator-minted immutable operation identifier used for idempotency and as the
   final ordering tie-break; retries never mint a replacement.
-

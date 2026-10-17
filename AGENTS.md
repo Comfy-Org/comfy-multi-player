@@ -40,6 +40,24 @@ CI deliberately omits a raw line or branch coverage floor. The mutation threshol
 
 Reviewer-agent concern profiles live in `.agents/checks/`. Apply every relevant profile to semantic, export, dependency, catalog, and replication-boundary changes.
 
+## Architecture decision records
+
+Architectural decisions live only in `docs/adr/`. Accepted records are
+constraints; proposed records are guidance. Create an ADR when a change sets a
+durable boundary, changes an invariant, chooses among viable system designs, or
+defines compatibility or migration policy. Do not use an ADR for implementation
+detail or transient test evidence. Deliberate invariant exceptions remain in
+`docs/decisions/EXCEPTIONS.md`.
+
+Name records `<DOMAIN>[-<SUBDOMAIN>]-<NNNN>-descriptive-title.md`, with one or
+two broad-to-narrow domain tags and the next unused four-digit number for that
+domain. The heading must be `# ADR-<IDENTIFIER>: Title`, followed by a
+`Date: YYYY-MM-DD` line and a `## Status` value of `Proposed`, `Accepted`,
+`Rejected`, `Deprecated`, or `Superseded`. Start from `docs/ADR-TEMPLATE.md`.
+Run `npm run check:adrs`; CI enforces naming, metadata, identifier uniqueness,
+companion-directory ownership, and links to ADR files. Superseded records stay
+in place and link to their replacement.
+
 ## Permutation and property testing
 
 Use permutation-exhaustive tests when a concurrency surface has a small, explicitly bounded domain: enumerate every legal arrival order and every selected equivalence-class value, assert the exact case count, and include the full case dimensions in assertion messages so a failure is directly reproducible. Prefer this for two-writer register contention, normalized-ID collisions, batch-boundary choices, and short causal interleavings.

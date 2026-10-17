@@ -1,7 +1,11 @@
-# ADR-031: cmp-owned, op-id-derived workflow-template insertion
+# ADR-WORKFLOW-0031: cmp-owned, op-id-derived workflow-template insertion
 
-- **Status:** Accepted
-- **Date:** 2026-09-11
+Date: 2026-09-11
+
+## Status
+
+Accepted
+
 - **Decider:** Christian
 - **Source:** in-app-agent program ADR-031 and frozen FE #17501 head `8491ba33fa`
 

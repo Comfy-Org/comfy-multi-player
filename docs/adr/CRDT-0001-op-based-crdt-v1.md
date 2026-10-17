@@ -1,7 +1,13 @@
-# ADR-0001: Op-based CRDT for in-app-agent graph state (V1)
+# ADR-CRDT-0001: Op-based CRDT for in-app-agent graph state (V1)
 
-**Status:** Proposed (aligned 2026-08-17 CRDT handoff sync)
-**Date:** 2026-08-17
+Date: 2026-08-17
+
+## Status
+
+Proposed
+
+Status note: aligned in the 2026-08-17 CRDT handoff sync.
+
 **Deciders:** Kishore Shimikeri (BE/CRDT), Christian Byrne (FE)
 
 ## Context
@@ -40,7 +46,7 @@ authority" is therefore not a design axis; the axes that matter are (a) applier 
 4. **Persistence is separate from merge.** Every writer applies then writes; ensure no pending ops
    before a write; never pull the DB as a higher authority (that collapses back to de-facto
    full-document last-writer-wins).
-5. **Logical-clock decision superseded.** V1 originally deferred a logical clock. [ADR-0005](0005-lamport-ordering-v1-migration.md)
+5. **Logical-clock decision superseded.** V1 originally deferred a logical clock. [ADR-ORDERING-0005](ORDERING-0005-lamport-ordering-v1-migration.md)
    supersedes that choice: producers mint `base_version` as a durable, creator-owned Lamport counter,
    while the total winner key remains `[base_version, actor, op_id]`. See `src/types.ts` and
    `src/stamps.ts`.
@@ -50,7 +56,7 @@ authority" is therefore not a design axis; the axes that matter are (a) applier 
 
    > **STALENESS FLAG (2026-08-22):** The package now also exports a constrained read-only snapshot
    > surface from `src/read.ts`; it returns deep-frozen plain data and applies the KA-11 schema read
-   > gate rather than exposing mutable Yjs handles. See PR #55 (ADR-005) and the A12 schema-guard
+   > gate rather than exposing mutable Yjs handles. See PR #55 (ADR-API-0005) and the A12 schema-guard
    > correction in PR #76.
 7. **Conflict UX disabled for V1** (conflicts are now node-level, not full-doc); re-derive later.
 
@@ -96,7 +102,7 @@ flowchart LR
   re-minted).
 - **Ordering is independent of arrival order.** The canonical winner of two concurrent ops is
   computed from the op stamp `[base_version, actor, op_id]`, which every replica evaluates
-  identically offline — never from receive order. [ADR-0005](0005-lamport-ordering-v1-migration.md)
+  identically offline — never from receive order. [ADR-ORDERING-0005](ORDERING-0005-lamport-ordering-v1-migration.md)
   supersedes V1's scalar-cursor design: `base_version` is now a durable, creator-owned Lamport
   counter; `actor` and `op_id` remain deterministic tie-breakers. Convergence tests must deliver
   concurrent ops in both arrival orders and assert an identical winner.
@@ -156,7 +162,7 @@ flowchart LR
   deployments, multi-agent replay, offline and double-offline all remain reachable from the V1
   shape. Ops give replay, observability, and cheap deltas.
 - **Cost:** raw-ops persistence needs new DB tables; reconnect seeding is naive in V1; conflict UX
-  is deferred. The original logical-clock deferral was superseded by ADR-0005.
+  is deferred. The original logical-clock deferral was superseded by ADR-ORDERING-0005.
 - **Non-goals for V1:** vector clock, node-level conflict UX, separate-repo extraction of the
   applier (the package boundary is kept, but extraction into a standalone repo is not required yet).
 
@@ -179,5 +185,5 @@ flowchart LR
   convenience, not a conflict authority.
 - **Headless peer** — the agent replica running with no browser attached.
 - **base_version** — the numeric element of the winner key; originally a V1 scalar version pointer,
-  now a durable, creator-owned Lamport counter under ADR-0005.
+  now a durable, creator-owned Lamport counter under ADR-ORDERING-0005.
 - **LWW** — last-writer-wins; here resolved by the op stamp, never by client-id or a DB read.

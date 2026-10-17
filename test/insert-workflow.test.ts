@@ -18,7 +18,7 @@
  * target document's already-persisted numeric link ids to avoid a collision.
  * Review (Christian Byrne, PR #245) found that retry made link identity
  * depend on local arrival order, so `remap.ts`'s `derivedLinkId` mints
- * PURELY from the op's own content instead (ADR-033, amended), spending the
+ * PURELY from the op's own content instead (ADR-WORKFLOW-0033, amended), spending the
  * full safe-integer range (53 bits) so a genuine collision is an accepted,
  * quantified residual risk (`docs/decisions/EXCEPTIONS.md`'s KA-5 row)
  * rather than something the mint tries to avoid by reading state.
@@ -109,7 +109,7 @@ function replaySnapshot(seed: Uint8Array, ops: Op[]): WorkflowJSON {
 /**
  * One link's numeric id, as `remap.ts`'s `derivedLinkId` mint would produce
  * it for (`opId`, `"root"`, `rawLinkId`) — a pure function of those two
- * inputs alone (ADR-033, amended), so this is exactly what a real apply of
+ * inputs alone (ADR-WORKFLOW-0033, amended), so this is exactly what a real apply of
  * the same (opId, rawLinkId) will also compute, regardless of document
  * state or arrival order.
  */
@@ -430,7 +430,7 @@ describe("insert_workflow: happy path", () => {
     const wf = project(doc, catalog);
     expect(ids(wf).slice(0, 5)).toEqual([1, 2, 3, 4, 6]);
     expect(ids(wf).slice(5).every((id) => typeof id === "string" && id.includes(op.op_id))).toBe(true);
-    // Link ids are minted numeric (ADR-033 — `remap.ts`'s `derivedLinkId`),
+    // Link ids are minted numeric (ADR-WORKFLOW-0033 — `remap.ts`'s `derivedLinkId`),
     // unlike the op-id-embedding derived STRING every other insert_workflow
     // id keeps: ComfyUI_frontend's `LinkId` is a branded `number`.
     expect(typeof linkIds(wf)[1]).toBe("number");
@@ -626,7 +626,7 @@ describe("insert_workflow: happy path", () => {
     seq--;
 
     // `remap.ts`'s `derivedLinkId` is a pure function of (opId, scope,
-    // original) alone (ADR-033, amended), so the candidate this direct call
+    // original) alone (ADR-WORKFLOW-0033, amended), so the candidate this direct call
     // computes for the surviving link (903, "sibling") is exactly what the
     // real apply below will also compute — independent of what else the
     // target doc holds.
@@ -892,7 +892,7 @@ describe("insert_workflow: rejection (KA-4 byte identity, op_id absent from appl
     });
   }
 
-  describe("numeric link id minting (ADR-033, pure derivation)", () => {
+  describe("numeric link id minting (ADR-WORKFLOW-0033, pure derivation)", () => {
     it("derives the identical numeric id whether or not that id already exists in the target document", () => {
       // The whole point of the amended design: the candidate is a function
       // of (opId, rawLinkId) ALONE. Computing it against an empty workflow

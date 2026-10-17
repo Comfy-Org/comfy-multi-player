@@ -1,7 +1,11 @@
-# ADR-016: Namespace widget LWW stamps by node incarnation
+# ADR-CRDT-STAMPS-0016: Namespace widget LWW stamps by node incarnation
 
-**Status:** accepted
-**Date:** 2026-08-28
+Date: 2026-08-28
+
+## Status
+
+Accepted
+
 **Decider:** Christian Byrne
 **Decision queue:** DQ-11, option (c)
 

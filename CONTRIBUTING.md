@@ -99,13 +99,21 @@ sign-off — the browser is a co-equal host of this document. Contract changes
 are amendments appended to the schema document with reasoning, never silent
 edits to a decided section.
 
+## Architecture decision records
+
+Significant, durable architecture choices live in `docs/adr/`. Start from
+`docs/ADR-TEMPLATE.md`, select the next unused number within the owning domain,
+and use the canonical filename, heading, date, and status shape documented in
+`AGENTS.md`. Run `npm run check:adrs` before review. Keep superseded records and
+link them to their replacements so old source and PR references remain useful.
+
 ## Cutting a release
 
 Releases are cut from a **version-bump-only PR**: `package.json`,
 `package-lock.json`, and a `CHANGELOG.md` entry, nothing else. Apply the
 **`release` label** to that PR before merging it. The label is the deliberate
 publish decision — see the 2026-09-21 amendment in
-[`docs/decisions/ADR-006-publish-to-npm-pin-exact-versions.md`](docs/decisions/ADR-006-publish-to-npm-pin-exact-versions.md).
+[`docs/adr/DISTRIBUTION-0006-publish-to-npm-pin-exact-versions.md`](docs/adr/DISTRIBUTION-0006-publish-to-npm-pin-exact-versions.md).
 
 When a labelled PR merges, `.github/workflows/auto-tag-release.yml` creates
 `v<version>` at the merge commit and starts `release.yml` at that tag, which

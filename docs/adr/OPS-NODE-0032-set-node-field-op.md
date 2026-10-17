@@ -1,7 +1,13 @@
-# ADR-032: Field-addressed node metadata writes
+# ADR-OPS-NODE-0032: Field-addressed node metadata writes
 
-- **Status:** Accepted; protocol shape remains provisional until comfy-cli adopts it
-- **Date:** 2026-09-21
+Date: 2026-09-21
+
+## Status
+
+Accepted
+
+Status note: the protocol shape remains provisional until comfy-cli adopts it.
+
 - **Decider:** Christian Byrne
 
 ## Context

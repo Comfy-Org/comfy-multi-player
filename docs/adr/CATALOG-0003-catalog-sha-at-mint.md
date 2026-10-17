@@ -1,7 +1,11 @@
-# ADR-003: Catalog pinned by sha256 at mint
+# ADR-CATALOG-0003: Catalog pinned by sha256 at mint
 
-**Status:** Accepted
-**Date:** 2026-08-20
+Date: 2026-08-20
+
+## Status
+
+Accepted
+
 **Invariants:** KA-12, FC-10
 
 ## Context

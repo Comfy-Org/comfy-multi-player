@@ -36,6 +36,7 @@
     "check:purity": "node scripts/check-purity.mjs",
     "check:pins": "node scripts/check-pins.mjs",
     "check:profile-claims": "node scripts/check-profile-claims.mjs",
+    "check:adrs": "node scripts/check-adrs.mjs && node scripts/check-adr-links.mjs",
     "check:coderabbit": "node scripts/gen-coderabbit-config.mjs",
     "gen:coderabbit": "node scripts/gen-coderabbit-config.mjs --write",
     "check:imports": "node scripts/check-import-graph.mjs",

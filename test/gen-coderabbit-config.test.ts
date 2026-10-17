@@ -65,7 +65,7 @@ describe("gen-coderabbit-config", () => {
   let root: string;
   let checks: string;
 
-  /** Five blocks, because the generator's floor is five — see MIN_BLOCKS. */
+  /** Six blocks, because the generator's floor is six — see MIN_BLOCKS. */
   const fillers = (from: number, to: number) =>
     Array.from({ length: to - from }, (_, i) =>
       block(`filler${from + i}/**`, `Filler instruction number ${from + i}.`),
@@ -88,16 +88,16 @@ describe("gen-coderabbit-config", () => {
     // parser sees is the text the profile wrote.
     const body =
       "Rejection tests must assert the document state, not only failed.code.\nFor a REJECTED op\nthe oracle is byte identity under Y.encodeStateAsUpdate plus the op_id absent from __applied.";
-    writeFileSync(join(checks, "a.md"), block("test/**", body) + "\n" + fillers(1, 5));
+    writeFileSync(join(checks, "a.md"), block("test/**", body) + "\n" + fillers(1, 6));
     expect(run(root, "--write").status).toBe(0);
 
     const emitted = unfold(readFileSync(join(root, ".coderabbit.yaml"), "utf8"));
     expect(emitted.get("test/**")).toBe(body.split(/\s+/).join(" "));
-    expect(emitted.size).toBe(5);
+    expect(emitted.size).toBe(6);
   });
 
   it("is a fixpoint: regenerating an already-generated file changes nothing", () => {
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     expect(run(root, "--write").status).toBe(0);
     const once = readFileSync(join(root, ".coderabbit.yaml"), "utf8");
     expect(run(root, "--write").status).toBe(0);
@@ -109,7 +109,7 @@ describe("gen-coderabbit-config", () => {
     // The recurrence this whole mechanism exists to stop: someone corrects the
     // machine-consumed copy in place, the profile keeps the old wording, and the
     // two are never reconciled.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     run(root, "--write");
     const generated = readFileSync(join(root, ".coderabbit.yaml"), "utf8");
     writeConfig(generated.replace("Filler instruction number 1.", "Edited in place."));
@@ -125,9 +125,9 @@ describe("gen-coderabbit-config", () => {
   });
 
   it("fails (exit 1) when the source block is edited and the file is not regenerated", () => {
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     run(root, "--write");
-    writeFileSync(join(checks, "a.md"), fillers(1, 6).replace("number 1.", "number one."));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7).replace("number 1.", "number one."));
     const drifted = run(root);
     expect(drifted.status).toBe(1);
     // Assert the rule that fired, not just the exit code: six rules exit 1, so
@@ -142,7 +142,7 @@ describe("gen-coderabbit-config", () => {
     // The realistic drift is a word swapped for another of the same length —
     // "NOT the projection" for "and the projection" inverts the rejection
     // oracle without changing a single count.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     run(root, "--write");
     const generated = readFileSync(join(root, ".coderabbit.yaml"), "utf8");
     const edited = generated.replace("Filler instruction number 1.", "Filler instruction number 7.");
@@ -154,7 +154,7 @@ describe("gen-coderabbit-config", () => {
   it("fails (exit 1) when a second path_instructions key would win over the generated one", () => {
     // The coexistence affordance is also the sharpest hazard: the region can be
     // byte-perfect and inert. A duplicate key silently replaces it.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     run(root, "--write");
     writeConfig(
       readFileSync(join(root, ".coderabbit.yaml"), "utf8") +
@@ -169,7 +169,7 @@ describe("gen-coderabbit-config", () => {
   it("fails (exit 1) on a duplicate key in any of its four YAML spellings", () => {
     // Counting only the bare `path_instructions:` left three ways to override
     // the whole region with a differently-spelled duplicate.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     run(root, "--write");
     const generated = readFileSync(join(root, ".coderabbit.yaml"), "utf8");
     for (const dup of [
@@ -193,7 +193,7 @@ describe("gen-coderabbit-config", () => {
     // It evaded both counters at once: REVIEWS_KEY ended with `$`, so a line
     // with a flow mapping after the colon was not a `reviews:` line; and DUP_KEY
     // was anchored at `^\s*`, so a key inside `{...}` was not a key.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     run(root, "--write");
     const generated = readFileSync(join(root, ".coderabbit.yaml"), "utf8");
     for (const override of [
@@ -214,7 +214,7 @@ describe("gen-coderabbit-config", () => {
     // this arm accepted only the bare, comment-free spelling while the comment
     // beside it claimed the quoted forms too — so `? "path_instructions"` and a
     // trailing `# comment` each replaced all five entries with one, gate green.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     run(root, "--write");
     const generated = readFileSync(join(root, ".coderabbit.yaml"), "utf8");
     for (const key of [
@@ -235,7 +235,7 @@ describe("gen-coderabbit-config", () => {
     // and an earlier draft therefore matched the bare word anywhere — reddening
     // configs that work. `.coderabbit.yaml` legitimately carries prose fields,
     // and a gate that fires on a working config is how a gate gets switched off.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     for (const preamble of [
       'tone_instructions: "Never add a second path_instructions: key."\n',
       "tone_instructions: |\n  Do not add a second\n  path_instructions: key anywhere.\n",
@@ -257,7 +257,7 @@ describe("gen-coderabbit-config", () => {
     // under `code_generation.docstrings` and `code_generation.unit_tests`.
     // Counting those reddened a config that works and delivers all five
     // entries. Only indent 0 or 2 can be a child of top-level `reviews:`.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     writeConfig(
       "code_generation:\n  docstrings:\n    path_instructions:\n" +
         '      - path: "**"\n        instructions: doc it\n' +
@@ -270,7 +270,7 @@ describe("gen-coderabbit-config", () => {
   it("recognises a block-scalar header with a trailing comment or a quoted key", () => {
     // Both are legal YAML. Missing the header meant the BODY was scanned as
     // keys, so a note mentioning the key reddened a working config.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     // Every body line below BEGINS with the key, so if the header is not
     // recognised the body is scanned in key position and the gate goes red.
     // That is what makes these fixtures reach the clause they are testing.
@@ -292,7 +292,7 @@ describe("gen-coderabbit-config", () => {
     // The hole direction: if the body is taken to start at column 0, every
     // following indented line is swallowed — including real keys after the
     // scalar ends. Here the duplicate at indent 2 must still be counted.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     writeConfig(
       "outer:\n  inner: |\n    body text\n" +
         '  path_instructions: [{path: "**", instructions: x}]\n' +
@@ -307,7 +307,7 @@ describe("gen-coderabbit-config", () => {
   it("measures a block-scalar body from the key, not from the `- ` of its item", () => {
     // Taking the column from the dash swallowed the item's SIBLING keys, which
     // is the hole direction: real keys silently dropped from the scan.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     run(root, "--write");
     writeConfig(
       readFileSync(join(root, ".coderabbit.yaml"), "utf8") +
@@ -322,7 +322,7 @@ describe("gen-coderabbit-config", () => {
     // Isolates the `,` half of the flow arm: `{profile: chill, path_…}` is a
     // duplicate reached through a comma, and dropping `,` from the character
     // class left it uncounted.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     run(root, "--write");
     writeConfig(
       readFileSync(join(root, ".coderabbit.yaml"), "utf8") +
@@ -336,7 +336,7 @@ describe("gen-coderabbit-config", () => {
   it("stays green on a document-START marker, which begins no second document", () => {
     // `---` on the first content line is legal YAML and delivers every entry;
     // refusing it was this gate firing on a config that works.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     writeConfig(`---\nreviews:\n${BEGIN}\n${END}\n`);
     expect(run(root, "--write").status).toBe(0);
     expect(run(root).status).toBe(0);
@@ -346,7 +346,7 @@ describe("gen-coderabbit-config", () => {
     // Comments are invisible to YAML, so a note about the key is not a key —
     // including a comment that spells out the flow-mapping form, which is the
     // shape the duplicate scan looks for and the only one that reaches it.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     for (const note of [
       "# the path_instructions: below are generated",
       '  # never write: reviews: {path_instructions: [{path: "**"}]}',
@@ -361,7 +361,7 @@ describe("gen-coderabbit-config", () => {
     // Isolates the trailer INDENT clause from the list-item clause: this is not
     // a list item, the file stays valid YAML, and it rewrites the last generated
     // entry's path to `**` in place.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     run(root, "--write");
     writeConfig(readFileSync(join(root, ".coderabbit.yaml"), "utf8") + '      path: "**"\n');
     const rewritten = run(root);
@@ -372,7 +372,7 @@ describe("gen-coderabbit-config", () => {
   it("fails (exit 1) on a `...` document-end marker after the region", () => {
     // Isolates the separators clause: `...` is not caught by the trailer's
     // `--- ` test, so removing the separators check alone must still be visible.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     run(root, "--write");
     writeConfig(readFileSync(join(root, ".coderabbit.yaml"), "utf8") + "...\n");
     const ended = run(root);
@@ -386,7 +386,7 @@ describe("gen-coderabbit-config", () => {
     // every generated byte intact — and one more instruction than the profiles
     // wrote. This one injects rather than replaces, which makes it the worst of
     // the family.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     run(root, "--write");
     writeConfig(
       readFileSync(join(root, ".coderabbit.yaml"), "utf8") +
@@ -399,7 +399,7 @@ describe("gen-coderabbit-config", () => {
   });
 
   it("fails (exit 1) on a second YAML document, which makes the whole file unloadable", () => {
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     run(root, "--write");
     writeConfig(
       readFileSync(join(root, ".coderabbit.yaml"), "utf8") + '---\nreviews:\n  profile: chill\n',
@@ -411,7 +411,7 @@ describe("gen-coderabbit-config", () => {
 
   it("fails (exit 1) when reviews: appears twice and the region is under the second", () => {
     // Isolates the reviews-count clause: the parent check alone passes here.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     writeConfig(`reviews:\n  profile: chill\nchat:\n  auto_reply: false\nreviews:\n${BEGIN}\n${END}\n`);
     const twice = run(root);
     expect(twice.status).toBe(1);
@@ -421,7 +421,7 @@ describe("gen-coderabbit-config", () => {
 
   it("fails (exit 1) when the region sits under the wrong key while reviews: exists elsewhere", () => {
     // Isolates the parent clause: the reviews-count check alone passes here.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     writeConfig(`chat:\n${BEGIN}\n${END}\nreviews:\n  profile: chill\n`);
     const orphan = run(root);
     expect(orphan.status).toBe(1);
@@ -430,7 +430,7 @@ describe("gen-coderabbit-config", () => {
   });
 
   it("fails (exit 1) when the region is no longer nested under reviews:", () => {
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     run(root, "--write");
     writeConfig(
       readFileSync(join(root, ".coderabbit.yaml"), "utf8").replace("reviews:\n", "chat:\n"),
@@ -443,7 +443,7 @@ describe("gen-coderabbit-config", () => {
   it("fails (exit 1) on a glob the emitter cannot quote", () => {
     // Neutering this rule emits `- path: "a"b/**"`, which is not parseable YAML
     // — so the config silently stops applying rather than failing loudly.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6) + "\n" + block('a"b/**', "Body."));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7) + "\n" + block('a"b/**', "Body."));
     const quoted = run(root);
     expect(quoted.status).toBe(1);
     expect(quoted.stderr).toContain("path glob contains a double quote");
@@ -452,7 +452,7 @@ describe("gen-coderabbit-config", () => {
   it("is INCONCLUSIVE (exit 2), not a crash, when the config or the profiles are missing", () => {
     // `1` means "ran and found drift"; a missing precondition is `2`. An
     // uncaught ENOENT would report the wrong one of the two.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     rmSync(join(root, ".coderabbit.yaml"));
     const noConfig = run(root);
     expect(noConfig.status).toBe(2);
@@ -469,7 +469,7 @@ describe("gen-coderabbit-config", () => {
     // A generated file that could not carry hand-written config would be a
     // worse trade than the drift it prevents, so the generator owns one region
     // and splices.
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     writeConfig(
       `language: en-US\nreviews:\n  profile: chill\n${BEGIN}\n${END}\nchat:\n  auto_reply: false\n`,
     );
@@ -482,7 +482,7 @@ describe("gen-coderabbit-config", () => {
   });
 
   it("is INCONCLUSIVE (exit 2) when the config has no generated region", () => {
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     writeConfig("reviews:\n  path_instructions: []\n");
     const missing = run(root);
     expect(missing.status).toBe(2);
@@ -493,35 +493,35 @@ describe("gen-coderabbit-config", () => {
     // Without the floor, deleting a block regenerates to a smaller config that
     // still parses and still passes — the empty-work green this repo's gate
     // convention exists to forbid.
-    writeFileSync(join(checks, "a.md"), fillers(1, 5));
+    writeFileSync(join(checks, "a.md"), fillers(1, 6));
     const short = run(root);
     expect(short.status).toBe(2);
-    expect(short.stderr).toContain("found 4 instruction block(s)");
-    expect(short.stderr).toContain("below the floor of 5");
+    expect(short.stderr).toContain("found 5 instruction block(s)");
+    expect(short.stderr).toContain("below the floor of 6");
   });
 
   it("ignores an indented example but fails on a column-0 marker with a malformed body", () => {
     // .agents/checks/README.md documents the syntax and also hosts three real
     // blocks, so the two have to be distinguishable.
     const example = block("test/**", "example").replace(/^/gm, "  ");
-    writeFileSync(join(checks, "a.md"), fillers(1, 6) + "\n" + example);
+    writeFileSync(join(checks, "a.md"), fillers(1, 7) + "\n" + example);
     expect(run(root, "--write").status).toBe(0);
-    // Five blocks collected, not six: the indented copy is documentation.
-    expect(unfold(readFileSync(join(root, ".coderabbit.yaml"), "utf8")).size).toBe(5);
+    // Six blocks collected, not seven: the indented copy is documentation.
+    expect(unfold(readFileSync(join(root, ".coderabbit.yaml"), "utf8")).size).toBe(6);
 
     writeFileSync(
       join(checks, "a.md"),
-      fillers(1, 6) + "\n<!-- coderabbit-instructions: extra/** -->\nno fence here\n",
+      fillers(1, 7) + "\n<!-- coderabbit-instructions: extra/** -->\nno fence here\n",
     );
     const malformed = run(root);
     expect(malformed.status).toBe(1);
     expect(malformed.stderr).toContain(
-      "a.md has 6 instruction marker(s) at column 0 but 5 well-formed block(s)",
+      "a.md has 7 instruction marker(s) at column 0 but 6 well-formed block(s)",
     );
   });
 
   it("fails (exit 1) when two blocks claim the same glob", () => {
-    writeFileSync(join(checks, "a.md"), fillers(1, 6));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7));
     writeFileSync(join(checks, "b.md"), block("filler1/**", "A second claim on one glob."));
     const dup = run(root);
     expect(dup.status).toBe(1);
@@ -529,7 +529,7 @@ describe("gen-coderabbit-config", () => {
   });
 
   it("fails (exit 1) on an empty instruction body", () => {
-    writeFileSync(join(checks, "a.md"), fillers(1, 6) + "\n" + block("empty/**", "   "));
+    writeFileSync(join(checks, "a.md"), fillers(1, 7) + "\n" + block("empty/**", "   "));
     const empty = run(root);
     expect(empty.status).toBe(1);
     expect(empty.stderr).toContain("empty instruction block for empty/**");

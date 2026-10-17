@@ -1,7 +1,11 @@
-# ADR-0004: Namespace widget stamps by node incarnation
+# ADR-CRDT-STAMPS-0004: Namespace widget stamps by node incarnation
 
-**Status:** Accepted  
-**Date:** 2026-08-28  
+Date: 2026-08-28
+
+## Status
+
+Accepted
+
 **Decision:** DQ-11, option (c)
 
 ## Context

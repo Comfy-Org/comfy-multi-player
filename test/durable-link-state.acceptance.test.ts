@@ -129,7 +129,7 @@ const readdPromoted: AddNodeOp = {
   node: promotedInstance,
 };
 
-describe("ADR-022 bounded durable-link acceptance", () => {
+describe("ADR-CRDT-LINKS-0022 bounded durable-link acceptance", () => {
   it("restores concrete intent and the exact endpoint references after delete/re-add", () => {
     const connect: ConnectOp = {
       op: "connect", ...envelope(0xc1, 1), link_id: 100, from_node: 10, from_slot: 0,

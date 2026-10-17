@@ -1,9 +1,13 @@
-# ADR-021: Doc-derived Lamport clock store (winning stamps + reservations) - Option A locked
+# ADR-ORDERING-0021: Doc-derived Lamport clock store (winning stamps + reservations) - Option A locked
 
-- **Status:** Accepted
-- **Date:** 2026-08-29
+Date: 2026-08-29
+
+## Status
+
+Accepted
+
 - **Decider:** Christian (in-thread ruling, approximately 12:20Z)
-- **Supersedes:** narrows ADR-020 to a concrete mechanism; complements ADR-0004 and ADR-0005
+- **Supersedes:** narrows ADR-ORDERING-0020 to a concrete mechanism; complements ADR-CRDT-STAMPS-0004 and ADR-ORDERING-0005
 
 ## Context
 

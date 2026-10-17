@@ -1,5 +1,5 @@
 /**
- * `insert_workflow` numeric link ids (ADR-033, amended).
+ * `insert_workflow` numeric link ids (ADR-WORKFLOW-0033, amended).
  *
  * ComfyUI_frontend's `LinkId` is `number & { __brand: 'LinkId' }`, unlike the
  * string-or-number `NodeId`, so `remap.ts`'s usual string `derivedId`
@@ -30,10 +30,10 @@
  * (53 bits, `[1, Number.MAX_SAFE_INTEGER]`) so a genuine collision is an
  * accepted, quantified residual risk rather than something the mint tries to
  * avoid by reading state. See
- * `docs/decisions/ADR-033-insert-workflow-numeric-link-ids.md` and the KA-5
+ * `docs/adr/WORKFLOW-0033-insert-workflow-numeric-link-ids.md` and the KA-5
  * row in `docs/decisions/EXCEPTIONS.md`.
  *
- * `test/insert-workflow.test.ts`'s "numeric link id minting (ADR-033, pure
+ * `test/insert-workflow.test.ts`'s "numeric link id minting (ADR-WORKFLOW-0033, pure
  * derivation)" block covers the single-op determinism and realized-collision
  * cases directly against `occupiedIdVectors`' existing node/definition
  * siblings. This file covers the harder cross-cutting properties: multiple
@@ -74,7 +74,7 @@ function linkNamed(wf: WorkflowJSON, label: unknown): [unknown, unknown, unknown
   return found;
 }
 
-describe("insert_workflow numeric link ids (ADR-033, pure derivation)", () => {
+describe("insert_workflow numeric link ids (ADR-WORKFLOW-0033, pure derivation)", () => {
   it("mints a real number for a top-level link while node ids stay derived strings", () => {
     const doc = mint({ nodes: [], links: [] }, catalog);
     const op = opEnvelope({ workflow: { nodes: [{ id: 1, type: "Src" }, { id: 2, type: "Sink" }], links: [[10, 1, 0, 2, 0, "L"]] } });

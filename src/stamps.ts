@@ -141,7 +141,7 @@ export function writeTarget(op: WireOp): unknown[] {
       // One insertion is one register: the op is idempotent by `op_id` (exact
       // replay is a no-op via the applied-set gate), and two distinct
       // insertions never contend because the minter allocates fresh ids
-      // (ADR-022). Keyed by op_id so a stamp lookup is per-insertion.
+      // (ADR-WORKFLOW-0031). Keyed by op_id so a stamp lookup is per-insertion.
       return ["insert_workflow", op.op_id];
     case "clear":
     case "reset_doc":

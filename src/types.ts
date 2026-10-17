@@ -5,7 +5,7 @@
  * stamp shapes minted by `comfy_cli/workflow_ops.py` (`_new_op`), pinned by
  * SHA at comfy-cli `7e732242d971daf0d2d30f22f997abfacd78986e` (FC-10: never by
  * branch — the branch this file used to cite has since been deleted upstream).
- * `set_node_field` is the one package-local, provisional addition; ADR-032
+ * `set_node_field` is the one package-local, provisional addition; ADR-OPS-NODE-0032
  * records its closed field set and the upstream reconciliation requirement.
  * Every `§` below is a section of that revision; see docs/upstream-pins.json
  * for the pin registry and the amendments upstream has added since.
@@ -201,7 +201,7 @@ export interface AddNodeOp extends OpBase {
 
 /**
  * Merge a workflow template (nodes, links, `definitions.subgraphs`) into an
- * existing doc in one transaction (ADR-022; agent-subgraph TDD V1.5).
+ * existing doc in one transaction (ADR-WORKFLOW-0031; agent-subgraph TDD V1.5).
  *
  * The applier remaps every carried id deterministically from `op_id` and the
  * original id. Exact replay therefore chooses the same ids, while distinct

@@ -2,7 +2,7 @@
  * Read-only snapshot surface — the supported way to READ a shared document
  * without being handed anything you can write.
  *
- * WHY THIS EXISTS. The entrypoint deliberately re-exports only ADR-004's three
+ * WHY THIS EXISTS. The entrypoint deliberately re-exports only ADR-DISTRIBUTION-0004's three
  * layout reads and the KA-1 encoding diagnostic from `src/doc.ts` (issue #18):
  * the same import that hands you `nodesMap` for a read hands you a
  * live `Y.Map`, and a `.set()` on it is an UNSTAMPED write — invisible to
@@ -17,7 +17,7 @@
  * `project()` cannot serve:
  *
  *   - a follower that renders a document it holds NO catalog for, so it cannot
- *     project (and must not — ADR-004);
+ *     project (and must not — ADR-DISTRIBUTION-0004);
  *   - the doc host's pre-apply guards, which must read `meta.catalog_version`
  *     and probe node/op identity BEFORE (and precisely in order to decide
  *     whether) projecting is safe;
@@ -78,7 +78,7 @@ import { WIDGET_FORM_KEY } from "./widget-form.js";
  * string literal: a primitive carries no reachability, so it cannot be a route
  * back to a live Y type. A follower that needs to tell "no widgets" from "opaque
  * widgets" needs this key, and hardcoding `"__widgets_opaque"` on the consumer
- * side is exactly the schema-drift ADR-004 closed.
+ * side is exactly the schema-drift ADR-DISTRIBUTION-0004 closed.
  */
 export { OPAQUE_WIDGETS_KEY };
 
@@ -316,7 +316,7 @@ function assertSnapshotReadable(doc: Y.Doc, context: string): void {
  * raw live-handle read against `readGraph`'s 2.0x, re-measured at this commit
  * with `node scripts/bench-read.mjs` — for data no current consumer reads.
  * (An earlier "~5x" here was against a different baseline and is withdrawn;
- * README and ADR-005 both say "twice", and now so does this.) Adding a key here is a one-line,
+ * README and ADR-API-0005 both say "twice", and now so does this.) Adding a key here is a one-line,
  * reviewable change; handing back the whole node forever is not.
  *
  * `project(doc, catalog)` remains the full-fidelity read for a caller that has

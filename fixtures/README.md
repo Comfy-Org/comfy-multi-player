@@ -92,7 +92,7 @@ asserts that, so "fixing" notes by adding catalog entries fails loudly instead
 of making the regression tests vacuous.
 
 `golden-vectors/session-node-fields.session.jsonl` is hand-authored because
-`set_node_field` is the package-local FC-10 exception recorded by ADR-032;
+`set_node_field` is the package-local FC-10 exception recorded by ADR-OPS-NODE-0032;
 comfy-cli cannot generate the operation until its vocabulary adopts the shape.
 It lives with the shared conformance manifest, rather than in the replay corpus,
 so other-language consumers cannot omit it without enrolling the provisional

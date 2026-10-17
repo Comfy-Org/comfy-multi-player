@@ -1,13 +1,17 @@
-# ADR-006: Publish to npm; consumers pin exact published versions
+# ADR-DISTRIBUTION-0006: Publish to npm; consumers pin exact published versions
 
-**Status:** Accepted
-**Date:** 2026-08-22
+Date: 2026-08-22
+
+## Status
+
+Accepted
+
 **Invariant:** KA-1, FC-3 (both hosts run the *same* applier bytes)
-**Supersedes:** ADR-004
+**Supersedes:** ADR-DISTRIBUTION-0004
 
 ## Context
 
-ADR-004 chose immutable git-SHA dependencies while the package contract was
+ADR-DISTRIBUTION-0004 chose immutable git-SHA dependencies while the package contract was
 stabilizing and no registry release existed. The package is now published to
 npm as `@comfyorg/comfy-multi-player@0.1.0`, so consumers no longer need a git
 checkout or an install-time `prepare` build.
@@ -29,7 +33,7 @@ version was `0.1.0`; the repository manifest is currently `0.2.1`.
 
 Version updates remain explicit, reviewable changes in each consumer. The
 frontend, cloud doc-host, and examples MUST use the same exact package version
-where they rely on identical applier behavior (ADR-001).
+where they rely on identical applier behavior (ADR-APPLIER-0001).
 
 ## Consequences
 

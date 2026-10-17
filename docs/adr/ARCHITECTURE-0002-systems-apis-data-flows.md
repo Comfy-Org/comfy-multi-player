@@ -1,7 +1,11 @@
-# ADR 0002 — In-App Agent: systems, public APIs, and data flows (cloud and local)
+# ADR-ARCHITECTURE-0002: In-App Agent systems, public APIs, and data flows
 
-- Status: Draft (for review)
-- Date: 2026-08-20
+Date: 2026-08-20
+
+## Status
+
+Proposed
+
 - Verified against: `Comfy-Org/cloud` @ `070dce96` (`origin/main`, 2026-08-21) —
   `services/agent/ARCHITECTURE.md`, `common/websocket/messages/crdt.go`,
   `.github/workflows/multiplayer-contract.yml`, `services/agent/dochost/`.
@@ -11,7 +15,7 @@
   > **STALENESS FLAG (2026-08-22):** Cloud `main` has advanced to `84890f9a`; spot checks at that
   > revision still confirm the listed REST routes, CRDT frame types/caps, event schema, and doc-host,
   > but this document has not been exhaustively re-verified against every intervening cloud change.
-- Related: ADR 0001 (op-based CRDT for graph state), `docs/multiplayer-schema.md`,
+- Related: ADR-CRDT-0001 (op-based CRDT for graph state), `docs/multiplayer-schema.md`,
   `docs/api-contract-proposal.md`
 
 ## Context
@@ -39,7 +43,7 @@ browser imports it, and the cloud backend runs the **same** package inside a sma
 > **STALENESS FLAG (2026-08-22):** The dependency-source claim is obsolete. The package is now
 > published publicly as `@comfyorg/comfy-multi-player@0.1.0`; cloud `main` consumes version `0.1.0`
 > from `services/agent/dochost/package.json`, and the frontend integration branch consumes the
-> published package as well. ADR-004's “git SHA; no registry publish yet” policy is pending separate
+> published package as well. ADR-DISTRIBUTION-0004's “git SHA; no registry publish yet” policy is pending separate
 > supersession under `CMP-ADR004-SUPERSEDE`.
 
 ## Cloud topology (verified)
