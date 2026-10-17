@@ -36,7 +36,7 @@ Verified 2026-08-20 (frontend `poc/fe-crdt-follower`, PR #15457):
   `project`, because a follower never writes the shared doc (KA-6). Consuming
   the package for *types and layout* does not imply running the applier.
 
-  **Amended 2026-08-20 (see [ADR-API-0005](ADR-API-0005-read-only-snapshot-surface.md)):**
+  **Amended 2026-08-20 (see [ADR-API-0005](API-0005-read-only-snapshot-surface.md)):**
   that bullet describes the surface at the pinned SHA `6793d754`. Issue #18
   removed most doc-layout helpers from the entrypoint; the ADR-DISTRIBUTION-0004 follower trio
   remains public for compatibility. ADR-API-0005 adds `readGraph()` as the safer

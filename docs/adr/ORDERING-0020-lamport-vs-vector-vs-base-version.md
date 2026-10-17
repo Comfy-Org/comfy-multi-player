@@ -11,7 +11,7 @@ Status note: Christian rules; pending shadow-comparison verification.
 **Decider:** Christian Byrne
 **Verification owner:** shadow-comparison lane
 
-> **Mirror note (superseded in part):** [ADR-ORDERING-0021](ADR-ORDERING-0021-doc-derived-lamport-clock-store.md)
+> **Mirror note (superseded in part):** [ADR-ORDERING-0021](ORDERING-0021-doc-derived-lamport-clock-store.md)
 > (accepted) supersedes and narrows this ADR to a concrete doc-derived Lamport clock store.
 > The `Proposed` status and shadow-comparison verification gate below are preserved as the
 > historical decision record; the current decision state is ADR-ORDERING-0021 together with the

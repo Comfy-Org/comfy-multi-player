@@ -20,11 +20,11 @@ rule itself:
 
 - KA-4 states it as an applier invariant, enforced by tests, not as a decision with rationale and
   alternatives.
-- [ADR-CATALOG-0003](ADR-CATALOG-0003-catalog-sha-at-mint.md) states the "no guessing" half of this rule, but scopes
+- [ADR-CATALOG-0003](CATALOG-0003-catalog-sha-at-mint.md) states the "no guessing" half of this rule, but scopes
   it to catalog widget-name matching only: "Widget writes to uncatalogued classes fail closed and
   loudly," rejected as an alternative to "guess unknown widget layout... because silent mis-keying
   is worse than a loud failure."
-- [ADR-API-0007](ADR-API-0007-discriminated-apply-outcomes.md) touches op rejection only as an outcome-shape
+- [ADR-API-0007](API-0007-discriminated-apply-outcomes.md) touches op rejection only as an outcome-shape
   concern, and explicitly disclaims changing this rule: "Op classification and mutation semantics
   remain unchanged; only reporting changes."
 

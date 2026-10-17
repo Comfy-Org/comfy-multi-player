@@ -7,11 +7,12 @@ import { afterEach, describe, expect, test } from "vitest";
 const fixtures: string[] = [];
 const script = join(process.cwd(), "scripts", "check-adr-links.mjs");
 const adrPath = (filename: string) => ["docs", "adr", filename].join("/");
+const gitCommand = process.env.GIT_EXECUTABLE ?? "git";
 
 function fixture() {
   const root = join(tmpdir(), `cmp-adr-links-${process.pid}-${fixtures.length}`);
   mkdirSync(join(root, "docs", "adr"), { recursive: true });
-  execFileSync("/usr/bin/git", ["init", "-q"], { cwd: root });
+  execFileSync(gitCommand, ["init", "-q"], { cwd: root });
   fixtures.push(root);
   return root;
 }
@@ -47,6 +48,13 @@ describe("ADR link validation", () => {
     const root = fixture();
     write(root, "README.md", `first\nSee ${adrPath("CRDT-0001-missing.md")}.\n`);
     expect(() => run(root)).toThrow(/README\.md:2/);
+  });
+
+  test("checks sibling links from one ADR to another", () => {
+    const root = fixture();
+    const source = adrPath("CRDT-0001-source.md");
+    write(root, source, "See [missing](CRDT-0002-missing.md).\n");
+    expect(() => run(root)).toThrow(/CRDT-0002-missing\.md/);
   });
 
   test("ignores references outside the ADR directory", () => {

@@ -36,6 +36,24 @@ describe("ADR validation", () => {
     expect(run(fixture())).toContain("ADR validation passed");
   });
 
+  test("accepts a status immediately below its heading", () => {
+    const root = fixture();
+    writeFileSync(
+      join(root, "docs", "adr", "CRDT-0001-test-decision.md"),
+      "# ADR-CRDT-0001: Test decision\n\nDate: 2026-10-17\n\n## Status\nProposed\n",
+    );
+    expect(run(root)).toContain("ADR validation passed");
+  });
+
+  test("rejects a status value with an unrecognized suffix", () => {
+    const root = fixture();
+    writeFileSync(
+      join(root, "docs", "adr", "CRDT-0001-test-decision.md"),
+      "# ADR-CRDT-0001: Test decision\n\nDate: 2026-10-17\n\n## Status\n\nProposed-extra\n",
+    );
+    expect(() => run(root)).toThrow(/missing a valid Status value/);
+  });
+
   test("rejects numeric-only legacy filenames", () => {
     expect(() => run(fixture("0001-test-decision.md"))).toThrow(
       /Invalid ADR filenames/,

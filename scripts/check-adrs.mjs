@@ -34,7 +34,7 @@ export function validateAdrDirectory(directory) {
       throw new Error(`${filename}: missing a valid Date field`);
     }
     if (
-      !/^## Status\s+\n+(?:\s*\n)*(Proposed|Accepted|Rejected|Deprecated|Superseded)\b/m.test(
+      !/^## Status[ \t]*\r?\n(?:[ \t]*\r?\n)*(Proposed|Accepted|Rejected|Deprecated|Superseded)[ \t]*$/m.test(
         contents,
       )
     ) {
