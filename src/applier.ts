@@ -139,6 +139,7 @@ import {
   type GrowConnectOp,
   type ImportedLinkState,
   type InteriorSetWidgetOp,
+  type NodeId,
   LINK_STATE_DESCRIPTOR_VERSION,
   type LinkTuple,
   type CanonicalOpInspection,
@@ -578,7 +579,7 @@ function dispatch(doc: Y.Doc, op: Op, catalog?: WidgetCatalog): SuccessfulOutcom
     case "disconnect":
       return applyDisconnect(doc, op);
     case "delete_node":
-      return applyDeleteNode(doc, op);
+      return applyDeleteNode(doc, op, catalog);
     case "clear":
       return applyClear(doc, op);
     case "define_subgraph":
@@ -2425,7 +2426,7 @@ function resolveVisibleInteriorHost(
 /** Resolve the definition owned by an instance route for an interior graph edit. */
 function resolveInteriorGraphScope(
   doc: Y.Doc,
-  op: Pick<ConnectOp | AddNodeOp, "path" | "node_incarnation">,
+  op: { path?: readonly NodeId[]; node_incarnation?: string },
   catalog?: WidgetCatalog,
   operation = "connect",
   rejectMissingHead = false,
@@ -3390,9 +3391,15 @@ function writeNodeField(target: Y.Map<unknown>, key: string, value: unknown): vo
   else mset(target, key, value);
 }
 
-function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp): SuccessfulOutcome {
+function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp, catalog?: WidgetCatalog): SuccessfulOutcome {
   if (op.node_id === undefined) {
     throw new OpRejectedError("malformed_op", "delete_node: missing node_id");
+  }
+  if (op.path !== undefined && (!Array.isArray(op.path) || op.path.length === 0)) {
+    throw new OpRejectedError("malformed_op", "delete_node: path must be a non-empty array when present");
+  }
+  if (op.container_incarnation !== undefined && (typeof op.container_incarnation !== "string" || op.container_incarnation.length === 0)) {
+    throw new OpRejectedError("malformed_op", "delete_node: container_incarnation must be a non-empty string");
   }
   // `new Set(op.removed_links ?? [])` throws on anything non-iterable, and it
   // used to be evaluated AFTER the node had been deleted: the op reported
@@ -3407,6 +3414,12 @@ function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp): SuccessfulOutcome {
       `delete_node: removed_links must be iterable, got ${typeof removedLinks}`,
     );
   }
+  const route: { path?: readonly NodeId[]; node_incarnation?: string } = op.path ? { path: op.path } : {};
+  if (op.container_incarnation !== undefined) route.node_incarnation = op.container_incarnation;
+  const interiorScope = op.path
+    ? resolveInteriorGraphScope(doc, route, catalog, "delete_node", true, true)
+    : null;
+  if (interiorScope) return applyInteriorDeleteNode(doc, op, interiorScope, removedLinks);
   const nodes = nodesMap(doc);
   const key = String(op.node_id);
   const stamps = stampsMap(doc);
@@ -3456,6 +3469,48 @@ function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp): SuccessfulOutcome {
   scrubDanglingLinkRefs(doc);
   if (!presenceWon && toDelete.length === 0 && !retiredStranded) return "lww-dropped";
   return nodeWasPresent || toDelete.length > 0 || retiredStranded ? "applied" : "no-op";
+}
+
+function applyInteriorDeleteNode(
+  doc: Y.Doc,
+  op: DeleteNodeOp,
+  scope: InteriorGraphScope,
+  removedLinks: Iterable<NodeId>,
+): SuccessfulOutcome {
+  const nodeKey = String(op.node_id);
+  const stamps = stampsMap(doc);
+  const targetKey = stampTargetKey(op);
+  const prior = stamps.get(targetKey) as StampKey | undefined;
+  const stamp = stampKey(op);
+  const presenceWon = prior == null || compareStampKeys(stamp, prior) > 0;
+  const nodeWasPresent = scope.nodes.has(nodeKey);
+  if (presenceWon) {
+    mset(stamps, targetKey, stamp);
+    if (nodeWasPresent) mdel(scope.nodes, nodeKey);
+    const nodeOrder = scope.definition.get("node_order");
+    if (Array.isArray(nodeOrder)) {
+      mset(scope.definition, "node_order", removeInteriorLinkOrder(nodeOrder, nodeKey));
+    }
+  }
+
+  const named = new Set([...removedLinks].map(String));
+  const toDelete = new Set<string>();
+  scope.links.forEach((raw: unknown, linkKey: string) => {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return;
+    const link = raw as Record<string, unknown>;
+    const id = String(link.id ?? linkKey);
+    if (named.has(id)) {
+      toDelete.add(linkKey);
+      return;
+    }
+    if (presenceWon && (String(link.origin_id) === nodeKey || String(link.target_id) === nodeKey)) {
+      toDelete.add(linkKey);
+    }
+  });
+  for (const linkKey of toDelete) removeLinkInScope(scope, linkKey);
+
+  if (!presenceWon && toDelete.size === 0) return "lww-dropped";
+  return nodeWasPresent || toDelete.size > 0 ? "applied" : "no-op";
 }
 
 function retireStrandedLinks(doc: Y.Doc, removedIds: Set<string>): boolean {

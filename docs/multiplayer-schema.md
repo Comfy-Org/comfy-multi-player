@@ -684,7 +684,10 @@ package also supports `connect` with a non-empty instance `path`:
   It rejects writes to shared unforked definitions and inserts the node into
   that definition's deterministic `node_order`. A missing container is a
   rejected `interior_container_not_found`; it never synthesizes a definition.
-  `delete_node` still cannot address interior nodes.
+  Interior `delete_node` uses the same owner-instance `path` and optional
+  `container_incarnation`. Its presence register is path-scoped, it removes
+  incident links and endpoint references inside the definition, and it
+  refuses shared unforked definitions exactly like interior add/connect.
 
 `set_widget` accepts three address forms — flat promoted (`57.text`, routed
 through the instance's `proxyWidgets`), nested interior (`57/3.steps`), and
