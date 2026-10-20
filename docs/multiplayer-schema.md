@@ -2522,10 +2522,19 @@ For an ARRAY form only, `widgets_values_form.order` is the current realized
 producer order plus a pinned catalog overlay:
 
 1. Names already in the form remain ordinary `(name, occurrence)` targets.
+   Applying any ARRAY-form write without the pinned catalog is
+   `catalog_required` before mutation: even a name already in the form could
+   be a selector whose winning value must refresh the realized order, and the
+   applier cannot distinguish that case without the catalog. OBJECT forms
+   remain catalog-free.
 2. A name owned by any option of any pinned `dynamic_combos` selector is also
    a legal occurrence-zero target, whether or not that option is selected.
    The value is stored immediately and is projected only when its option is
-   selected. Validation therefore does not depend on op arrival order.
+   selected. Validation therefore does not depend on op arrival order. A
+   promoted host write additionally requires that the name already occupy its
+   claimed `promoted.value_index` in the current form; an unselected child has
+   no positional host address and is rejected rather than accepting an
+   arbitrary index.
 3. After a selector write wins its LWW register, the applier recomputes the
    realized form order from the stored selector values. It removes every
    catalog-owned dynamic child from the previous realized order, walks the
@@ -2565,9 +2574,11 @@ persists, so KA-11 does not require a layout bump or migration.
   orders, exact expected realized order, and an unrelated-name rejection.
 - `test/node-local-order-overlay.test.ts` proves both orders converge, every
   accepted and LWW-dropped `op_id` is consumed, replay is byte-identical,
-  compaction preserves the realized order and value, unrelated-name and
-  object-form rejections are byte-identical with unconsumed `op_id`s, and the
-  real 0.3.10 reader compatibility above.
+  compaction preserves visible and hidden option registers for later
+  reselection, catalog-less selector writes and promoted name/index
+  disagreements reject before mutation, unrelated-name and object-form
+  rejection batches abort a trailing valid op with every rejected `op_id`
+  unconsumed, and the real 0.3.10 reader compatibility above.
 - Reverting the array-form catalog overlay in `validateWidgetName` makes the
   named child-first vector fail `unknown_widget`; reverting selector-order
   refresh makes the selector-first vector project the stale option-A layout.

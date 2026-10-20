@@ -116,13 +116,15 @@ the pins move in one coordinated step.
 Amendment A25 changes no stored shape and also keeps schema v5. A declared
 ARRAY form is the producer's realized order; pinned catalog-owned
 dynamic-combo children are legal in every option, and a winning selector
-write recomputes only that dynamic overlay in the existing form order. Object
-forms remain closed. `test/node-local-order-overlay.test.ts` holds KA-4 with
+write recomputes only that dynamic overlay in the existing form order. Array
+writes without a pinned catalog reject before mutation; promoted writes must
+name a child already present at the claimed current index. Object forms remain
+closed. `test/node-local-order-overlay.test.ts` holds KA-4 with
 both child/selector arrival orders, accepted and LWW-dropped `op_id`
-consumption, byte-identical replay and rejection, compaction, and a real
-published-0.3.10 mixed-reader projection check. That last check is the KA-11
-basis for no bump: the old reader projects every state the new writer persists
-identically.
+consumption, byte-identical replay and rejection, hidden-register compaction,
+abort-remainder, and a real published-0.3.10 mixed-reader projection check.
+That last check is the KA-11 basis for no bump: the old reader projects every
+state the new writer persists identically.
 
 ### KA-12 — Catalog pinned at mint
 **Rule:** `meta.catalog_version` cites the catalog by SHA, not branch; reject NAMED widget writes to uncatalogued classes loudly. A subgraph instance's `type` is a definition UUID that no catalog describes, and its promoted widget values are POSITIONAL by frontend contract (ADR 0009), so a promoted host write (schema Amendment A15) is not a widget-name resolution and needs no catalog entry for the instance — it still needs A CATALOG (`catalog_required` without one) to tell an instance from an unseen class, and still refuses (`uncatalogued_widget_write`) to lay a positional array over named values the catalog cannot describe. A node that DECLARES its own ordered widget identity (`widgets_values_form`, schema Amendment A24) is resolved from that declaration. An object form stays catalog-free and closed; under Amendment A25 an array form may additionally accept names owned by the pinned `dynamic_combos` catalog and persists the resulting realized order after the winning selector write. This does not relax the rule: the package uses only mappings supplied by the producer or the immutable catalog, never guesses one. An undeclared node keeps every refusal above, and `meta.catalog_version` still pins the catalog every other node projects against.

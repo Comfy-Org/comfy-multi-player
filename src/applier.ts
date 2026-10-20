@@ -108,6 +108,7 @@ import {
   formFinalOccurrence,
   formIndexOf,
   storedWidgetFormOf,
+  type StoredWidgetForm,
   WIDGET_FORM_KEY,
 } from "./widget-form.js";
 import { linkHasMissingEndpoint, remapInsertedWorkflowIds } from "./remap.js";
@@ -1462,24 +1463,16 @@ function validateWidgetName(
   occurrence = 0,
 ): void {
   // A24: a self-described node answers from the ordered identity its producer
-  // declared. A25 adds one bounded catalog overlay for ARRAY forms: every
-  // pinned dynamic-combo option child is legal independent of the current
-  // selection, so child-before-selector and selector-before-child agree.
-  // Object/custom-serializer forms remain closed, and unrelated names remain
-  // `unknown_widget` exactly as a missing `widget_order` entry would be.
+  // declared. A25 adds one bounded catalog overlay for ARRAY forms, so those
+  // writes require the pinned catalog even when the current name is already
+  // declared: without it the applier cannot know whether the name is a
+  // selector whose winning write must refresh the realized order. Every pinned
+  // dynamic-combo option child is legal independent of the current selection,
+  // so child-before-selector and selector-before-child agree. Object/custom-
+  // serializer forms remain closed and catalog-free.
   const form = node ? storedWidgetFormOf(node) : null;
-  if (form) {
-    const entry = catalogEntry(catalog, nodeType);
-    const catalogOwnsDynamicName = form.shape === "array"
-      && occurrence === 0
-      && optionOwnedWidgets(entry).has(widget);
-    if (!formDeclares(form, widget, occurrence) && !catalogOwnsDynamicName) {
-      const at = occurrence === 0 ? "" : ` occurrence ${String(occurrence)}`;
-      throw new OpRejectedError(
-        "unknown_widget",
-        `widget '${widget}'${at} is neither declared by ${nodeType} node ${String(node?.get("id"))}'s widgets_values_form nor owned by its pinned dynamic-combo catalog; declared: ${form.order.join(", ")}`,
-      );
-    }
+  if (form && node) {
+    validateDeclaredWidgetName(catalog, nodeType, widget, occurrence, node, form);
     return;
   }
   if (!catalog) return;
@@ -1502,6 +1495,32 @@ function validateWidgetName(
       `widget '${widget}' not found on ${nodeType}; available: ${order.join(", ") || "(none — all inputs are links)"}`,
     );
   }
+}
+
+function validateDeclaredWidgetName(
+  catalog: WidgetCatalog | undefined,
+  nodeType: string,
+  widget: string,
+  occurrence: number,
+  node: Y.Map<unknown>,
+  form: StoredWidgetForm,
+): void {
+  if (form.shape === "array" && catalog === undefined) {
+    throw new OpRejectedError(
+      "catalog_required",
+      `widget '${widget}' on ${nodeType} node ${String(node.get("id"))}: an array widgets_values_form requires the pinned catalog to determine whether the write changes a dynamic-combo order`,
+    );
+  }
+  const entry = catalogEntry(catalog, nodeType);
+  const catalogOwnsDynamicName = form.shape === "array"
+    && occurrence === 0
+    && optionOwnedWidgets(entry).has(widget);
+  if (formDeclares(form, widget, occurrence) || catalogOwnsDynamicName) return;
+  const at = occurrence === 0 ? "" : ` occurrence ${String(occurrence)}`;
+  throw new OpRejectedError(
+    "unknown_widget",
+    `widget '${widget}'${at} is neither declared by ${nodeType} node ${String(node.get("id"))}'s widgets_values_form nor owned by its pinned dynamic-combo catalog; declared: ${form.order.join(", ")}`,
+  );
 }
 
 /**
@@ -1871,7 +1890,10 @@ function hostWriteStorage(node: Y.Map<unknown>, catalog: WidgetCatalog | undefin
 /**
  * A promoted host write carries TWO addresses for one target — the widget
  * NAME and `promoted.value_index` — and on a self-described node (A24) both
- * resolve. Refuse a disagreement rather than silently preferring one.
+ * must resolve to the current form. Refuse a missing name or a disagreement
+ * rather than silently preferring one. An unselected dynamic child remains a
+ * legal name-addressed write, but it has no current positional host address
+ * and therefore cannot be a promoted write until selection exposes it.
  *
  * This is the rule `promotedHostWrite` already applies one field over, where
  * `promoted.instance_path` must join to `node_id`: a payload naming a
@@ -1897,11 +1919,14 @@ function requirePromotedFormAgreement(
   const form = storedWidgetFormOf(node);
   if (!form) return;
   const declared = formIndexOf(form, widget, occurrence);
-  if (declared < 0 || declared === valueIndex) return;
+  if (declared === valueIndex) return;
   const at = occurrence === 0 ? "" : ` occurrence ${String(occurrence)}`;
+  const position = declared < 0
+    ? "has no position in its current widgets_values_form"
+    : `is at ${String(declared)} in its current widgets_values_form`;
   throw new OpRejectedError(
     "malformed_op",
-    `set_widget: promoted.value_index ${String(valueIndex)} names a different slot than widget '${widget}'${at}, which node ${String(node.get("id"))}'s widgets_values_form puts at ${String(declared)}`,
+    `set_widget: promoted.value_index ${String(valueIndex)} cannot address widget '${widget}'${at}, which ${position} on node ${String(node.get("id"))}`,
   );
 }
 
