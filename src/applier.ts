@@ -3251,6 +3251,23 @@ function removeLinkInScope(scope: InteriorGraphScope, linkId: unknown): void {
   if (Array.isArray(linkOrder)) {
     mset(scope.definition, "link_order", removeInteriorLinkOrder(linkOrder, key));
   }
+  for (const side of ["inputs", "outputs"]) scrubDefinitionSlotLinkIds(scope.definition, side, key);
+}
+
+/** Drop a removed interior link from the definition's own subgraph input/output `linkIds`. */
+function scrubDefinitionSlotLinkIds(definition: Y.Map<unknown>, side: string, key: string): void {
+  const slots = definition.get(side);
+  if (!Array.isArray(slots)) return;
+  let changed = false;
+  const next = slots.map((slot: unknown) => {
+    const linkIds = (slot as { linkIds?: unknown } | null)?.linkIds;
+    if (!Array.isArray(linkIds)) return slot;
+    const kept = linkIds.filter((id: unknown) => String(id) !== key);
+    if (kept.length === linkIds.length) return slot;
+    changed = true;
+    return { ...(slot as Record<string, unknown>), linkIds: kept };
+  });
+  if (changed) mset(definition, side, next);
 }
 
 /** Scrub input/output references selected by one shared link-id predicate. */
@@ -3391,7 +3408,8 @@ function writeNodeField(target: Y.Map<unknown>, key: string, value: unknown): vo
   else mset(target, key, value);
 }
 
-function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp, catalog?: WidgetCatalog): SuccessfulOutcome {
+/** Every `delete_node` precondition that reads only the op, checked before any document read (KA-4). */
+function requireDeleteNodeValid(op: DeleteNodeOp): Iterable<NodeId> {
   if (op.node_id === undefined) {
     throw new OpRejectedError("malformed_op", "delete_node: missing node_id");
   }
@@ -3414,6 +3432,11 @@ function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp, catalog?: WidgetCatalog):
       `delete_node: removed_links must be iterable, got ${typeof removedLinks}`,
     );
   }
+  return removedLinks;
+}
+
+function applyDeleteNode(doc: Y.Doc, op: DeleteNodeOp, catalog?: WidgetCatalog): SuccessfulOutcome {
+  const removedLinks = requireDeleteNodeValid(op);
   const route: { path?: readonly NodeId[]; node_incarnation?: string } = op.path ? { path: op.path } : {};
   if (op.container_incarnation !== undefined) route.node_incarnation = op.container_incarnation;
   const interiorScope = op.path
@@ -3487,10 +3510,9 @@ function applyInteriorDeleteNode(
   if (presenceWon) {
     mset(stamps, targetKey, stamp);
     if (nodeWasPresent) mdel(scope.nodes, nodeKey);
-    const nodeOrder = scope.definition.get("node_order");
-    if (Array.isArray(nodeOrder)) {
-      mset(scope.definition, "node_order", removeInteriorLinkOrder(nodeOrder, nodeKey));
-    }
+    // `node_order` keeps the id: projection filters absent nodes, and pruning
+    // it would make a later winning re-add sort as a new addition only on
+    // replicas where this delete arrived first (KA-4).
   }
 
   const named = new Set([...removedLinks].map(String));

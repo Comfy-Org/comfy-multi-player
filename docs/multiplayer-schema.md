@@ -686,8 +686,14 @@ package also supports `connect` with a non-empty instance `path`:
   rejected `interior_container_not_found`; it never synthesizes a definition.
   Interior `delete_node` uses the same owner-instance `path` and optional
   `container_incarnation`. Its presence register is path-scoped, it removes
-  incident links and endpoint references inside the definition, and it
-  refuses shared unforked definitions exactly like interior add/connect.
+  incident links and endpoint references inside the definition (including
+  the definition's own subgraph input/output `linkIds`), and it refuses
+  shared unforked definitions exactly like interior add/connect. The deleted
+  id stays in `node_order`, which projection filters, so a winning re-add
+  keeps the same position in either arrival order. Unlike a deleted top-level
+  head, a deleted nested instance retains no route: later ops routed through
+  it reject `interior_node_not_found`, one more trigger for the
+  document-dependent interior rejections in §2.5 item 8.
 
 `set_widget` accepts three address forms — flat promoted (`57.text`, routed
 through the instance's `proxyWidgets`), nested interior (`57/3.steps`), and
