@@ -7,6 +7,16 @@ this package uses semantic versioning.
 
 ## Unreleased
 
+## 0.3.11 - 2026-10-21
+
+Maintenance release of the schema-4 line: the 0.3.7 code, unchanged,
+relicensed from GPL-3.0-only to MIT. It is for hosts that read documents
+stored at schema 4; new work should use the current release.
+
+### Changed
+
+- Relicensed from GPL-3.0-only to MIT.
+
 ## 0.3.7 - 2026-09-26
 
 ### Added
