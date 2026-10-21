@@ -16,7 +16,7 @@ No wire key or op kind changes. New catalog content changes the catalog hash. Co
 
 ## Namespace safety
 
-Relative group fields must be distinct. A controller cannot also be a DynamicCombo selector or another group's row field. Each source widget order may declare a controller once, and any generated names already present must be its contiguous minimum-row block. The selected layout also refuses duplicate generated fields/controllers before they can share a register. Ordinary duplicate names keep their existing occurrence identities; unrelated dotted names are not rejected merely for sharing a group prefix. Seed companions such as `weights.0.seed.0` remain legal when declared by the template metadata.
+Relative group fields must be distinct. A controller cannot also be a DynamicCombo selector or another group's row field. Each source widget order may declare a controller once, and any generated names already present must be its contiguous minimum-row block. The selected layout also refuses duplicate generated fields/controllers before they can share a register. A selector write is checked against the layout it would select, so one that selects a second copy of a controller is refused before mutation. Ordinary duplicate names keep their existing occurrence identities; unrelated dotted names are not rejected merely for sharing a group prefix. Seed companions such as `weights.0.seed.0` remain legal when declared by the template metadata.
 
 ## Reader and producer adoption
 

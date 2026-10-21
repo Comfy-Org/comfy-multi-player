@@ -59,6 +59,26 @@ describe("DynamicGroup catalog layout", () => {
     expect(() => mint(workflow, selectedCatalog)).toThrow("controller 'loras' is duplicated in the selected layout");
   });
 
+  it.each([true, false])("refuses a selector write that duplicates a controller without mutation (named register %s)", (named) => {
+    const entry: WidgetCatalogEntry = {
+      ...groupEntry,
+      widget_order: ["before", "mode", "other_mode", "after"],
+      dynamic_combos: {
+        ...conditionalCatalog.types["DevToolsNodeWithDynamicGroup"]!.dynamic_combos,
+        other_mode: { default: "off", options: {
+          off: { widgets: [], defaults: {} },
+          on: { widgets: ["loras"], defaults: { loras: 0 } },
+        } },
+      },
+    };
+    const selectedCatalog: WidgetCatalog = { types: { DevToolsNodeWithDynamicGroup: entry } };
+    const workflow = structuredClone(cases.empty);
+    workflow.nodes[0]!.widgets_values = ["first", "on", 0, "off", "last"];
+    if (named) workflow.nodes[0]!["widgets_values_named"] = { other_mode: "off" };
+    assertRejectedWithoutMutation(workflow, edit("other_mode", "on"), "malformed_op", selectedCatalog,
+      edit("after", "must not run", 2));
+  });
+
   it.each([
     ["top-level", 0], ["top-level", 1],
     ["interior", 0], ["interior", 1],
