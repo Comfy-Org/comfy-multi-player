@@ -79,6 +79,29 @@ describe("DynamicGroup catalog layout", () => {
       edit("after", "must not run", 2));
   });
 
+  it("keeps declared row fields in place when a selector refreshes the form", () => {
+    const formCatalog: WidgetCatalog = { types: { DevToolsNodeWithDynamicGroup: {
+      widget_order: ["rows", "after", "mode"],
+      dynamic_groups: { rows: { min: 0, max: 3, widgets: ["x"], defaults: { x: 0 } } },
+      dynamic_combos: { mode: { default: "basic", options: {
+        basic: { widgets: [], defaults: {} },
+        advanced: { widgets: ["child"], defaults: {} },
+      } } },
+    } } };
+    const workflow = structuredClone(cases.empty);
+    workflow.nodes[0]!.widgets_values = [1, "tail", 42, "basic"];
+    workflow.nodes[0]!.widgets_values_form = { order: ["rows", "after", "rows.0.x", "mode"] };
+    const doc = mint(workflow, formCatalog);
+
+    expect(applyOps(doc, [edit("mode", "advanced")], formCatalog).outcomes[0]?.outcome).toBe("applied");
+    const node = project(doc, formCatalog).nodes[0]!;
+    expect(node.widgets_values_form).toEqual({ order: ["rows", "after", "rows.0.x", "mode", "child"] });
+    expect(node.widgets_values).toEqual([1, "tail", 42, "advanced", null]);
+    expect(applyOps(doc, [edit("mode", "basic", 2)], formCatalog).outcomes[0]?.outcome).toBe("applied");
+    expect(project(doc, formCatalog).nodes[0]!.widgets_values_form).toEqual(workflow.nodes[0]!.widgets_values_form);
+    doc.destroy();
+  });
+
   it.each([
     ["top-level", 0], ["top-level", 1],
     ["interior", 0], ["interior", 1],

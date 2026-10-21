@@ -24,7 +24,7 @@
  */
 import * as Y from "yjs";
 
-import { assertDynamicGroupCatalog, groupCountRefusal, groupLayout, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
+import { assertDynamicGroupCatalog, fieldGroupOf, groupCountRefusal, groupLayout, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
 import type { DynamicComboEntry, WidgetCatalogEntry } from "./types.js";
 import { widgetOccurrenceAt, widgetStorageKey } from "./widget-identity.js";
 
@@ -77,6 +77,7 @@ function expand(
   combos: Combos,
   valueAt: (name: string, index: number, occurrence: number) => unknown,
   producerOrder: readonly string[] = entry.widget_order,
+  declaredGroups: ReadonlySet<string> = new Set(),
 ): WidgetLayout {
   assertDynamicGroupCatalog(entry);
   const owned = optionOwnedWidgets(entry);
@@ -91,6 +92,10 @@ function expand(
     order.push(name);
     seen.add(name);
   };
+  // Rows the producer declared are walked as stable widgets instead.
+  const appendRows = (name: string, rows: readonly string[]): void => {
+    if (!declaredGroups.has(name)) rows.forEach(append);
+  };
   const walk = (names: readonly string[], depth: number): void => {
     for (const name of names) {
       append(name);
@@ -100,7 +105,7 @@ function expand(
       const group = groupLayout(entry, name, stored);
       if (group) {
         group.defaults.forEach((value, child) => defaults.set(child, value));
-        group.order.forEach(append);
+        appendRows(name, group.order);
         continue;
       }
       if (!Object.hasOwn(combos, name)) continue;
@@ -115,7 +120,8 @@ function expand(
   // order, so preserve that order for stable widgets and only replace the
   // catalog-owned dynamic children. This lets a selector change recompute the
   // realized order without moving unrelated producer-local widgets.
-  walk(producerOrder.filter((name) => !owned.has(name) && !isDynamicGroupField(entry, name)), 0);
+  walk(producerOrder.filter((name) => !owned.has(name)
+    && (!isDynamicGroupField(entry, name) || declaredGroups.has(fieldGroupOf(entry, name)!))), 0);
   return { order, defaults };
 }
 
@@ -182,7 +188,9 @@ export function widgetOrderForProducerOrder(
 ): readonly string[] {
   const combos = combosOf(entry);
   if (!combos) return [...producerOrder];
-  return expand(entry, combos, storedValue(widgets, pending), producerOrder).order;
+  const owned = optionOwnedWidgets(entry);
+  const declaredGroups = new Set(producerOrder.filter((name) => groupOf(entry, name) && !owned.has(name)));
+  return expand(entry, combos, storedValue(widgets, pending), producerOrder, declaredGroups).order;
 }
 
 /**

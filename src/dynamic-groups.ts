@@ -19,8 +19,13 @@ function maxRows(fields: readonly string[]): number {
   return fields.length === 0 ? 0 : Math.floor(MAX_OVERFLOW_WIDGETS / fields.length);
 }
 
+/** The controller whose generated row field `name` is, if any. */
+export function fieldGroupOf(entry: WidgetCatalogEntry | undefined, name: string): string | undefined {
+  return Object.entries(entry?.dynamic_groups ?? {}).find(([prefix, group]) => isGroupField(prefix, group.widgets, name))?.[0];
+}
+
 export function isDynamicGroupField(entry: WidgetCatalogEntry | undefined, name: string): boolean {
-  return Object.entries(entry?.dynamic_groups ?? {}).some(([prefix, group]) => isGroupField(prefix, group.widgets, name));
+  return fieldGroupOf(entry, name) !== undefined;
 }
 
 function assertDynamicGroupOrder(entry: WidgetCatalogEntry, name: string, order: readonly string[]): boolean {
