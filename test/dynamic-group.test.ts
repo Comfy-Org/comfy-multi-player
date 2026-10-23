@@ -369,6 +369,27 @@ describe("DynamicGroup catalog layout", () => {
     doc.destroy();
   });
 
+  it("shares one allocation bound across every group of an entry", () => {
+    const sharedCatalog: WidgetCatalog = { types: { DevToolsNodeWithDynamicGroup: {
+      widget_order: ["first", "second"],
+      dynamic_groups: {
+        first: { min: 0, max: 3, widgets: ["x"], defaults: { x: 0 } },
+        second: { min: 0, max: 3, widgets: ["y"], defaults: { y: 0 } },
+      },
+    } } };
+    const workflow = structuredClone(cases.empty);
+    delete workflow.nodes[0]!["widgets_values_named"];
+    workflow.nodes[0]!.widgets_values = [0, 0];
+    assertRejectedWithoutMutation(workflow, edit("first", 2049), "malformed_op", sharedCatalog, edit("second", 1, 2));
+    assertRejectedWithoutMutation(workflow, edit("first.2048.x", 1), "unknown_widget", sharedCatalog, edit("second", 1, 2));
+
+    const doc = mint(workflow, sharedCatalog);
+    expect(applyOps(doc, [edit("first", 2048), edit("second", 2048, 2)], sharedCatalog).outcomes.map((o) => o.outcome))
+      .toEqual(["applied", "applied"]);
+    expect(project(doc, sharedCatalog).nodes[0]!.widgets_values).toHaveLength(2 + 4096);
+    doc.destroy();
+  });
+
   it("refuses a malformed saved count before minting a misaligned document", () => {
     const workflow = structuredClone(cases.populated);
     (workflow.nodes[0]!.widgets_values as unknown[])[1] = -1;

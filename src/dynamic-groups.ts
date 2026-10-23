@@ -6,22 +6,25 @@ export function groupOf(entry: WidgetCatalogEntry | undefined, name: string) {
   return groups && Object.hasOwn(groups, name) ? groups[name] : undefined;
 }
 
-function isGroupField(prefix: string, fields: readonly string[], name: string): boolean {
+function isGroupField(entry: WidgetCatalogEntry, prefix: string, fields: readonly string[], name: string): boolean {
   if (!name.startsWith(`${prefix}.`)) return false;
   const suffix = name.slice(prefix.length + 1);
   const dot = suffix.indexOf(".");
   const index = suffix.slice(0, dot);
-  return dot > 0 && /^(0|[1-9]\d*)$/.test(index) && Number(index) < maxRows(fields)
+  return dot > 0 && /^(0|[1-9]\d*)$/.test(index) && Number(index) < maxRows(entry)
     && fields.includes(suffix.slice(dot + 1));
 }
 
-function maxRows(fields: readonly string[]): number {
-  return fields.length === 0 ? 0 : Math.floor(MAX_OVERFLOW_WIDGETS / fields.length);
+/** Every group may hold this many rows, so all of an entry's rows together stay within one allocation bound. */
+function maxRows(entry: WidgetCatalogEntry): number {
+  const fields = Object.values(entry.dynamic_groups ?? {}).reduce((total, group) => total + group.widgets.length, 0);
+  return fields === 0 ? 0 : Math.floor(MAX_OVERFLOW_WIDGETS / fields);
 }
 
 /** The controller whose generated row field `name` is, if any. */
 export function fieldGroupOf(entry: WidgetCatalogEntry | undefined, name: string): string | undefined {
-  return Object.entries(entry?.dynamic_groups ?? {}).find(([prefix, group]) => isGroupField(prefix, group.widgets, name))?.[0];
+  if (!entry) return undefined;
+  return Object.entries(entry.dynamic_groups ?? {}).find(([prefix, group]) => isGroupField(entry, prefix, group.widgets, name))?.[0];
 }
 
 export function isDynamicGroupField(entry: WidgetCatalogEntry | undefined, name: string): boolean {
@@ -34,7 +37,7 @@ function assertDynamicGroupOrder(entry: WidgetCatalogEntry, name: string, order:
   if (controllerIndex !== order.lastIndexOf(name)) {
     throw new TypeError(`DynamicGroup controller '${name}' is duplicated in widget order`);
   }
-  const generated = order.filter((widget) => isGroupField(name, group.widgets, widget));
+  const generated = order.filter((widget) => isGroupField(entry, name, group.widgets, widget));
   if (generated.length === 0) return controllerIndex >= 0;
   const minimum = groupLayout(entry, name, group.min)!.order;
   if (controllerIndex < 0 || generated.length !== minimum.length
@@ -67,7 +70,7 @@ function assertSingleSelection(entry: WidgetCatalogEntry, name: string, baseOrde
     throw new TypeError(`DynamicGroup controller '${name}' can be selected more than once`);
   }
   const fields = groupOf(entry, name)!.widgets;
-  if (optionOrders.some((order) => order.some((widget) => isGroupField(name, fields, widget)))) {
+  if (optionOrders.some((order) => order.some((widget) => isGroupField(entry, name, fields, widget)))) {
     throw new TypeError(`DynamicGroup '${name}' generated widget names cannot be listed in a DynamicCombo option`);
   }
 }
@@ -90,6 +93,8 @@ export function assertDynamicGroupCatalog(entry: WidgetCatalogEntry): void {
     if (!Number.isSafeInteger(group.min) || !Number.isSafeInteger(group.max) || group.min < 0 || group.min > group.max) {
       throw new TypeError(`DynamicGroup '${name}' must declare integer row bounds with 0 <= min <= max`);
     }
+  }
+  for (const [name] of groups) {
     if (Object.hasOwn(entry.dynamic_combos ?? {}, name) || isDynamicGroupField(entry, name)) {
       throw new TypeError(`DynamicGroup controller '${name}' collides with another dynamic widget`);
     }
@@ -106,7 +111,7 @@ export function assertDynamicGroupCatalog(entry: WidgetCatalogEntry): void {
 export function groupCountRefusal(entry: WidgetCatalogEntry | undefined, name: string, value: unknown): string | null {
   const group = groupOf(entry, name);
   if (!group) return null;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < group.min || value > maxRows(group.widgets)) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < group.min || value > maxRows(entry!)) {
     return `${name}: expected an integer row count from the group minimum to the widget allocation bound`;
   }
   return null;
