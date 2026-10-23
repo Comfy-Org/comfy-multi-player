@@ -56,9 +56,18 @@ domain. The heading must be `# ADR-<IDENTIFIER>: Title`, followed by a
 `Rejected`, `Deprecated`, or `Superseded`. Start from `docs/ADR-TEMPLATE.md`.
 Run `npm run check:adrs`; CI enforces naming, metadata, identifier uniqueness,
 companion-directory ownership, and links to ADR files. Superseded records stay
-in place and link to their replacement. `Context`, `Decision`, `Alternatives
-considered`, and `Consequences` are recommended prompts, not mandatory
-headings; the validator deliberately does not enforce content-section shape.
+in place and link to their replacement. Relate records with Builds on, Refines,
+Amends, or Supersedes and state what remains true. An Accepted record remains
+binding until its replacement is also Accepted; a Proposed replacement is review
+context, not permission to contradict it. `Context`, `Decision`, `Alternatives
+considered`, `What we reject`, `Consequences`, and `Revisit triggers` are
+recommended prompts, not mandatory headings; the validator deliberately does
+not enforce content-section shape.
+
+The validator tests replay the shared conformance cases in this repository's
+native toolchain: exact status values, real calendar dates, full-identifier
+collisions, companion ownership, and direct/reference-style ADR links. A workflow
+run is not itself proof that the ADR check is a required merge gate.
 
 Comfy repositories standardize this ADR behavior and lifecycle, not one tool
 implementation. Keep the validator, tests, and CI integration native to this
