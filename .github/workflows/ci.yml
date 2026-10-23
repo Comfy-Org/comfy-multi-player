@@ -69,6 +69,9 @@ jobs:
       - name: Profile-claim staleness gate
         run: npm run check:profile-claims
 
+      - name: ADR governance gate
+        run: npm run check:adrs
+
       # .coderabbit.yaml's path_instructions are generated from the
       # <!-- coderabbit-instructions --> blocks in .agents/checks/*.md. This
       # fails when the committed file no longer matches them. CodeRabbit reads

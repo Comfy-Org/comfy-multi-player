@@ -1,6 +1,12 @@
-# ADR-0005: Direct Lamport counter semantics
+# ADR-ORDERING-0005: Direct Lamport counter semantics
 
-Status: accepted for private alpha.
+Date: 2026-08-29
+
+## Status
+
+Accepted
+
+Status note: accepted for private alpha.
 
 ## Decision
 

@@ -1,7 +1,11 @@
-# ADR-022: Preserve durable link intent across node-presence races
+# ADR-CRDT-LINKS-0022: Preserve durable link intent across node-presence races
 
-- **Status:** Accepted
-- **Date:** 2026-09-03
+Date: 2026-09-03
+
+## Status
+
+Accepted
+
 - **Depends on:** [Amendment A7](../multiplayer-schema.md#amendment-a7--2026-08-21--stamp-gated-node-presence-canonical-autogrow-naming-scoped-clear-issue-11) (node presence), [Amendment A18](../multiplayer-schema.md#amendment-a18--2026-08-30--normalized-stamped-link-identity) (normalized link identity)
 - **Implemented by:** [#206](https://github.com/Comfy-Org/comfy-multi-player/pull/206), [#196](https://github.com/Comfy-Org/comfy-multi-player/pull/196), and [#243](https://github.com/Comfy-Org/comfy-multi-player/pull/243)
 

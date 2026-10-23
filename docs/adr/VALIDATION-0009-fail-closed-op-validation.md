@@ -1,7 +1,11 @@
-# ADR-009: Fail closed — validate the whole op before any mutation
+# ADR-VALIDATION-0009: Fail closed — validate the whole op before any mutation
 
-**Status:** Accepted
-**Date:** 2026-09-21
+Date: 2026-09-21
+
+## Status
+
+Accepted
+
 **Invariants:** KA-4
 **Issue:** #228
 
@@ -16,11 +20,11 @@ rule itself:
 
 - KA-4 states it as an applier invariant, enforced by tests, not as a decision with rationale and
   alternatives.
-- [ADR-003](ADR-003-catalog-sha-at-mint.md) states the "no guessing" half of this rule, but scopes
+- [ADR-CATALOG-0003](CATALOG-0003-catalog-sha-at-mint.md) states the "no guessing" half of this rule, but scopes
   it to catalog widget-name matching only: "Widget writes to uncatalogued classes fail closed and
   loudly," rejected as an alternative to "guess unknown widget layout... because silent mis-keying
   is worse than a loud failure."
-- [ADR-007](ADR-007-discriminated-apply-outcomes.md) touches op rejection only as an outcome-shape
+- [ADR-API-0007](API-0007-discriminated-apply-outcomes.md) touches op rejection only as an outcome-shape
   concern, and explicitly disclaims changing this rule: "Op classification and mutation semantics
   remain unchanged; only reporting changes."
 
@@ -34,7 +38,7 @@ op's `op_id`, and the accepted value made the whole document unprojectable, not 
 widget. The fix in PR #228 tightened validation back to exact catalog membership and added
 `test/mint-dynamic-combo-catalog-mismatch.test.ts` plus regression coverage asserting
 byte-identical `Y.encodeStateAsUpdate` and that `op_id` is not consumed on rejection. The gap the
-incident exposed was not specific to catalog lookups; it was a validation path, outside ADR-003's
+incident exposed was not specific to catalog lookups; it was a validation path, outside ADR-CATALOG-0003's
 narrower scope, that accepted a partially-guessed op. `connect` is the motivating general case:
 it touches the link tuple plus both endpoint slot references in one logical edit, and those three
 writes must succeed or fail together, not split into a partially-applied edge.
@@ -57,17 +61,17 @@ it is or which specific check would reject it:
   resubmits the exact same op after a rejection is doing the correct thing, not working around a
   bug.
 
-This generalizes ADR-003's catalog-specific "no guessing" clause to every graph op and every kind
+This generalizes ADR-CATALOG-0003's catalog-specific "no guessing" clause to every graph op and every kind
 of validation failure, not only catalog/widget-name mismatches. It formalizes, at ADR level, the
 rule KA-4 already states as an invariant.
 
-This decision does not change ADR-007's outcome-reporting shape, and it does not touch multi-op
+This decision does not change ADR-API-0007's outcome-reporting shape, and it does not touch multi-op
 batch semantics. Today, when a batch of ops is submitted and one op is rejected, only the
 remaining (not-yet-processed) ops in that batch are rejected with it; already-applied ops in the
 batch keep their effect. Making batch submission fully transactional (all-or-nothing across the
 whole batch) is a separate, more disruptive question — it would require producers to submit only
 mutually-commutative or fully-independent ops, or accept that a late failure discards otherwise
-valid earlier work — and is explicitly out of scope here. ADR-007's abort-remainder behavior is
+valid earlier work — and is explicitly out of scope here. ADR-API-0007's abort-remainder behavior is
 unchanged by this ADR.
 
 ## Consequences
@@ -77,10 +81,10 @@ unchanged by this ADR.
   enforced by tests and scattered ADR-scoped clauses.
 - A validation check for any new op type must be written to confirm its inputs against an
   authoritative source before writing, not to accept a plausible-looking but unconfirmed guess.
-  Reviewers can point at this ADR instead of re-deriving the rule from KA-4 and ADR-003 each time.
-- ADR-003 remains the authority for the catalog-specific case; this ADR is the general rule it is
+  Reviewers can point at this ADR instead of re-deriving the rule from KA-4 and ADR-CATALOG-0003 each time.
+- ADR-CATALOG-0003 remains the authority for the catalog-specific case; this ADR is the general rule it is
   an instance of. Neither document needs to restate the other's scope.
-- ADR-007 remains the authority for outcome-reporting shape and for abort-remainder batch
+- ADR-API-0007 remains the authority for outcome-reporting shape and for abort-remainder batch
   semantics; this ADR does not reopen either.
 - No code change accompanies this ADR. `validateWidgetName` and the KA-4 test suite
   (`test/ka4-rejection-byte-identity.test.ts`, `test/reject-no-mutation.regression.test.ts`,
@@ -89,15 +93,15 @@ unchanged by this ADR.
 
 ## Alternatives considered
 
-- **Leave the rule split across KA-4, ADR-003, and ADR-007.** Rejected: PR #228 was a real
-  violation that fell outside ADR-003's catalog-only scope and ADR-007's reporting-only scope,
+- **Leave the rule split across KA-4, ADR-CATALOG-0003, and ADR-API-0007.** Rejected: PR #228 was a real
+  violation that fell outside ADR-CATALOG-0003's catalog-only scope and ADR-API-0007's reporting-only scope,
   which shows the split leaves gaps rather than merely duplicating text.
 - **Make multi-op batches fully transactional (abort the whole batch, not just the remainder, on
   any failure).** Rejected for this ADR by explicit decision: it would require agents to submit
   perfectly commutative or independent ops, is a significant user-facing behavior change from
   today's abort-remainder semantics, and is a separate question from the single-op contract this
-  ADR states. ADR-007's abort-remainder behavior stands as-is.
+  ADR states. ADR-API-0007's abort-remainder behavior stands as-is.
 - **Scope this rule to `connect` only, since that is the motivating multi-part op.** Rejected: the
   PR #228 incident that motivated writing this down was a `set_widget` validation gap, not a
-  `connect` gap, so scoping to one op type would repeat ADR-003's mistake of a narrower-than-needed
+  `connect` gap, so scoping to one op type would repeat ADR-CATALOG-0003's mistake of a narrower-than-needed
   rule.

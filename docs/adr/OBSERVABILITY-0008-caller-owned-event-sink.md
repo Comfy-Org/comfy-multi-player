@@ -1,8 +1,14 @@
-# ADR-008: caller-owned, explicitly passed event sink
+# ADR-OBSERVABILITY-0008: caller-owned, explicitly passed event sink
 
-- Status: Accepted (Option B approved in `christian-byrne/blocked-on-christian#121`)
-- Date: 2026-08-29
-- Invariants: KA-3, KA-4, KA-11; FC-3; ADR-021 statelessness boundary
+Date: 2026-08-29
+
+## Status
+
+Accepted
+
+Status note: Option B was approved in `christian-byrne/blocked-on-christian#121`.
+
+- Invariants: KA-3, KA-4, KA-11; FC-3; ADR-ORDERING-0021 statelessness boundary
 
 ## Context
 
@@ -12,7 +18,7 @@ need structured notice of rejected input and unexpected failures so the frontend
 and the Node doc host can forward them across its HTTP boundary to Go structured logs/`agenttel`.
 cmp must not import a telemetry SDK or know either host.
 
-ADR-021 made the state boundary explicit: process-global mutable state in cmp is not an acceptable
+ADR-ORDERING-0021 made the state boundary explicit: process-global mutable state in cmp is not an acceptable
 substitute for caller-owned state. The `check:stateless` gate enforces this boundary.
 
 ## Decision model
@@ -24,7 +30,7 @@ and the ability to preserve a language-agnostic contract.
 
 This matches the frontend service's register/dispatch ergonomics and requires no applier signature
 change. It also makes importing cmp mutate process-wide behavior, creates test and multi-tenant
-cross-talk, and directly contradicts ADR-021's statelessness decision. Rejected.
+cross-talk, and directly contradicts ADR-ORDERING-0021's statelessness decision. Rejected.
 
 ### Option B: explicitly pass a sink in caller-owned call context
 
@@ -60,7 +66,7 @@ change an outcome, mutation, abort-remainder behavior, or thrown error.
 
 Call sites test for `eventSink` before constructing the event. With no sink, the path performs only
 the branch and allocates no telemetry object. No `EXCEPTIONS.md` entry is needed: this preserves
-KA-3 and ADR-021's statelessness boundary and adds no runtime dependency.
+KA-3 and ADR-ORDERING-0021's statelessness boundary and adds no runtime dependency.
 
 ## Versioned wire schema
 

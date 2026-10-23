@@ -19,7 +19,7 @@ function derivedDefinitionId(opId: string, scope: string, original: unknown): st
  * `derivedLinkId` folds the digest into the FULL safe-integer range
  * (`[1, Number.MAX_SAFE_INTEGER]`, i.e. `[1, 2^53 - 1]`) rather than the
  * narrower 52-bit window an earlier revision used, so the mint spends every
- * bit of entropy `LinkId`'s numeric type can safely hold (ADR-033 amendment,
+ * bit of entropy `LinkId`'s numeric type can safely hold (ADR-WORKFLOW-0033 amendment,
  * review discussion on PR #245). 32 hex characters (128 bits) are taken from
  * the digest before the modulus is applied so the reduction to 53 bits stays
  * close to uniform; sha256Hex's 64-character output has plenty to spare.
@@ -32,7 +32,7 @@ const SAFE_INTEGER_MODULUS = BigInt(Number.MAX_SAFE_INTEGER);
 /**
  * Mint a numeric id for a link `insert_workflow` carries — PURELY as a
  * function of the op's own content (`opId`, `scope`, `original`), with NO
- * document-state dependency (ADR-033 amendment, superseding the
+ * document-state dependency (ADR-WORKFLOW-0033 amendment, superseding the
  * document-verified retry mint the original revision of this PR shipped).
  *
  * Christian Byrne's review of the original revision (PR #245, inline on this
@@ -48,7 +48,7 @@ const SAFE_INTEGER_MODULUS = BigInt(Number.MAX_SAFE_INTEGER);
  * The fix removes the retry (and the document read it required) entirely:
  * the SAME op, applied to ANY document state, in ANY order relative to any
  * other op, always derives the SAME numeric id — because nothing but the
- * op's own fields feeds the hash. This restores ADR-031's "producers do not
+ * op's own fields feeds the hash. This restores ADR-WORKFLOW-0031's "producers do not
  * inspect document state or remap ids" for links too, at the cost of the
  * "checked collision-free against this document" property the retry design
  * offered: two derived ids (or a derived id and something already persisted)
@@ -260,8 +260,8 @@ function remapGraph(
  * nested definition graphs.
  *
  * Every id this function derives — node, link, group, and definition — is a
- * PURE function of (`opId`, `scope`, `kind`, `original`) alone (ADR-031,
- * amended for links by the ADR-033 revision on PR #245). No document, no
+ * PURE function of (`opId`, `scope`, `kind`, `original`) alone (ADR-WORKFLOW-0031,
+ * amended for links by the ADR-WORKFLOW-0033 revision on PR #245). No document, no
  * caller-supplied reservation set, and no state from any other call factors
  * into the result: the same `(wf, opId)` pair always produces byte-identical
  * output, on any replica, regardless of what else that replica's document

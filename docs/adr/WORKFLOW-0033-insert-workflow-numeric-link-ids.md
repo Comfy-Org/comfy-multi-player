@@ -1,13 +1,22 @@
-# ADR-033: numeric link ids for `insert_workflow`
+# ADR-WORKFLOW-0033: numeric link ids for `insert_workflow`
 
-- **Status:** Amended and accepted — see "Amendment (2026-09-23)" below. The original decision (2026-09-22, below) shipped a document-state-verified retry mint; Christian Byrne's review of that revision (PR #245) found it broke link identity's order-independence and asked for either a fix plus explicit sign-off on the residual risk, or a return to pure derivation. This amendment takes the pure-derivation path and was ratified after exact-head review of that fix and its opposite-order convergence coverage. **The "Accepted" disposition below describes the ORIGINAL decision only** and is superseded by this accepted amendment.
-- **Date:** 2026-09-22 (original), amended 2026-09-23
+Date: 2026-09-22
+
+## Status
+
+Accepted
+
+Status note: amended and accepted on 2026-09-23. The original decision shipped
+a document-state-verified retry mint. The amendment replaces it with pure
+derivation and was ratified after exact-head review and opposite-order
+convergence coverage. The amendment section below is authoritative.
+
 - **Decider:** Christian Byrne
 - **Source:** ComfyUI_frontend#18458 (interim 32-bit-hash review) and the Slack thread it was raised in; the amendment's source is Christian Byrne's PR #245 review (inline comment on `src/remap.ts:65`, review summary "Not merge-ready: link identity becomes arrival-order-dependent").
 
 ## Context
 
-ADR-031 remaps every id `insert_workflow` carries — node, link, group, and
+ADR-WORKFLOW-0031 remaps every id `insert_workflow` carries — node, link, group, and
 nested-definition id — to a deterministic **string** derived from the op
 envelope id, graph scope, id kind, and original id
 (`insert:<opId>:<scope>:link:<original>`). That is a correct fit for a
@@ -44,14 +53,14 @@ happens to read it.
 subgraph-definition interior scope, so the fix does not regress
 comfy-multi-player#230's `remapLinkIdArray`/definition-interior handling.
 Every other kind `insert_workflow` derives (node, group, definition) is
-UNCHANGED: still the ADR-031 string, still a pure function of
+UNCHANGED: still the ADR-WORKFLOW-0031 string, still a pure function of
 (`opId`, `scope`, `kind`, `original`) with no document-state dependency.
 
 The link-id mint is NOT a wider hash gambled to be "unlikely enough" — the
 same failure mode being fixed. It is:
 
 1. **Hashed**: SHA-256 of the same `insert:<opId>:<scope>:link:<original>`
-   seed ADR-031 already uses, keeping 52 bits (well inside
+   seed ADR-WORKFLOW-0031 already uses, keeping 52 bits (well inside
    `Number.MAX_SAFE_INTEGER`) as the first candidate.
 2. **Verified against every id the caller can see**, not assumed collision-free
    by width alone: the caller (`applier.ts`) passes `derivedLinkId` (via
@@ -76,12 +85,12 @@ second op's mint sees the first op's already-committed numeric id in
 `persistedLinkIds` and retries past it — the exact cross-op collision the
 32-bit interim hash reproduced.
 
-## Deviation from KA-5 / ADR-031
+## Deviation from KA-5 / ADR-WORKFLOW-0031
 
 Every other id `insert_workflow` derives is intentionally **pure**: a
 function of the op's own fields alone, with producers/the applier never
 inspecting document state to decide an id (KA-5's "IDs are collision-free
-without coordination" and ADR-031's "Producers do not inspect document
+without coordination" and ADR-WORKFLOW-0031's "Producers do not inspect document
 state or remap ids"). `derivedLinkId` breaks that purity for links, and only
 for links: a truly information-theoretic collision-free encoding of an
 unbounded set of possible (`opId`, link) pairs into a fixed 53-bit numeric
@@ -119,7 +128,7 @@ package, KA-2) an accepted risk elsewhere in this same system.
 
 ## Amendment (2026-09-23): pure derivation, no document-state retry
 
-**This amendment supersedes the "Decision" and "Deviation from KA-5 / ADR-031"
+**This amendment supersedes the "Decision" and "Deviation from KA-5 / ADR-WORKFLOW-0031"
 sections above for the CURRENT behavior.** They are kept as written for
 history — they are what actually shipped in the original PR #245 revision —
 but `derivedLinkId` no longer works the way they describe.
@@ -153,12 +162,12 @@ no longer accepts a `reservedLinkIds` parameter; `applier.ts`'s
 output — including every link's numeric id — on any replica, in any
 document state, regardless of what other ops have or have not been applied
 yet, at the top-level scope AND at every subgraph-definition interior scope.
-This restores ADR-031's "producers do not inspect document state or remap
+This restores ADR-WORKFLOW-0031's "producers do not inspect document state or remap
 ids" for links, closing the gap this ADR's original "Deviation" section
 opened.
 
 The mint also widens its candidate from 52 to the FULL safe-integer range:
-it hashes the ADR-031 seed with SHA-256, takes 32 hex characters (128 bits,
+it hashes the ADR-WORKFLOW-0031 seed with SHA-256, takes 32 hex characters (128 bits,
 comfortably enough to keep the reduction below close to uniform), and folds
 that down via `% (Number.MAX_SAFE_INTEGER)` into `[1, Number.MAX_SAFE_INTEGER]`
 — `[1, 2^53 - 1]`, all of it, rather than the narrower `2^52` window the
@@ -243,7 +252,7 @@ claimed as fixed and not newly introduced by this amendment.
   now (any real collision reaches it, since nothing avoids one), not merely
   via deliberate id-space exhaustion — there is no more exhaustion to
   construct, because there is no more retry sequence.
-- `test/insert-workflow.test.ts`'s "numeric link id minting (ADR-033, pure
+- `test/insert-workflow.test.ts`'s "numeric link id minting (ADR-WORKFLOW-0033, pure
   derivation)" block and
   `test/insert-workflow-numeric-link-ids.regression.test.ts`'s
   "opposite-order convergence" block replace the retry/exhaustion-focused
@@ -255,6 +264,6 @@ claimed as fixed and not newly introduced by this amendment.
 
 ## Glossary
 
-- **Derived id:** ADR-031's deterministic string, `insert:<opId>:<scope>:<kind>:<original>`.
+- **Derived id:** ADR-WORKFLOW-0031's deterministic string, `insert:<opId>:<scope>:<kind>:<original>`.
 - **Candidate:** the single hashed numeric value `derivedLinkId` computes for one link (post-amendment: there is exactly one, never retried).
 - **Reservation set (historical, pre-amendment only):** the ids the original retry-based mint call was required not to choose — persisted document ids plus ids already minted in the same call. Not part of the amended design.

@@ -269,7 +269,7 @@ export function nodeIncarnation(node: Y.Map<unknown>): string {
  * both address the document by these keys. Naming them once is what keeps the
  * two from drifting: a reader that hardcodes `"nodes"` while the layout moves
  * silently reads an empty graph, which is the failure mode a consumer
- * hand-mirroring the schema has (ADR-004).
+ * hand-mirroring the schema has (ADR-DISTRIBUTION-0004).
  */
 export const ROOT_NODES = "nodes";
 export const ROOT_LINKS = "links";

@@ -1,7 +1,11 @@
-# ADR-007: Report one discriminated outcome per submitted op
+# ADR-API-0007: Report one discriminated outcome per submitted op
 
-**Status:** Accepted
-**Date:** 2026-08-22
+Date: 2026-08-22
+
+## Status
+
+Accepted
+
 **Issue:** #16
 
 ## Context

@@ -415,7 +415,7 @@ export function canonicalOp(op: Op): string {
  * ~326 bytes/op against schema §4's ≈64 byte budget, which pushes a doc past
  * §4's 25%-of-bytes compaction trigger after a few dozen ops and turns every
  * crossing into a doc-epoch bump plus a full follower re-fetch. A 64-hex
- * digest is ~96 bytes/op and still satisfies ADR-007's "existing `op_id`
+ * digest is ~96 bytes/op and still satisfies ADR-API-0007's "existing `op_id`
  * accepted only if canonical bytes are identical": a false accept needs two
  * different payloads under the SAME `op_id` whose SHA-256 also collides.
  */
@@ -426,7 +426,7 @@ export function opDigest(op: Op): string {
 /**
  * Validate and inspect stamped operations without reading or mutating a doc.
  *
- * This is the storage preflight boundary from ADR-022. Canonical bytes and
+ * This is the storage preflight boundary from ADR-API-0022. Canonical bytes and
  * their digest are produced together through the same canonicalizer and
  * SHA-256 implementation as {@link applyOps}. Input order is preserved.
  * Identical repeated ids remain inspectable; reuse with different canonical
@@ -1032,7 +1032,7 @@ function prepareInsertedWorkflow(op: InsertWorkflowOp): Record<string, unknown> 
   }
   validateRawGraphIds(wf["nodes"] as unknown[], (wf["links"] as unknown[] | undefined) ?? [], "workflow");
   validateDefinitionInputs((subgraphs as unknown[] | undefined) ?? []);
-  // ADR-033 (amended): every id this op derives, including a link's numeric
+  // ADR-WORKFLOW-0033 (amended): every id this op derives, including a link's numeric
   // id, is a PURE function of the op's own content — no document state is
   // read here. See `remap.ts`'s `derivedLinkId` for why `LinkId` (a branded
   // `number`, unlike the string-or-number `NodeId`) needed a numeric mint at
@@ -1217,7 +1217,7 @@ function updateInsertedWorkflowMeta(
   // `last_link_id` is deliberately NOT advanced from `linkWrites` (KA-5:
   // "document high-water marks are advisory, never allocators"). Every
   // inserted link's own id is now a large, arbitrary-looking derived number
-  // (ADR-033 — `remap.ts`'s `derivedLinkId`, needed only because ComfyUI_
+  // (ADR-WORKFLOW-0033 — `remap.ts`'s `derivedLinkId`, needed only because ComfyUI_
   // frontend's `LinkId` is a branded `number`), not a small sequential one,
   // so folding it into the high-water mark would pin the doc's bookkeeping
   // field to that value forever after the FIRST insert_workflow — a new,

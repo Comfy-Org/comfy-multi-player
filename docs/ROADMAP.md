@@ -2,9 +2,9 @@
 
 ## Current state
 
-V1 is an op-based Yjs document applier implemented once in the shared `@comfyorg/comfy-multi-player` TypeScript package. The browser and Node doc-host sidecar must consume the same exact published npm version (ADR-006); merging recovery code does not publish it or update consumers. Semantic ops are the replication unit; the widget catalog is sha256-pinned and fail-closed in the deployed architecture.
+V1 is an op-based Yjs document applier implemented once in the shared `@comfyorg/comfy-multi-player` TypeScript package. The browser and Node doc-host sidecar must consume the same exact published npm version (ADR-DISTRIBUTION-0006); merging recovery code does not publish it or update consumers. Semantic ops are the replication unit; the widget catalog is sha256-pinned and fail-closed in the deployed architecture.
 
-ADR-031 adds the standalone-only `insert_workflow` kind for atomic template insertion. The applier
+ADR-WORKFLOW-0031 adds the standalone-only `insert_workflow` kind for atomic template insertion. The applier
 derives tree-wide IDs from `op_id`; producers submit raw IDs and do not inspect document state.
 
 ## Guard gaps
