@@ -144,25 +144,13 @@ export function widgetOrderForValues(entry: WidgetCatalogEntry | undefined, wv: 
   return expand(entry, combos ?? {}, () => undefined).order;
 }
 
-/** A write not yet stored: its storage key and value, read in place of the stored one. */
-export type PendingWidgetValue = readonly [storageKey: string, value: unknown];
-
-function storedValue(widgets: Y.Map<unknown> | undefined, pending: PendingWidgetValue | undefined) {
-  return (name: string, _index: number, occurrence: number): unknown => {
-    const key = widgetStorageKey(name, occurrence);
-    return pending?.[0] === key ? pending[1] : widgets?.get(key);
-  };
-}
-
 /** The layout for a document node's name-keyed widgets map: order plus read-time defaults. */
-export function widgetLayoutForWidgets(
-  entry: WidgetCatalogEntry,
-  widgets: Y.Map<unknown> | undefined,
-  pending?: PendingWidgetValue,
-): WidgetLayout {
+export function widgetLayoutForWidgets(entry: WidgetCatalogEntry, widgets: Y.Map<unknown> | undefined): WidgetLayout {
   const combos = combosOf(entry);
   if (!hasDynamicWidgetLayout(entry)) return { order: entry.widget_order, defaults: new Map() };
-  return expand(entry, combos ?? {}, storedValue(widgets, pending));
+  return expand(entry, combos ?? {}, (name, _index, occurrence) =>
+    widgets?.get(widgetStorageKey(name, occurrence)),
+  );
 }
 
 /** The order for a document node's name-keyed widgets map. */
@@ -184,13 +172,18 @@ export function widgetOrderForProducerOrder(
   entry: WidgetCatalogEntry,
   producerOrder: readonly string[],
   widgets: Y.Map<unknown> | undefined,
-  pending?: PendingWidgetValue,
 ): readonly string[] {
   const combos = combosOf(entry);
   if (!combos) return [...producerOrder];
   const owned = optionOwnedWidgets(entry);
   const declaredGroups = new Set(producerOrder.filter((name) => groupOf(entry, name) && !owned.has(name)));
-  return expand(entry, combos, storedValue(widgets, pending), producerOrder, declaredGroups).order;
+  return expand(
+    entry,
+    combos,
+    (name, _index, occurrence) => widgets?.get(widgetStorageKey(name, occurrence)),
+    producerOrder,
+    declaredGroups,
+  ).order;
 }
 
 /**

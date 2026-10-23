@@ -35,48 +35,23 @@ const edit = (widget: string, value: unknown, counter = 1) => ({
 } satisfies TopLevelSetWidgetOp);
 
 describe("DynamicGroup catalog layout", () => {
-  it("refuses a controller duplicated only by the selected combo composition", () => {
+  it("accepts a controller offered by several options of one selector", () => {
     const entry: WidgetCatalogEntry = {
-      ...groupEntry,
-      widget_order: ["before", "mode", "other_mode", "after"],
-      dynamic_combos: {
-        ...conditionalCatalog.types["DevToolsNodeWithDynamicGroup"]!.dynamic_combos,
-        other_mode: { default: "off", options: {
-          off: { widgets: [], defaults: {} },
-          on: { widgets: ["loras"], defaults: { loras: 0 } },
-        } },
-      },
+      ...conditionalCatalog.types["DevToolsNodeWithDynamicGroup"]!,
+      dynamic_combos: { mode: { default: "off", options: {
+        off: { widgets: [], defaults: {} },
+        on: { widgets: ["loras"], defaults: { loras: 0 } },
+        alt: { widgets: ["loras"], defaults: { loras: 0 } },
+      } } },
     };
     const selectedCatalog: WidgetCatalog = { types: { DevToolsNodeWithDynamicGroup: entry } };
     const workflow = structuredClone(cases.empty);
-    const values = { before: "first", mode: "on", loras: 0, other_mode: "off", after: "last" };
-    workflow.nodes[0]!.widgets_values = values;
+    workflow.nodes[0]!.widgets_values = { before: "first", mode: "on", loras: 0, after: "last" };
     const doc = mint(workflow, selectedCatalog);
-    expect(project(doc, selectedCatalog).nodes[0]!.widgets_values).toEqual(["first", "on", 0, "off", "last"]);
+
+    expect(applyOps(doc, [edit("mode", "alt")], selectedCatalog).outcomes[0]?.outcome).toBe("applied");
+    expect(project(doc, selectedCatalog).nodes[0]!.widgets_values).toEqual(["first", "alt", 0, "last"]);
     doc.destroy();
-
-    workflow.nodes[0]!.widgets_values = { ...values, other_mode: "on" };
-    expect(() => mint(workflow, selectedCatalog)).toThrow("controller 'loras' is duplicated in the selected layout");
-  });
-
-  it.each([true, false])("refuses a selector write that duplicates a controller without mutation (named register %s)", (named) => {
-    const entry: WidgetCatalogEntry = {
-      ...groupEntry,
-      widget_order: ["before", "mode", "other_mode", "after"],
-      dynamic_combos: {
-        ...conditionalCatalog.types["DevToolsNodeWithDynamicGroup"]!.dynamic_combos,
-        other_mode: { default: "off", options: {
-          off: { widgets: [], defaults: {} },
-          on: { widgets: ["loras"], defaults: { loras: 0 } },
-        } },
-      },
-    };
-    const selectedCatalog: WidgetCatalog = { types: { DevToolsNodeWithDynamicGroup: entry } };
-    const workflow = structuredClone(cases.empty);
-    workflow.nodes[0]!.widgets_values = ["first", "on", 0, "off", "last"];
-    if (named) workflow.nodes[0]!["widgets_values_named"] = { other_mode: "off" };
-    assertRejectedWithoutMutation(workflow, edit("other_mode", "on"), "malformed_op", selectedCatalog,
-      edit("after", "must not run", 2));
   });
 
   it("keeps declared row fields in place when a selector refreshes the form", () => {
@@ -173,6 +148,33 @@ describe("DynamicGroup catalog layout", () => {
       ...groupEntry,
       widget_order: ["before", "loras", "loras.0.strength", "after"],
       dynamic_groups: { ...groupEntry.dynamic_groups, "loras.0.strength": { min: 0, max: 3, widgets: ["value"], defaults: { value: 1 } } },
+    }],
+    ["controller selectable from two selectors", {
+      ...groupEntry,
+      widget_order: ["before", "mode", "other_mode", "after"],
+      dynamic_combos: {
+        ...conditionalCatalog.types["DevToolsNodeWithDynamicGroup"]!.dynamic_combos,
+        other_mode: { default: "off", options: {
+          off: { widgets: [], defaults: {} },
+          on: { widgets: ["loras"], defaults: { loras: 0 } },
+        } },
+      },
+    }],
+    ["controller selectable through a nested selector and its parent", {
+      ...groupEntry,
+      widget_order: ["before", "mode", "after"],
+      dynamic_combos: {
+        mode: { default: "off", options: { off: { widgets: [], defaults: {} }, on: { widgets: ["loras", "inner"], defaults: {} } } },
+        inner: { default: "off", options: { off: { widgets: [], defaults: {} }, on: { widgets: ["loras"], defaults: {} } } },
+      },
+    }],
+    ["generated row name listed in a DynamicCombo option", {
+      ...groupEntry,
+      widget_order: ["before", "mode", "after"],
+      dynamic_groups: { loras: { ...loras, min: 1 } },
+      dynamic_combos: { mode: { default: "on", options: {
+        on: { widgets: ["loras", "loras.0.lora_name", "loras.0.strength", "loras.0.enabled"], defaults: {} },
+      } } },
     }],
     ["minimum above maximum", { ...groupEntry, dynamic_groups: { loras: { ...loras, min: 4, max: 3 } } }],
     ["negative minimum", { ...groupEntry, dynamic_groups: { loras: { ...loras, min: -1 } } }],

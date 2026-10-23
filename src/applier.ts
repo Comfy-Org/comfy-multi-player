@@ -152,14 +152,12 @@ import {
   type StampKey,
   type SubgraphDefinition,
   type WidgetCatalog,
-  type WidgetCatalogEntry,
   type WireOp,
 } from "./types.js";
 import { addInteriorLinkOrder, removeInteriorLinkOrder } from "./interior-link-order.js";
-import { assertDynamicGroupCatalog, groupCountRefusal, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
+import { groupCountRefusal, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
 import {
   optionOwnedWidgets,
-  type PendingWidgetValue,
   projectedLength,
   widgetLayoutForWidgets,
   widgetOrderForProducerOrder,
@@ -2031,33 +2029,11 @@ function validateDynamicGroupValue(node: Y.Map<unknown>, catalog: WidgetCatalog 
   const entry = catalogEntry(catalog, String(node.get("type") ?? ""));
   const refusal = groupCountRefusal(entry, widget, value);
   if (refusal) throw new OpRejectedError("malformed_op", refusal);
-  if (entry?.dynamic_groups && entry.dynamic_combos && Object.hasOwn(entry.dynamic_combos, widget)) {
-    validateSelectedGroupLayout(node, entry, [widgetStorageKey(widget, occurrence), value]);
-  }
   if (groupOf(entry, widget) && storedWidgetFormOf(node)) {
     const widgets = node.get("widgets");
     if (widgets instanceof Y.Map && widgets.get(widgetStorageKey(widget, occurrence)) !== value) {
       throw new OpRejectedError("malformed_op", "row count changes require an updated widgets_values_form declaration");
     }
-  }
-}
-
-/**
- * A selector write can select a second copy of a group controller. Expand the
- * layout it would produce before anything is stored, so the refusal leaves the
- * document unchanged.
- */
-function validateSelectedGroupLayout(node: Y.Map<unknown>, entry: WidgetCatalogEntry, pending: PendingWidgetValue): void {
-  assertDynamicGroupCatalog(entry);
-  const widgets = node.get("widgets");
-  const stored = widgets instanceof Y.Map ? widgets : undefined;
-  const form = storedWidgetFormOf(node);
-  try {
-    if (!form) widgetLayoutForWidgets(entry, stored, pending);
-    else if (form.shape === "array") widgetOrderForProducerOrder(entry, form.order, stored, pending);
-  } catch (err) {
-    if (!(err instanceof TypeError)) throw err;
-    throw new OpRejectedError("malformed_op", err.message);
   }
 }
 

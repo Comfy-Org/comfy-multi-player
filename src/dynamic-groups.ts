@@ -44,12 +44,43 @@ function assertDynamicGroupOrder(entry: WidgetCatalogEntry, name: string, order:
   return controllerIndex >= 0;
 }
 
+/** The most copies of `name` one selection can lay out from `names`, walking selectors to the same depth as layout expansion. */
+function maxSelectedCopies(entry: WidgetCatalogEntry, name: string, names: readonly string[], depth: number): number {
+  const combos = entry.dynamic_combos ?? {};
+  let copies = 0;
+  for (const widget of names) {
+    if (widget === name) copies++;
+    if (!Object.hasOwn(combos, widget) || depth > 32) continue;
+    copies += Math.max(0, ...Object.values(combos[widget]!.options).map((option) =>
+      maxSelectedCopies(entry, name, option.widgets, depth + 1)));
+  }
+  return copies;
+}
+
+/**
+ * Refuse, from the catalog alone, any selection that would lay out a controller
+ * or its generated rows twice. Refusing on write instead would make the outcome
+ * depend on which selector write arrived first.
+ */
+function assertSingleSelection(entry: WidgetCatalogEntry, name: string, baseOrder: readonly string[], optionOrders: readonly (readonly string[])[]): void {
+  if (maxSelectedCopies(entry, name, baseOrder, 0) > 1) {
+    throw new TypeError(`DynamicGroup controller '${name}' can be selected more than once`);
+  }
+  const fields = groupOf(entry, name)!.widgets;
+  if (optionOrders.some((order) => order.some((widget) => isGroupField(name, fields, widget)))) {
+    throw new TypeError(`DynamicGroup '${name}' generated widget names cannot be listed in a DynamicCombo option`);
+  }
+}
+
 export function assertDynamicGroupCatalog(entry: WidgetCatalogEntry): void {
   const groups = Object.entries(entry.dynamic_groups ?? {});
   if (groups.length === 0) return;
-  const orders = [entry.widget_order, ...Object.values(entry.dynamic_combos ?? {}).flatMap((combo) =>
+  const optionOrders = Object.values(entry.dynamic_combos ?? {}).flatMap((combo) =>
     Object.values(combo.options).map((option) => option.widgets),
-  )];
+  );
+  const orders = [entry.widget_order, ...optionOrders];
+  const owned = new Set(optionOrders.flat());
+  const baseOrder = entry.widget_order.filter((widget) => !owned.has(widget));
   for (const [name, group] of groups) {
     if (!Array.isArray(group.widgets) || group.widgets.length === 0
         || group.widgets.some((field) => typeof field !== "string" || field.length === 0)
@@ -68,6 +99,7 @@ export function assertDynamicGroupCatalog(entry: WidgetCatalogEntry): void {
       controllerFound ||= present;
     }
     if (!controllerFound) throw new TypeError(`DynamicGroup controller '${name}' is missing from widget order`);
+    assertSingleSelection(entry, name, baseOrder, optionOrders);
   }
 }
 
