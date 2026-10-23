@@ -69,6 +69,33 @@ describe("ADR validation", () => {
     expect(() => run(root)).toThrow(/expected heading/);
   });
 
+  test("rejects metadata that appears only in body examples", () => {
+    const root = fixture();
+    writeFileSync(
+      join(root, "docs", "adr", "CRDT-0001-test-decision.md"),
+      "Example follows\n\n# ADR-CRDT-0001: Test decision\n\nDate: 2026-10-17\n\n## Status\n\nProposed\n",
+    );
+    expect(() => run(root)).toThrow(/expected heading/);
+  });
+
+  test("rejects impossible calendar dates", () => {
+    const root = fixture();
+    writeFileSync(
+      join(root, "docs", "adr", "CRDT-0001-test-decision.md"),
+      "# ADR-CRDT-0001: Test decision\n\nDate: 2026-02-31\n\n## Status\n\nProposed\n",
+    );
+    expect(() => run(root)).toThrow(/missing a valid Date field/);
+  });
+
+  test("rejects a Date that appears after Status", () => {
+    const root = fixture();
+    writeFileSync(
+      join(root, "docs", "adr", "CRDT-0001-test-decision.md"),
+      "# ADR-CRDT-0001: Test decision\n\n## Status\n\nProposed\n\nDate: 2026-10-17\n",
+    );
+    expect(() => run(root)).toThrow(/missing a valid Date field/);
+  });
+
   test("rejects companion directories without a matching ADR", () => {
     const root = fixture();
     mkdirSync(join(root, "docs", "adr", "CRDT-0002-evidence"));

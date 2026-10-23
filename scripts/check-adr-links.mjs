@@ -13,6 +13,7 @@ const files = execFileSync(
   .split("\0")
   .filter(Boolean);
 const markdownTargetPattern = /\]\(\s*<?([^)\s>]+)>?/g;
+const markdownReferenceTargetPattern = /^[ \t]{0,3}\[[^\]]+\]:[ \t]*<?([^>\s]+)>?/gm;
 const repositoryAdrPattern = /docs\/adr\/[A-Za-z0-9._/-]+\.md/g;
 const failures = [];
 
@@ -26,7 +27,10 @@ function adrTargets(filename, text) {
   for (const match of text.matchAll(repositoryAdrPattern)) {
     add(match[0], match.index);
   }
-  for (const match of text.matchAll(markdownTargetPattern)) {
+  for (const match of [
+    ...text.matchAll(markdownTargetPattern),
+    ...text.matchAll(markdownReferenceTargetPattern),
+  ]) {
     const rawTarget = match[1];
     if (!rawTarget || rawTarget.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(rawTarget)) {
       continue;

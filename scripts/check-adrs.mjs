@@ -25,12 +25,23 @@ export function validateAdrDirectory(directory) {
     identifiers.push(identifier);
 
     const contents = readFileSync(join(directory, filename), "utf8");
-    if (!new RegExp(`^# ADR-${identifier}: .+$`, "m").test(contents)) {
+    if (!contents.split(/\r?\n/, 1)[0]?.startsWith(`# ADR-${identifier}: `)) {
       throw new Error(
         `${filename}: expected heading "# ADR-${identifier}: Title"`,
       );
     }
-    if (!/^Date: \d{4}-\d{2}-\d{2}$/m.test(contents)) {
+    const dateMatch = /^Date: (\d{4})-(\d{2})-(\d{2})$/m.exec(contents);
+    const statusIndex = contents.search(/^## Status[ \t]*$/m);
+    if (!dateMatch || statusIndex < 0 || (dateMatch.index ?? 0) > statusIndex) {
+      throw new Error(`${filename}: missing a valid Date field`);
+    }
+    const [, year, month, day] = dateMatch;
+    const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+    if (
+      parsed.getUTCFullYear() !== Number(year) ||
+      parsed.getUTCMonth() !== Number(month) - 1 ||
+      parsed.getUTCDate() !== Number(day)
+    ) {
       throw new Error(`${filename}: missing a valid Date field`);
     }
     if (

@@ -57,6 +57,13 @@ describe("ADR link validation", () => {
     expect(() => run(root)).toThrow(/CRDT-0002-missing\.md/);
   });
 
+  test("checks reference-style sibling links from one ADR to another", () => {
+    const root = fixture();
+    const source = adrPath("CRDT-0001-source.md");
+    write(root, source, "See [missing][decision].\n\n[decision]: CRDT-0002-missing.md\n");
+    expect(() => run(root)).toThrow(/CRDT-0002-missing\.md/);
+  });
+
   test("ignores references outside the ADR directory", () => {
     const root = fixture();
     write(root, "README.md", "See docs/architecture/overview.md.\n");
