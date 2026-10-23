@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
-import { applyOps, mint, project, type Op, type SetWidgetOp, type TopLevelSetWidgetOp, type WidgetCatalog, type WidgetCatalogEntry, type WorkflowJSON } from "../src/index.js";
+import { SCHEMA_VERSION as SCHEMA_VERSION_0310, project as project0310 } from "comfy-multi-player-v0310";
+import { SCHEMA_VERSION, applyOps, mint, project, type Op, type SetWidgetOp, type TopLevelSetWidgetOp, type WidgetCatalog, type WidgetCatalogEntry, type WorkflowJSON } from "../src/index.js";
 import { canonicalize } from "./helpers.js";
 import { assertRejectedWithoutMutation } from "./rejection-test-helpers.js";
 
@@ -549,6 +550,41 @@ describe("DynamicGroup catalog layout", () => {
     ]);
     const invalid: Op = { ...edit("loras", -1), path: ["9", "1"], inner_widget: "loras" };
     assertRejectedWithoutMutation(workflow, invalid, "malformed_op", catalog, { ...op, op_id: "b".repeat(32) });
+    doc.destroy();
+  });
+});
+
+describe("published pre-A26 reader (0.3.10)", () => {
+  const withoutGroups = structuredClone(catalog);
+  delete withoutGroups.types["DevToolsNodeWithDynamicGroup"]!.dynamic_groups;
+
+  it("projects every state this writer persists under a catalog without dynamic_groups", () => {
+    expect(SCHEMA_VERSION_0310).toBe(SCHEMA_VERSION);
+    const workflow = structuredClone(cases.empty);
+    delete workflow.nodes[0]!["widgets_values_named"];
+    workflow.nodes[0]!.widgets_values = ["first", 0, "last"];
+    const doc = mint(workflow, withoutGroups);
+
+    expect(applyOps(doc, [edit("loras.1.lora_name", "WRITTEN.safetensors")], withoutGroups).outcomes[0])
+      .toMatchObject({ outcome: "rejected", reason: { code: "unknown_widget" } });
+    expect(applyOps(doc, [edit("loras", 2, 2), edit("after", "edited", 3)], withoutGroups).outcomes.map((o) => o.outcome))
+      .toEqual(["applied", "applied"]);
+    expect(project0310(doc, withoutGroups)).toEqual(project(doc, withoutGroups));
+    doc.destroy();
+  });
+
+  it("cannot read a document minted under a DynamicGroup catalog", () => {
+    const populated = mint(cases.populated, catalog);
+    expect(() => project0310(populated, catalog)).toThrow("widget 'loras.0.lora_name' is not in widget_order");
+    populated.destroy();
+
+    // Rows that hold no stored value are not even refused: the old reader drops them silently.
+    const workflow = structuredClone(cases.empty);
+    delete workflow.nodes[0]!["widgets_values_named"];
+    workflow.nodes[0]!.widgets_values = { before: "first", loras: 2, after: "last" };
+    const doc = mint(workflow, catalog);
+    expect(project(doc, catalog).nodes[0]!.widgets_values).toEqual(["first", 2, "A.safetensors", 1, true, "A.safetensors", 1, true, "last"]);
+    expect(project0310(doc, catalog).nodes[0]!.widgets_values).toEqual(["first", 2, "last"]);
     doc.destroy();
   });
 });
