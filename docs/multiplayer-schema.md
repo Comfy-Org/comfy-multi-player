@@ -2390,7 +2390,11 @@ A node carrying the field is **self-described**, and for it:
   or occurrence `order` does not list is `unknown_widget`, exactly as a
   missing `widget_order` entry would be. Amendment A25 narrows that closed-list
   statement for ARRAY forms only: a pinned dynamic-combo option child is also
-  legal and a winning selector persists the recomputed realized order;
+  legal and a winning selector persists the recomputed realized order.
+  Amendment A26 uses supplied `dynamic_groups` metadata only for count
+  validation: it checks the row-count bounds and refuses a change from the
+  addressed occurrence's stored count that would require replacing the
+  declaration;
 - `project()` rebuilds `widgets_values` in the shape the producer serialized —
   an array of `order.length`, or the object in its original key order with each
   declared widget taking its live value and every other key its verbatim
@@ -2591,3 +2595,9 @@ persists, so KA-11 does not require a layout bump or migration.
 - Reverting the array-form catalog overlay in `validateWidgetName` makes the
   named child-first vector fail `unknown_widget`; reverting selector-order
   refresh makes the selector-first vector project the stale option-A layout.
+
+## Amendment A26 — 2026-10-05 — DynamicGroup catalog layout
+
+An opt-in `dynamic_groups` catalog entry expands a saved row-count controller into indexed widget identities. These use the existing name-keyed registers; no op kind or on-document key changes. The new catalog hash requires coordinated reader adoption. Existing documents retain their original catalog and are re-minted to adopt the new layout.
+
+Count writes change the projected layout, retaining hidden registers and applying fresh-row defaults only at read time. They do not delete rows or links. Explicit `widgets_values_form` declarations remain authoritative; supplied group metadata adds row-count bound validation (`min` to the allocation bound) and rejects a count change requiring a new declaration before mutation. This validation applies to the addressed occurrence in top-level, interior, and promoted writes. Without group metadata, the package cannot identify count fields; compatible producer/catalog/reader admission remains the caller's responsibility. See [DynamicGroup catalog support](dynamic-groups.md) for the producer contract, bounds, and fixture provenance.

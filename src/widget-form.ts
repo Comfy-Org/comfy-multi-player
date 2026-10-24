@@ -62,8 +62,9 @@
  * needs no catalog. Amendment A25 lets an ARRAY form additionally compose
  * with catalog-owned dynamic-combo children; that overlay uses only the
  * pinned catalog and persists the resulting realized order back into this
- * same form. An undeclared node is unaffected — same catalog, same
- * rejections.
+ * same form. Amendment A26 still uses supplied DynamicGroup metadata to
+ * validate count writes without replacing that mapping. An undeclared node is
+ * unaffected — same catalog, same rejections.
  */
 
 import type * as Y from "yjs";
