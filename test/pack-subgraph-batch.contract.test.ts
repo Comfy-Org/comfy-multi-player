@@ -21,6 +21,7 @@ import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
 
 import { applyOps, mint, project, type Op, type WidgetCatalog, type WorkflowJSON } from "../src/index.js";
+import { appliedMap } from "../src/doc.js";
 import { checkGraphInvariants } from "./graph-invariant-oracle.js";
 
 const catalog: WidgetCatalog = {
@@ -171,47 +172,62 @@ const PACKED = {
   interiorScale: [[2, [2]], [3, [5]], [4, [2]]],
 };
 
-/** A deterministic permutation of `values` (mulberry32). */
-function shuffled<T>(values: T[], seedValue: number): T[] {
-  let state = seedValue >>> 0;
-  const next = () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  const copy = [...values];
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(next() * (i + 1));
-    const held = copy[i] as T;
-    copy[i] = copy[j] as T;
-    copy[j] = held;
+/** Every ordered pair of operations at the low/high op_id extremes. */
+function extremeOpIdAssignments(size: number) {
+  const assignments: Array<{ low: number; high: number; ids: string[] }> = [];
+  for (let low = 0; low < size; low++) {
+    for (let high = 0; high < size; high++) {
+      if (low === high) continue;
+      const ids = Array.from({ length: size }, (_, index) => hex(0x100 + index));
+      ids[low] = hex(1);
+      ids[high] = "f".repeat(32);
+      assignments.push({ low, high, ids });
+    }
   }
-  return copy;
+  return assignments;
 }
 
 describe("pack_subgraph replicates as one batch of existing kinds (BE-10796)", () => {
   it("applies the contract batch whole and projects the packed graph", () => {
     const doc = fork(seeded);
-    const ops = stamp(packBody(), packBody().map((_, i) => hex(i + 1)));
+    const body = packBody();
+    expect(body.map((op) => op.op)).toEqual([
+      "define_subgraph",
+      "delete_node", "delete_node", "delete_node",
+      "add_node",
+      "connect", "connect", "connect",
+    ]);
+    expect(body.some((op) => op.op === "disconnect")).toBe(false);
+
+    const ops = stamp(body, body.map((_, i) => hex(i + 1)));
+    expect(new Set(ops.map((op) => op.base_version))).toEqual(new Set([BASE]));
+    expect(new Set(ops.map((op) => op.actor))).toEqual(new Set([ACTOR]));
     const result = applyOps(doc, ops, catalog);
 
     expect(result.outcomes.map((outcome) => outcome.outcome)).toEqual(Array(ops.length).fill("applied"));
     expect(packedShape(doc)).toEqual(PACKED);
     expect(checkGraphInvariants(doc)).toEqual([]);
+
+    const beforeReplay = Y.encodeStateAsUpdate(doc);
+    const replay = applyOps(doc, ops, catalog);
+    expect(replay.outcomes.map((outcome) => outcome.outcome)).toEqual(Array(ops.length).fill("no-op"));
+    expect(Y.encodeStateAsUpdate(doc)).toEqual(beforeReplay);
+    expect(packedShape(doc)).toEqual(PACKED);
   });
 
-  // Bounded domain: 64 seeded permutations of 8 distinct op_ids over one
-  // batch. Within one batch every op shares base_version and actor, so op_id
-  // is the only LWW tiebreak left; none of them may decide the outcome.
+  // Bounded domain: all 8 * 7 = 56 ordered pairs of operations assigned the
+  // lowest and highest distinct op_ids. Every pair is exercised in both
+  // relative orders. Within one batch base_version and actor are shared, so
+  // this exhausts the pairwise op_id-tiebreak equivalence classes.
   it("does not depend on op_id tiebreaks inside the batch", () => {
-    const ids = packBody().map((_, i) => hex(0x100 + i * 0x1111));
+    const body = packBody();
+    const assignments = extremeOpIdAssignments(body.length);
+    expect(assignments).toHaveLength(body.length * (body.length - 1));
     const shapes = new Set<string>();
-    for (let permutation = 0; permutation < 64; permutation++) {
+    for (const { low, high, ids } of assignments) {
       const doc = fork(seeded);
-      const outcomes = applyOps(doc, stamp(packBody(), shuffled(ids, permutation + 1)), catalog).outcomes;
-      expect(outcomes.every((outcome) => outcome.outcome === "applied"), `permutation ${permutation}`).toBe(true);
+      const outcomes = applyOps(doc, stamp(body, ids), catalog).outcomes;
+      expect(outcomes.every((outcome) => outcome.outcome === "applied"), `low=${low}, high=${high}`).toBe(true);
       shapes.add(JSON.stringify(packedShape(doc)));
     }
     expect([...shapes]).toEqual([JSON.stringify(PACKED)]);
@@ -246,14 +262,30 @@ describe("pack_subgraph replicates as one batch of existing kinds (BE-10796)", (
     expect(outcomes[0]).toMatchObject({ outcome: "rejected", reason: { code: "malformed_op" } });
     expect(outcomes.slice(1).every((outcome) => outcome.outcome === "rejected" && outcome.reason.code === "batch_aborted")).toBe(true);
     expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+    expect(appliedMap(doc).has(ids[0]!)).toBe(false);
 
     // Minted last instead, the same rejection lands after the packed nodes
     // are already gone and the instance points at no definition.
     const late = fork(seeded);
     const reordered = packBody(malformed).slice(1).concat(packBody(malformed).slice(0, 1));
-    applyOps(late, stamp(reordered, ids), catalog);
+    const lateOps = stamp(reordered, ids);
+    const lateOutcomes = applyOps(late, lateOps, catalog).outcomes;
+    expect(lateOutcomes.slice(0, -1).every((outcome) => outcome.outcome === "applied")).toBe(true);
+    expect(lateOutcomes.at(-1)).toMatchObject({ outcome: "rejected", reason: { code: "malformed_op" } });
+    expect(appliedMap(late).has(ids.at(-1)!)).toBe(false);
     expect(packedShape(late).root.nodes).toEqual(PACKED.root.nodes);
     expect(packedShape(late).interior).toBeNull();
+
+    // Isolate the final document-boundary rejection on the same document so
+    // its byte identity is compared after, not before, the accepted prefix.
+    const boundary = fork(seeded);
+    const prefix = applyOps(boundary, lateOps.slice(0, -1), catalog).outcomes;
+    expect(prefix.every((outcome) => outcome.outcome === "applied")).toBe(true);
+    const beforeLateRejection = Y.encodeStateAsUpdate(boundary);
+    const rejected = applyOps(boundary, lateOps.slice(-1), catalog).outcomes;
+    expect(rejected[0]).toMatchObject({ outcome: "rejected", reason: { code: "malformed_op" } });
+    expect(Y.encodeStateAsUpdate(boundary)).toEqual(beforeLateRejection);
+    expect(appliedMap(boundary).has(ids.at(-1)!)).toBe(false);
   });
 
   it("converges with a concurrent edit to a packed node in both arrival orders; delete wins", () => {
@@ -267,13 +299,15 @@ describe("pack_subgraph replicates as one batch of existing kinds (BE-10796)", (
 
     const editFirst = fork(seeded);
     expect(applyOps(editFirst, edit, catalog).outcomes[0]?.outcome).toBe("applied");
-    applyOps(editFirst, pack, catalog);
+    expect(applyOps(editFirst, pack, catalog).outcomes.every((outcome) => outcome.outcome === "applied")).toBe(true);
 
     const packFirst = fork(seeded);
-    applyOps(packFirst, pack, catalog);
-    applyOps(packFirst, edit, catalog);
+    expect(applyOps(packFirst, pack, catalog).outcomes.every((outcome) => outcome.outcome === "applied")).toBe(true);
+    expect(applyOps(packFirst, edit, catalog).outcomes[0]?.outcome).toBe("no-op");
 
     expect(project(editFirst, catalog)).toEqual(project(packFirst, catalog));
+    expect(packedShape(editFirst)).toEqual(PACKED);
+    expect(packedShape(packFirst)).toEqual(PACKED);
     // The v1 cost, stated so it is not mistaken for a guarantee: the edit to
     // the top-level node does not follow it into the definition.
     expect(packedShape(packFirst).interiorScale).toEqual(PACKED.interiorScale);
