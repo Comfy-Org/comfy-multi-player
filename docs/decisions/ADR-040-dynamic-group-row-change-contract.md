@@ -4,7 +4,8 @@
 - **Date:** 2026-10-23
 - **Decider:** in-app Agent program, `operator:delivery`, row `dgarch-2`
 - **Depends on:** [ADR-039](ADR-039-hidden-dynamic-group-rows-are-retained-not-deleted.md)
-  (hidden rows are retained, not deleted). Replacement is only convergent because of it.
+  (hidden rows are retained, not deleted). Retention keeps a shrink from claiming
+  a peer's hidden field registers and makes surplus losing writes non-destructive.
 - **Constrains:** this package's op vocabulary; comfy-cli's `docs/op-vocabulary-v1.md`
   batch-spec surface; cloud's `applyOpKinds` allowlist.
 
@@ -17,7 +18,8 @@ projection change only: no reindexing, no link or promotion rewrite, hidden regi
 retained. Its `docs/dynamic-groups.md` already asserts the conclusion this ADR ratifies —
 "Agent row changes use whole-group replacement instead ... so this package needs no
 structural operation" — but that sentence is an unreviewed assertion inside an unmerged
-PR, which is exactly the "a decision that lives only in a doc is lost" case.
+PR at the time this decision was opened, which is exactly the "a decision that
+lives only in a doc is lost" case. #276 has since merged.
 
 Two shapes were built against that gap, and the second was never chosen between:
 
@@ -59,18 +61,24 @@ accident:
    declines.
 4. **Row-field writes are order-independent of the count write.** Confirmed in source:
    `dynamic-groups.ts` `isGroupField` admits any index below
-   `MAX_OVERFLOW_WIDGETS / fields.length`, the allocation bound, not the current count. A
-   field write that arrives before the count that reveals it is stored hidden and becomes
-   visible when the count lands. KA-4 holds for the emitted batch in any arrival order.
+   `MAX_OVERFLOW_WIDGETS / total row fields across every group on the entry`, the shared
+   allocation bound, not the current count. A field write that arrives before the count
+   that reveals it is stored hidden and becomes visible when the count lands. KA-4 holds
+   for the emitted batch in any arrival order.
 
 ### The five acceptance tests, each with a verdict
 
 **Concurrent edits — two actors changing different rows.** Two replacements at equal
 Lamport counters tie on the counter, so the actor comparison decides *every* contended
-register the same way: one actor's complete list survives intact and the other's is lost
-whole. With ADR-039 retaining the loser's hidden registers, the projection is exactly one
-of the two intended lists. Convergent, order-independent, and a clean lost update rather
-than a corrupt one. **Accepted.**
+register the same way. When both producers write the same register set, one actor's
+complete list survives intact and the other's is lost whole. With ADR-039 retaining the
+loser's surplus hidden registers, the projection is exactly one of the two intended lists.
+
+There is one bounded exception: a producer omits a linked or promoted row that it observed
+as pinned, while another producer may write that row. The uncontended write can therefore
+survive inside the other actor's winning list. That is not an arrival-order divergence;
+it is the read-to-write topology race already accepted by condition 4. **Accepted with
+that exception, rather than claimed as an unconditional group-level winner.**
 
 The unclean case is a replacement racing a *scalar* `set_widget` on one row field, which
 is what the frontend UI emits for a human edit. The two claim registers at different
@@ -139,10 +147,13 @@ bounded V1 and a permanent one.
    #1007 lands, or it is re-justified on its own merits.
 3. **The producer's row ceiling is not this package's.** #1004 bounds rows by
    `port.options.max` falling back to a literal `20`; this package bounds counts by
-   `[group.min, MAX_OVERFLOW_WIDGETS / fields.length]` and deliberately does not enforce
-   the catalog `max` (the catalog controls layout, not prompt validity). Two ceilings that
-   disagree is the `max`-ownership question, owned by row `dgarch-3`; this ADR does not
-   rule it and does not depend on it.
+   `[group.min, MAX_OVERFLOW_WIDGETS / total row fields across the entry]` and deliberately
+   does not enforce the catalog `max` (the catalog controls layout, not prompt validity).
+   `ComfyUI_frontend` ADR-DYNAMIC-GROUP-0047 and #21788 have since settled ownership:
+   Core owns executability, producers such as comfy-cli author inside `min..max`, and
+   transports and followers preserve document counts inside their own resource bounds.
+   The remaining audit point is only whether the literal fallback `20` is the correct
+   producer behavior when the catalog omits `max`; it is not a shared-document ceiling.
 4. **The read-to-write link race is stated, not silently accepted.** A link added to a row
    after the producer's read is not rechecked, so rule 3's refusal can be bypassed by
    timing and that row rewritten under its link. This package cannot see it — links and
@@ -154,9 +165,11 @@ bounded V1 and a permanent one.
 - No schema bump, no document re-mint, no new op kind, no doc-host change. The #276
   release chain — merge, publish, doc-host pin, Cloud CLI pin — is unblocked without
   waiting on a row-identity model.
-- Row changes are **lost-update at group granularity** against a concurrent peer
-  replacement, and can produce a **mixed row** against a concurrent scalar field write.
-  Both are accepted and neither is hidden.
+- Row changes are normally **lost-update at group granularity** against a concurrent peer
+  replacement. A producer that observed a row as linked or promoted can leave one of the
+  other actor's uncontended row writes inside the winning list. A concurrent scalar field
+  write can also produce a mixed row. These are accepted topology/positional-model
+  residuals and none is hidden.
 - A row change is **not atomic in the document**. Partial application is observable.
 - Whole-group replacement is a bounded instance of the in-app Agent program's FORECLOSE
   entry 4 — it clobbers concurrent edits within its scope — but not of its other
