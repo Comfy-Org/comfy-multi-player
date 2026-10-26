@@ -300,6 +300,23 @@ describe("DynamicGroup catalog layout", () => {
     doc.destroy();
   });
 
+  it("replays a row count op as a byte-identical no-op", () => {
+    const doc = mint(cases.populated, catalog);
+    const shrink = edit("loras", 0);
+    expect(applyOps(doc, [shrink], catalog).outcomes[0]?.outcome).toBe("applied");
+    const grow = edit("loras", 2, 2);
+    expect(applyOps(doc, [grow], catalog).outcomes[0]?.outcome).toBe("applied");
+    const projected = project(doc, catalog).nodes[0]!.widgets_values;
+
+    for (const op of [shrink, grow]) {
+      const before = Y.encodeStateAsUpdate(doc);
+      expect(applyOps(doc, [op], catalog).outcomes[0]?.outcome).toBe("no-op");
+      expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+    }
+    expect(project(doc, catalog).nodes[0]!.widgets_values).toEqual(projected);
+    doc.destroy();
+  });
+
   it("converges when the row count and a row value arrive in either order", () => {
     const seed = mint(cases.empty, catalog);
     const snapshot = Y.encodeStateAsUpdate(seed);
