@@ -42,11 +42,14 @@ Three consequences are part of the decision, not implementation detail:
    keys for indexes at or above the current row count. A reader that treats a
    key's presence as proof the row exists is the defect.
 2. **A count-only regrow is a restore; an explicit local add is a creation.** A
-   remote, load, undo or redo count change restores the retained register where
-   one exists and the template default where none does. A user's local **Add**
-   action creates a default-valued row and announces those defaults as ordinary
-   `set_widget` intent. This distinction is carried by the producer provenance,
-   not inferred by a receiver from the count.
+   remote or load count change, or undo/redo of a count-only transition,
+   restores the retained register where one exists and the template default
+   where none does. A user's local **Add** action creates a default-valued row
+   and announces those defaults as ordinary `set_widget` intent. The frontend's
+   undo/redo restores serialized snapshots rather than replaying a count
+   operation, so undo/redo across a local Add restores the defaults that Add
+   wrote. This distinction is carried by the producer provenance, not inferred
+   by a receiver from the count.
 3. **The row-change contract needs no structural operation.** Whole-group
    replacement — the producer writes the count and every visible row field in
    one batch — is sufficient *because* keys are retained: it makes every
