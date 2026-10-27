@@ -300,6 +300,29 @@ describe("DynamicGroup catalog layout", () => {
     doc.destroy();
   });
 
+  it("replays a row count op as a byte-identical no-op in either arrival order", () => {
+    const shrink = edit("loras", 0);
+    const grow = edit("loras", 2, 2);
+    const arrivals = [
+      { order: [shrink, grow], outcomes: ["applied", "applied"] },
+      { order: [grow, shrink], outcomes: ["applied", "lww-dropped"] },
+    ];
+    for (const { order, outcomes } of arrivals) {
+      const doc = mint(cases.populated, catalog);
+      expect(order.map((op) => applyOps(doc, [op], catalog).outcomes[0]?.outcome)).toEqual(outcomes);
+      const projected = project(doc, catalog).nodes[0]!.widgets_values;
+      expect(projected).toEqual(cases.populated.nodes[0]!.widgets_values);
+
+      for (const op of order) {
+        const before = Y.encodeStateAsUpdate(doc);
+        expect(applyOps(doc, [op], catalog).outcomes[0]?.outcome).toBe("no-op");
+        expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+      }
+      expect(project(doc, catalog).nodes[0]!.widgets_values).toEqual(projected);
+      doc.destroy();
+    }
+  });
+
   it("converges when the row count and a row value arrive in either order", () => {
     const seed = mint(cases.empty, catalog);
     const snapshot = Y.encodeStateAsUpdate(seed);
