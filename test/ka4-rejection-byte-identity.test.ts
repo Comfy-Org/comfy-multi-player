@@ -700,12 +700,46 @@ function definitionConflictCase(): { doc: Y.Doc; op: Op; catalog?: WidgetCatalog
   };
 }
 
+const dynamicGroupFixture = JSON.parse(readFileSync(new URL("./fixtures/dynamic-group.json", import.meta.url), "utf8")) as {
+  catalog: WidgetCatalog;
+  cases: { populated: WorkflowJSON };
+};
+
+/** `dynamic_group_count_out_of_range`: a DynamicGroup row count below the group minimum (A25). */
+function dynamicGroupCountCase(): { doc: Y.Doc; op: Op; catalog?: WidgetCatalog; code: string } {
+  const { catalog: groups, cases } = dynamicGroupFixture;
+  return {
+    doc: mint(cases.populated, groups),
+    op: { op: "set_widget", ...env(), node_id: 1, widget: "loras", value: -1 } as unknown as Op,
+    catalog: groups,
+    code: "dynamic_group_count_out_of_range",
+  };
+}
+
+/** `dynamic_group_form_mismatch`: a count change that would invalidate the node's declared `widgets_values_form` (A25). */
+function dynamicGroupFormCase(): { doc: Y.Doc; op: Op; catalog?: WidgetCatalog; code: string } {
+  const { catalog: groups, cases } = dynamicGroupFixture;
+  const workflow = structuredClone(cases.populated);
+  workflow.nodes[0]!.widgets_values_form = { order: [
+    "before", "loras", "loras.0.lora_name", "loras.0.strength", "loras.0.enabled",
+    "loras.1.lora_name", "loras.1.strength", "loras.1.enabled", "after",
+  ] };
+  return {
+    doc: mint(workflow, groups),
+    op: { op: "set_widget", ...env(), node_id: 1, widget: "loras", value: 1 } as unknown as Op,
+    catalog: groups,
+    code: "dynamic_group_form_mismatch",
+  };
+}
+
 const FIXTURE_CASES = [
   ["add_node without a catalog", catalogRequiredCase],
   ["promoted host write without a catalog", promotedCatalogRequiredCase],
   ["interior set_widget past the positional length", widgetOutOfRangeCase],
   ["interior set_widget into a definition two nodes instantiate", sharedDefinitionCase],
   ["define_subgraph whose root id collides with a nested definition", definitionConflictCase],
+  ["set_widget DynamicGroup count below the group minimum", dynamicGroupCountCase],
+  ["set_widget DynamicGroup count change under a declared form", dynamicGroupFormCase],
 ] as const;
 
 describe("KA-4: the rejection codes that need their own fixture", () => {
@@ -756,6 +790,8 @@ const ALL_REJECTION_CODES = [
   "interior_node_not_found",
   "shared_definition_unforked",
   "definition_conflict",
+  "dynamic_group_count_out_of_range",
+  "dynamic_group_form_mismatch",
 ] as const;
 
 // These require an already-consumed op_id or an intentionally deep payload;

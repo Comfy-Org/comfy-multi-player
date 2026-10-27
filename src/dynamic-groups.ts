@@ -1,6 +1,9 @@
 import { MAX_OVERFLOW_WIDGETS } from "./limits.js";
 import type { WidgetCatalogEntry } from "./types.js";
 
+/** A row count outside `min` to the allocation bound; `applyOps` rejects it `dynamic_group_count_out_of_range`. */
+export class DynamicGroupCountError extends TypeError {}
+
 export function groupOf(entry: WidgetCatalogEntry | undefined, name: string) {
   const groups = entry?.dynamic_groups;
   return groups && Object.hasOwn(groups, name) ? groups[name] : undefined;
@@ -94,7 +97,10 @@ export function assertDynamicGroupCatalog(entry: WidgetCatalogEntry): void {
       throw new TypeError(`DynamicGroup '${name}' must declare integer row bounds with 0 <= min <= max`);
     }
   }
-  for (const [name] of groups) {
+  for (const [name, group] of groups) {
+    if (group.min > maxRows(entry)) {
+      throw new TypeError(`DynamicGroup '${name}' minimum exceeds the widget allocation bound`);
+    }
     if (Object.hasOwn(entry.dynamic_combos ?? {}, name) || isDynamicGroupField(entry, name)) {
       throw new TypeError(`DynamicGroup controller '${name}' collides with another dynamic widget`);
     }
@@ -122,7 +128,7 @@ export function groupLayout(entry: WidgetCatalogEntry, name: string, value: unkn
   if (!group) return undefined;
   const count = value === undefined ? group.min : value;
   const refusal = groupCountRefusal(entry, name, count);
-  if (refusal) throw new TypeError(refusal);
+  if (refusal) throw new DynamicGroupCountError(refusal);
   const order: string[] = [];
   const defaults = new Map<string, unknown>();
   defaults.set(name, group.min);

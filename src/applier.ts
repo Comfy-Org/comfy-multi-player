@@ -155,7 +155,7 @@ import {
   type WireOp,
 } from "./types.js";
 import { addInteriorLinkOrder, removeInteriorLinkOrder } from "./interior-link-order.js";
-import { groupCountRefusal, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
+import { DynamicGroupCountError, groupCountRefusal, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
 import {
   optionOwnedWidgets,
   projectedLength,
@@ -279,7 +279,10 @@ export function applyOps(doc: Y.Doc, ops: Op[], catalog?: WidgetCatalog, context
         });
       }
     } catch (err) {
-      rejectRemainder(err, op, index);
+      // Raised from the shared layout code, which also serves mint and project.
+      rejectRemainder(err instanceof DynamicGroupCountError
+        ? new OpRejectedError("dynamic_group_count_out_of_range", err.message)
+        : err, op, index);
       return false;
     }
     return true;
@@ -1150,6 +1153,7 @@ function applyInsertWorkflow(doc: Y.Doc, op: InsertWorkflowOp, catalog?: WidgetC
       nodeWrites.push([String(node.id), node.id, createNodeMap(node,
         declaresWidgetForm(node) ? undefined : widgetOrderForValues(entry, node.widgets_values))]);
     } catch (err) {
+      if (err instanceof DynamicGroupCountError) throw err;
       throw new OpRejectedError("invalid_node_payload", `insert_workflow(${node.type}): ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -2028,11 +2032,11 @@ function validateWidgetOp(op: SetWidgetOp) {
 function validateDynamicGroupValue(node: Y.Map<unknown>, catalog: WidgetCatalog | undefined, widget: string, occurrence: number, value: unknown): void {
   const entry = catalogEntry(catalog, String(node.get("type") ?? ""));
   const refusal = groupCountRefusal(entry, widget, value);
-  if (refusal) throw new OpRejectedError("malformed_op", refusal);
+  if (refusal) throw new DynamicGroupCountError(refusal);
   if (groupOf(entry, widget) && storedWidgetFormOf(node)) {
     const widgets = node.get("widgets");
     if (widgets instanceof Y.Map && widgets.get(widgetStorageKey(widget, occurrence)) !== value) {
-      throw new OpRejectedError("malformed_op", "row count changes require an updated widgets_values_form declaration");
+      throw new OpRejectedError("dynamic_group_form_mismatch", "row count changes require an updated widgets_values_form declaration");
     }
   }
 }

@@ -24,7 +24,7 @@
  */
 import * as Y from "yjs";
 
-import { assertDynamicGroupCatalog, fieldGroupOf, groupCountRefusal, groupLayout, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
+import { assertDynamicGroupCatalog, DynamicGroupCountError, fieldGroupOf, groupCountRefusal, groupLayout, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
 import type { DynamicComboEntry, WidgetCatalogEntry } from "./types.js";
 import { widgetOccurrenceAt, widgetStorageKey } from "./widget-identity.js";
 
@@ -137,7 +137,7 @@ export function widgetOrderForValues(entry: WidgetCatalogEntry | undefined, wv: 
     for (const name of Object.keys(entry.dynamic_groups ?? {})) {
       if (!Object.hasOwn(named, name)) continue;
       const refusal = groupCountRefusal(entry, name, named[name]);
-      if (refusal) throw new TypeError(refusal);
+      if (refusal) throw new DynamicGroupCountError(refusal);
     }
     return expand(entry, combos ?? {}, (name) => (Object.hasOwn(named, name) ? named[name] : undefined)).order;
   }
