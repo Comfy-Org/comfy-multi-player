@@ -100,15 +100,20 @@ The only identities external readers hold durably — a link's input slot and a 
 proxy — are protected by refusal (rule 3), not by rewriting. **Accepted as an explicit
 non-property.**
 
-**Hidden rows.** Governed by ADR-039: a shrink retains the vacated rows' registers and a
-regrow surfaces them rather than template defaults. Replacement does not read hidden
-state and must not clear it — clearing would claim registers the producer does not own
-and would destroy a peer's concurrent edit at that index, which is the same objection
-ADR-039 raises against a delete op. The consequence is real and new: before #1004 the
-Agent could not shrink a group, so an Agent shrink followed by a human regrow is a path
-that now surfaces the Agent's discarded rows. That is #21092's defect, and ADR-039's
-three enumerated frontend reader fixes are its remedy. **Accepted, gated on ADR-039's
-reader fixes.**
+**Hidden rows.** Governed by ADR-039: a shrink retains the vacated rows' registers. A
+count-only regrow (remote, load, or undo/redo of a count-only transition) surfaces them
+rather than template defaults; a human's explicit local Add creates a default-valued row
+and announces those defaults. Replacement does not read hidden state and must not clear
+it — clearing would claim registers the producer does not own and would destroy a peer's
+concurrent edit at that index, which is the same objection ADR-039 raises against a delete
+op. The consequence is real and new: before #1004 the Agent could not shrink a group, so
+an Agent shrink followed by a count-only regrow, such as a remote count write or an undo
+across the shrink, now surfaces the Agent's discarded rows. A follower must restore those
+retained values rather than template defaults, and must not report hidden-row keys as
+missing widgets. That is ADR-039's two
+must-change frontend readers (`changed()` widening and `reportMissingWidgets()`); the
+added-row announce stays. **Accepted, gated on those reader fixes, including idempotent
+retry when a frame regrows a row and then fails to restore one of its retained fields.**
 
 **Partial failure.** The doc host applies each op in its own transaction, so a batch is
 one frame and one undo unit but is **not atomic in the document**. A rejection after the
