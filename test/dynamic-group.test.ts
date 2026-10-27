@@ -514,6 +514,20 @@ describe("DynamicGroup catalog layout", () => {
     },
   );
 
+  it.each([-1, 1_000_000])("refuses a selector write before mutation when the declared form stores count %s", (count) => {
+    // A declared form is accepted as the producer wrote it, so it can carry a
+    // count the group range refuses. Selecting the option that lays that group
+    // out must be rejected whole, not after the selector register is written.
+    const workflow = structuredClone(cases.empty);
+    const node = workflow.nodes[0]!;
+    delete node["widgets_values_named"];
+    node.widgets_values = ["first", "off", count, "last"];
+    node.widgets_values_form = { order: ["before", "mode", "loras", "after"] };
+
+    assertRejectedWithoutMutation(workflow, edit("mode", "on"), "dynamic_group_count_out_of_range", conditionalCatalog,
+      edit("after", "must not run", 2));
+  });
+
   it("preserves rows above a newer catalog's advertised maximum", () => {
     const smaller = structuredClone(catalog);
     smaller.types["DevToolsNodeWithDynamicGroup"]!.dynamic_groups!["loras"]!.max = 1;
