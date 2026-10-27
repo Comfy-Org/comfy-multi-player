@@ -428,6 +428,8 @@ describe("DynamicGroup catalog layout", () => {
       nodes: [{ id: 6, type: definitionId, inputs: [], outputs: [] }], links: [],
       definitions: { subgraphs: [{ id: definitionId, nodes: [node], links: [], inputs: [], outputs: [], widgets: [] }] },
     } })],
+    ["define_subgraph", (node: WorkflowNode) => ({ op: "define_subgraph", subgraph_id: definitionId,
+      subgraph_definition: { id: definitionId, nodes: [node], links: [], inputs: [], outputs: [], widgets: [] } })],
   ] as const)("refuses positional and named %s payload counts outside the group range", (_label, payload) => {
     const positional = ["head", -1, "A.safetensors", 1, true, "C.safetensors", 0.5, false, "tail"];
     for (const widgets_values of [positional, { before: "head", loras: -1, after: "tail" }]) {
@@ -436,6 +438,19 @@ describe("DynamicGroup catalog layout", () => {
       assertRejectedWithoutMutation(cases.populated, op, "dynamic_group_count_out_of_range", catalog,
         edit("after", "must not run", 2));
     }
+  });
+
+  it("keeps a catalog minimum above the allocation bound apply_failed", () => {
+    const bigCatalog = structuredClone(catalog);
+    bigCatalog.types["Big"] = {
+      widget_order: ["count"],
+      dynamic_groups: { count: { min: 5000, max: 5000, widgets: ["x"], defaults: { x: 0 } } },
+    };
+    const node: WorkflowNode = { id: 5, type: "Big", inputs: [], outputs: [], widgets_values: [5000] };
+    const op = { op: "add_node", node_id: 5, class_type: "Big", pos: [0, 0], node,
+      op_id: "d".repeat(32), actor: "agent:a", base_version: 1, stamp: [1, "agent:a"] } as unknown as Op;
+    assertRejectedWithoutMutation(cases.populated, op, "apply_failed", bigCatalog, edit("after", "must not run", 2));
+    expect(() => mint({ ...cases.empty, nodes: [node] }, bigCatalog)).toThrow(/minimum exceeds the widget allocation bound/);
   });
 
   it.each([-1, 1.5, "2", 1_000_000])("refuses inactive named group count %s during mint", (count) => {

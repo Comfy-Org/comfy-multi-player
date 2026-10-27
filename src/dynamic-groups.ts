@@ -97,7 +97,10 @@ export function assertDynamicGroupCatalog(entry: WidgetCatalogEntry): void {
       throw new TypeError(`DynamicGroup '${name}' must declare integer row bounds with 0 <= min <= max`);
     }
   }
-  for (const [name] of groups) {
+  for (const [name, group] of groups) {
+    if (group.min > maxRows(entry)) {
+      throw new TypeError(`DynamicGroup '${name}' minimum exceeds the widget allocation bound`);
+    }
     if (Object.hasOwn(entry.dynamic_combos ?? {}, name) || isDynamicGroupField(entry, name)) {
       throw new TypeError(`DynamicGroup controller '${name}' collides with another dynamic widget`);
     }
