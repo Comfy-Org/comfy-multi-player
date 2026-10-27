@@ -130,8 +130,9 @@ Row-level operations become *required*, not merely better, if this product ever 
 > A per-field edit authored against a row must apply to that row, or not at all, even
 > when a concurrent structural change has moved it.
 
-Nothing in `CLAUDE.md`'s KEEP-ALIVE list, this package's INVARIANTS, or any shipped
-product requirement asserts it today. Replacement cannot satisfy it — index-addressed
+Nothing in the KEEP-ALIVE section of this package's
+[`docs/INVARIANTS.md`](../INVARIANTS.md#keep-alive), the in-app Agent program's
+KEEP-ALIVE list, or any shipped product requirement asserts it today. Replacement cannot satisfy it — index-addressed
 registers have no way to express it — so the day it is asserted, #281/#282 are reopened
 rather than patched around. Writing it down is the point: it is the difference between a
 bounded V1 and a permanent one.
