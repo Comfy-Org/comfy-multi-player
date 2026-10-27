@@ -7,7 +7,7 @@ this package uses semantic versioning.
 
 ## Unreleased
 
-## 0.3.13 - 2026-10-27
+## 0.3.13 - 2026-10-28
 
 DynamicGroup support in the shared document (#276), with its decision records
 (ADR-039, ADR-040), replay proof (#295) and its own rejection codes (#283). No
@@ -52,11 +52,11 @@ wire key, op kind or schema version changes.
 ### Compatibility
 
 - Adopt this reader everywhere before pinning a catalog that contains
-  `dynamic_groups`. Readers up to and including 0.3.12 use the same schema v5
-  but do not understand `dynamic_groups`: they can bind trailing writes to a
-  row position, throw on a document with stored row values, and drop rows that
-  have none. This is the reverse of the usual order, where the catalog pin
-  moves first.
+  `dynamic_groups`. No reader up to and including 0.3.12 understands
+  `dynamic_groups`. The schema-v5 readers among them (0.3.8 to 0.3.10, and
+  0.3.12) can bind trailing writes to a row position, throw on a document with
+  stored row values, and drop rows that have none. This is the reverse of the
+  usual order, where the catalog pin moves first.
 
 ## 0.3.12 - 2026-10-21
 
