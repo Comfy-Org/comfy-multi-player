@@ -16,7 +16,7 @@
  * The names are the wire contract. A follower forks from ONE bootstrap
  * snapshot (KA-10) — `Y.applyUpdate(new Y.Doc(), Y.encodeStateAsUpdate(minted))`
  * — and resolves roots BY NAME out of those bytes; so does the Node doc host,
- * which runs this package by SHA pin (ADR-001, ADR-004). So the property that
+ * which runs this package by SHA pin (ADR-APPLIER-0001, ADR-DISTRIBUTION-0004). So the property that
  * actually matters is not "this Y.Doc has a root called nodes", it is "the
  * encoded update spells these names, and a reader that has only the bytes
  * recovers exactly these roots".

@@ -1,7 +1,11 @@
-# ADR-001: Applier is a single shared package, no second implementation
+# ADR-APPLIER-0001: Applier is a single shared package, no second implementation
 
-**Status:** Accepted
-**Date:** 2026-08-20
+Date: 2026-08-20
+
+## Status
+
+Accepted
+
 **Invariant:** FC-3
 
 ## Context
@@ -14,7 +18,7 @@ The deployed cloud architecture runs this TypeScript package in a stateless Node
 
 `@comfyorg/comfy-multi-player` is the one implementation of op-to-document semantics.
 
-- Browser and Node host consume the same package at the same exact published npm version (ADR-006).
+- Browser and Node host consume the same package at the same exact published npm version (ADR-DISTRIBUTION-0006).
 - Do not add op-to-document logic in Go or another language.
 - Keep applier, projection, and mint pure and portable, with `yjs` as the only runtime dependency.
 - If a second implementation is ever unavoidable, record an invariant exception first and require shared golden-vector parity before use.

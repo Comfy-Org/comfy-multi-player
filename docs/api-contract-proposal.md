@@ -12,7 +12,7 @@ Two halves:
 Originally grounded against the source at `6793d75`,
 `docs/multiplayer-schema.md`, and the op vocabulary in comfy-cli.
 **Consumer-status correction, 2026-09-18:** the newer
-[ADR-006](decisions/ADR-006-publish-to-npm-pin-exact-versions.md) records that
+[ADR-DISTRIBUTION-0006](adr/DISTRIBUTION-0006-publish-to-npm-pin-exact-versions.md) records that
 the frontend, cloud `services/agent/dochost` sidecar, and `examples/dochost`
 consumed the published `0.1.0` package at its 2026-08-22 acceptance. Consumers
 pin exact published versions and must be upgraded deliberately. The former
@@ -26,7 +26,7 @@ or revalidate every historical proposal below.
 
 ### D0. Workflow templates insert as one standalone op
 
-**Accepted by ADR-031.** `insert_workflow` requires `nodes`; `links`, `groups`, and `definitions`
+**Accepted by ADR-WORKFLOW-0031.** `insert_workflow` requires `nodes`; `links`, `groups`, and `definitions`
 are optional and default to empty. Producers send raw workflows. The applier remaps every carried
 id and internal reference deterministically from the op envelope id plus the original id and graph
 scope. Different ops therefore cannot collide or depend on arrival order, while exact replay derives

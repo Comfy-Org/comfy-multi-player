@@ -1,7 +1,11 @@
-# ADR-022: pure canonical operation inspection
+# ADR-API-0022: pure canonical operation inspection
 
-- **Status:** Accepted
-- **Date:** 2026-09-03
+Date: 2026-09-03
+
+## Status
+
+Accepted
+
 - **Invariants:** KA-2, KA-3, KA-4; FC-2, FC-3
 
 ## Context

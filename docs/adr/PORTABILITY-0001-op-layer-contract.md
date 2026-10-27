@@ -1,4 +1,10 @@
-# Op-layer portability contract
+# ADR-PORTABILITY-0001: Op-layer portability contract
+
+Date: 2026-08-19
+
+## Status
+
+Accepted
 
 The TypeScript package is the reference implementation of semantic-op-to-Yjs-document behavior. `yjs` must remain its only production dependency root, and the built package must import in bare Node without reading or creating DOM globals. `npm run check:purity` enforces those KA-3 and FC-3 boundaries at the package level, and `npm run check:imports` enforces them per source module at the module-graph level.
 
@@ -19,7 +25,7 @@ For `wire_layout`, a conforming runner must resolve the doc's root types by the 
 
 **Not vectored, but normative:** the schema §10 read gate is a conformance obligation the manifest cannot express. The vectors are all `applyOps` cases, so a runner in another language can pass 100% of them while accepting a document with no readable `meta.schema_version` as current — precisely the fail-open KA-11 forbids. Until a schema-version rejection vector exists, a conforming reader must implement it from the prose: an unreadable or disagreeing `meta.schema_version` is rejected, and both the rejection and the current-version no-op leave the encoded document unchanged.
 
-**The gate is now on TWO entrypoints, and the projection one is the load-bearing half (Amendment A5).** A3 refined `migrate()`, but nothing forces a caller through `migrate()` — so a port that implemented A3 faithfully and stopped there is still fail-open in the way that matters, because `project()` is what every consumer actually calls. A conforming reader must refuse an unreadable or non-current `meta.schema_version` **on the projection path**, before it reads any workflow content, and that refusal must leave the encoded document unchanged AND materialize no root type. The same sentence as `portability.md`'s standing warning applies here: a port could pass 100% of the golden vectors and still be fail-open on read.
+**The gate is now on TWO entrypoints, and the projection one is the load-bearing half (Amendment A5).** A3 refined `migrate()`, but nothing forces a caller through `migrate()` — so a port that implemented A3 faithfully and stopped there is still fail-open in the way that matters, because `project()` is what every consumer actually calls. A conforming reader must refuse an unreadable or non-current `meta.schema_version` **on the projection path**, before it reads any workflow content, and that refusal must leave the encoded document unchanged AND materialize no root type. The standing warning applies here: a port could pass 100% of the golden vectors and still be fail-open on read.
 
 **Also not vectored, but normative:** how a runner counts *instances* of a subgraph definition for schema §5.3's "reject an interior write whose head definition is shared by more than one instance". An instance is a node whose `type` **resolves** to the definition, not a node whose `type` string equals the definition id. Four conditions, and the last two are the ones a re-implementation will get wrong:
 

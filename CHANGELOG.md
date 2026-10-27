@@ -167,7 +167,7 @@ the schema-4 line: the 0.3.7 code relicensed to MIT.)
   content (`op_id`, graph scope, and raw link ID) via SHA-256 folded into the
   full JavaScript safe-integer range, matching the branded-number `LinkId`
   type ComfyUI_frontend expects and removing the reproducible collisions the
-  prior 32-bit string-folding workaround produced (ADR-033).
+  prior 32-bit string-folding workaround produced (ADR-WORKFLOW-0033).
 
 ### Changed
 
@@ -250,9 +250,9 @@ the schema-4 line: the 0.3.7 code relicensed to MIT.)
 
 ### Changed
 
-- Breaking: replaced the 0.1.0 `ApplyResult` shape with ADR-007's ordered,
+- Breaking: replaced the 0.1.0 `ApplyResult` shape with ADR-API-0007's ordered,
   discriminated per-op `outcomes` records and renamed `version` to `ops_seen`.
-- Added ADR-008's caller-owned event sink contract so hosts can receive
+- Added ADR-OBSERVABILITY-0008's caller-owned event sink contract so hosts can receive
   structured cmp events without a package-global registry or telemetry
   dependency.
 - Exported the agent event schema surface from `src/index.ts`, including
@@ -260,7 +260,7 @@ the schema-4 line: the 0.3.7 code relicensed to MIT.)
 - Added the ADR-011 replay-never-wipe reconnect contract to the 0.2.0 surface:
   reconnects continue from document state and state-vector delta replay instead
   of replacing follower documents during ordinary catch-up.
-- Added ADR-021's `DocDerivedLamportClockStore`, deriving Lamport floors from
+- Added ADR-ORDERING-0021's `DocDerivedLamportClockStore`, deriving Lamport floors from
   the caller-owned document's committed `__stamps` ledger rather than package
   process state.
 

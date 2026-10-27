@@ -73,7 +73,7 @@ const configPath = join(root, ".coderabbit.yaml");
 // counts blocks rather than content, so it catches a deletion and not a
 // one-for-one swap; the per-block content anchors in the profiles
 // (`claim: … :: .coderabbit.yaml`) are what cover that.
-const MIN_BLOCKS = 5;
+const MIN_BLOCKS = 6;
 
 const BEGIN = "  # BEGIN GENERATED path_instructions";
 const END = "  # END GENERATED path_instructions";

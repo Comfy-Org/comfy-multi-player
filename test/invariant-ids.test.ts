@@ -5,7 +5,7 @@
  * `docs/INVARIANTS.md` calls itself "the machine-addressable review log", and
  * `AGENTS.md` requires every semantics-touching change to cite the affected ids
  * in its PR description — but nothing checked that a cited id exists. `KA-13`
- * was cited by the stateless gate, the strict ESLint config, `ADR-021` and
+ * was cited by the stateless gate, the strict ESLint config, `ADR-ORDERING-0021` and
  * `test/stateless.test.ts` while the register stopped at `KA-12`, so the label
  * was unresolvable for every reader who followed it (#152).
  *
@@ -106,7 +106,7 @@ describe("invariant register integrity (KA-*/FC-* ids resolve)", () => {
     expect(cited.get("test/stateless.test.ts")).toContain("KA-13");
     expect(cited.get("scripts/check-stateless.mjs")).toContain("KA-13");
     expect(cited.get(".agents/checks/eslint.strict.config.js")).toContain("KA-13");
-    expect(cited.get("docs/decisions/ADR-021-doc-derived-lamport-clock-store.md")).toContain("KA-13");
+    expect(cited.get("docs/adr/ORDERING-0021-doc-derived-lamport-clock-store.md")).toContain("KA-13");
   });
 
   it("would catch an unregistered id (the #152 shape), rather than only the fixed instance", () => {

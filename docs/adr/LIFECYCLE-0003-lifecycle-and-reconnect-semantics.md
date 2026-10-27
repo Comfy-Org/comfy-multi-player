@@ -1,7 +1,10 @@
-# ADR-0003: Lifecycle and reconnect semantics — three lifetimes, atomic batches, resync as authority
+# ADR-LIFECYCLE-0003: Lifecycle and reconnect semantics — three lifetimes, atomic batches, resync as authority
 
-**Status**: accepted
-**Date**: 2026-08-21
+Date: 2026-08-21
+
+## Status
+
+Accepted
 
 ## Context
 
@@ -70,5 +73,5 @@ CRDT source `cloud@8d062714` — since merged to `main` (superset; re-pointed 20
 - `reports/lifecycle/*.mmd` (diagram sources), especially `01-three-lifetimes.mmd`, `02-agent-turn.mmd`, `04-reconnect-catchup.mmd`
 - `cloud@8d062714`: `services/agent/internal/docstore/docstore.go:101-131` (CAS), `services/agent/internal/loop/crdt.go:401-455` (lost-CAS re-derivation).
   On `main@070dce96` (2026-08-21) these live at `docstore.go:109-129` (`Advance` CAS, `ErrSeqConflict`) and `crdt.go:416-457`.
-- ADR-004 (state authority & sync), ADR-007 (op-based CRDT V1), ADR-008 (local persistence)
+- ADR-DISTRIBUTION-0004 (state authority & sync), ADR-API-0007 (op-based CRDT V1), ADR-OBSERVABILITY-0008 (local persistence)
 - Persistence & Data Model subpage: https://www.notion.so/3c36d73d365081759641d9b80600f9cc

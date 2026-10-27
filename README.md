@@ -61,8 +61,8 @@ Each side looks correct alone, so this is silent until the merge.
 ## 0.2.0 release scope
 
 Version 0.2.0 is a breaking release because it replaces the 0.1.0
-`ApplyResult` shape with ADR-007's ordered, discriminated outcomes and renames
-the old version-like count to `ops_seen`. It also adds ADR-008's explicitly
+`ApplyResult` shape with ADR-API-0007's ordered, discriminated outcomes and renames
+the old version-like count to `ops_seen`. It also adds ADR-OBSERVABILITY-0008's explicitly
 passed, caller-owned event sink and the public event schema surface:
 `AGENT_EVENT_JSON_SCHEMA`, `CMP_EVENT_SCHEMA_VERSION`, `AgentEvent`,
 `CmpEvent`, `CmpEventType`, `CmpEventSink`, and `CmpCallContext`.
@@ -136,7 +136,7 @@ document mutation, and retry with the same operation identity.
 `add_node` carrying positional widget values is rejected `catalog_required`,
 and unknown widget names are no longer caught.
 
-`context` may carry ADR-008's caller-owned `eventSink`. The sink receives
+`context` may carry ADR-OBSERVABILITY-0008's caller-owned `eventSink`. The sink receives
 versioned, JSON-safe `CmpEvent` diagnostics and cannot change semantic results;
 there is no global registration or package-owned telemetry state. The API also
 exports the host event contract (`CMP_EVENT_SCHEMA_VERSION`, `CmpEvent`,
@@ -197,7 +197,7 @@ Schema v5 adds `(name, occurrence)` widget identity; schema v4 separated
 Lamport reservations into `__clock_reservations`;
 `readStamps()` contains only winning write-target stamps. Clock admissions
 require a current-schema caller document and recover their floor from both
-ledgers, including after snapshot restart (ADR-021, Amendment CLK-3).
+ledgers, including after snapshot restart (ADR-ORDERING-0021, Amendment CLK-3).
 
 `migrate()` is **no longer the only fail-closed read gate** — it was, and
 nothing forced a caller through it, which is the fail-open gap #38 closed by
@@ -254,14 +254,14 @@ outside that domain. An absent stamp still falls back to the envelope's
 ### Follower read surface and document internals
 
 The entrypoint exports the op layer (`mint`, `applyOps`, `project`, `migrate`),
-the KA-11 read gate, the stamp machinery above, the ADR-004 follower read
+the KA-11 read gate, the stamp machinery above, the ADR-DISTRIBUTION-0004 follower read
 surface (`nodesMap`, `linksMap`, `OPAQUE_WIDGETS_KEY`), KA-1's `encodingLosses`
 diagnostic, the payload bounds (`MAX_OPS_PER_BATCH`, `MAX_PAYLOAD_DEPTH`,
 `MAX_COLLECTION_ENTRIES`, `MAX_OP_COST`, `opBoundsRefusal`), the safer snapshot
 surface below, and the types. That is the whole public surface.
 
 The three layout exports are a deliberate exception for the frontend follower
-documented by ADR-004. They are read-only by contract: that follower consumes
+documented by ADR-DISTRIBUTION-0004. They are read-only by contract: that follower consumes
 the host's layout and never writes the shared document or calls `applyOps`.
 `initDoc`, `definitionsMap`, `metaMap`, `appliedMap`, `stampsMap`,
 `createNodeMap`, `resolveDefinition`, `countDefinitionInstances`,
@@ -283,7 +283,7 @@ with no diagnostic. See [issue #18][issue-18] and KA-1, KA-2, KA-4, FC-5 in
 General consumers should call `project(doc, catalog)` for canonical workflow
 JSON, or use the safer snapshot surface below when projection cannot serve the
 read. There is no `./doc` subpath export and none will be added; of `doc.ts`
-only ADR-004's three deliberate layout exports and KA-1's `encodingLosses`
+only ADR-DISTRIBUTION-0004's three deliberate layout exports and KA-1's `encodingLosses`
 remain reachable from the entrypoint.
 
 [issue-18]: https://github.com/Comfy-Org/comfy-multi-player/issues/18
@@ -367,7 +367,7 @@ Every op carries the same envelope, minted by its creator before dispatch:
 
 Nine kinds, frozen. Eight mirror comfy-cli's pinned vocabulary;
 `set_node_field` is the package-local, provisional addition recorded by
-ADR-032 and schema Amendment A21.
+ADR-OPS-NODE-0032 and schema Amendment A21.
 
 | Kind | Payload beyond the envelope | Batchable (authoring) |
 |---|---|---|
@@ -376,7 +376,7 @@ ADR-032 and schema Amendment A21.
 | `connect` | `link_id`, `from_node`, `from_slot`, `to_node`, `link_type`, then EITHER a numeric `to_slot` (`ConcreteConnectOp`) OR a `grow` payload with `to_slot` null/absent (`GrowConnectOp`); `grow.promoted: true` names a subgraph instance's DECLARED input, materialized on the instance and LWW-gated as one register (schema Amendment A15) | yes |
 | `disconnect` | `link_id`, `to_node`, `to_slot`; claims the same concrete input register as `connect` and removes the winning slot occupant | yes |
 | `set_widget` | `node_id`, `widget` (name, never index), `value`, optional `old`; an interior write adds `path` AND `inner_widget` together (`InteriorSetWidgetOp`); a promoted HOST write adds `promoted: {value_index, instance_path, host_widgets_values}` instead — a positional write into a subgraph instance's opaque array (schema Amendment A15) | yes |
-| `set_node_field` | `node_id`, `field` (one of `title`, `mode`, `flags.collapsed`, `flags.pinned` — exported as `WRITABLE_NODE_FIELDS`), and a field-typed `value`: string for `title`, non-negative integer for `mode`, boolean for flags, or `null` to delete. One LWW register per `(node lifetime, field)`, so two fields of one node never contend and neither disturbs that node's widget stamps. Package-local and provisional (ADR-032) | yes |
+| `set_node_field` | `node_id`, `field` (one of `title`, `mode`, `flags.collapsed`, `flags.pinned` — exported as `WRITABLE_NODE_FIELDS`), and a field-typed `value`: string for `title`, non-negative integer for `mode`, boolean for flags, or `null` to delete. One LWW register per `(node lifetime, field)`, so two fields of one node never contend and neither disturbs that node's widget stamps. Package-local and provisional (ADR-OPS-NODE-0032) | yes |
 | `delete_node` | `node_id`, `removed_links`; an interior delete also carries a non-empty instance `path` and optional `container_incarnation` | yes |
 | `clear` | `removed_nodes` | no |
 | `insert_workflow` | `workflow` containing required raw-ID `nodes` plus optional `links`, `groups`, and `definitions`; the applier remaps IDs deterministically from `op_id` | no |
@@ -453,7 +453,7 @@ replays already-minted ops under [abort-remainder](#what-applyops-returns), the
 same as comfy-cli's `apply_op`, which replays `clear` in any position. So a
 `clear` in the middle of an op array is applied here, deliberately: the
 `edit-heavy` conformance session contains exactly that, and
-[`docs/portability.md`](docs/portability.md) requires every language
+[`ADR-PORTABILITY-0001`](docs/adr/PORTABILITY-0001-op-layer-contract.md) requires every language
 implementation to replay it with no failures. If you are building a submission
 surface in front of the applier, that admission layer is where `BATCHABLE_OPS`
 belongs. `test/batch-policy.test.ts` pins all of this.
@@ -464,7 +464,7 @@ The historical op envelope and six-kind base vocabulary are defined by
 amendment pinned separately below. The complete current eight-kind implemented
 surface is defined locally by `src/types.ts` and
 [`docs/multiplayer-schema.md`](docs/multiplayer-schema.md): `define_subgraph`
-and ADR-031's standalone `insert_workflow` are local extensions, not claims
+and ADR-WORKFLOW-0031's standalone `insert_workflow` are local extensions, not claims
 about the historical comfy-cli pin.
 
 This package tracks that document at comfy-cli commit
@@ -724,9 +724,9 @@ resolution is a cross-process agreement about which write wins; two peers
 running different versions of these rules can disagree about the outcome.
 
 See
-[`docs/decisions/ADR-006-publish-to-npm-pin-exact-versions.md`](docs/decisions/ADR-006-publish-to-npm-pin-exact-versions.md)
+[`docs/adr/DISTRIBUTION-0006-publish-to-npm-pin-exact-versions.md`](docs/adr/DISTRIBUTION-0006-publish-to-npm-pin-exact-versions.md)
 for the consumption decision. The earlier git-SHA pinning model
-([ADR-004](docs/decisions/ADR-004-consumers-pin-by-sha-no-registry-yet.md),
+([ADR-DISTRIBUTION-0004](docs/adr/DISTRIBUTION-0004-consumers-pin-by-sha-no-registry-yet.md),
 superseded) remains documented for historical context.
 
 ## Develop

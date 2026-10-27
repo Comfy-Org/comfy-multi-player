@@ -438,7 +438,7 @@ describe("read-only surface — the KA-11 read gate (#38)", () => {
    * The rule has TWO clauses and both are load-bearing:
    *   1. REFUSE when the document carries content under a schema this package
    *      cannot read;
-   *   2. STAY EMPTY when it carries nothing. ADR-004's follower reads a
+   *   2. STAY EMPTY when it carries nothing. ADR-DISTRIBUTION-0004's follower reads a
    *      root-less document before its first frame and there is nothing there
    *      to mis-key. NOT because #30 said so — #30 made `migrate()` REFUSE
    *      that same document, which is a role split (a write may refuse an

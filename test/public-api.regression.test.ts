@@ -7,7 +7,7 @@
  * without going through `applyOps` and bypass stamp gating (KA-2), idempotency
  * and convergence (KA-4), and the catalog check at mint (KA-12).
  *
- * ADR-004 deliberately retains three layout reads for the frontend follower;
+ * ADR-DISTRIBUTION-0004 deliberately retains three layout reads for the frontend follower;
  * The internals list is derived from `src/doc.ts` at runtime rather than
  * hardcoded, so a newly added document internal is covered the moment it exists.
  *
@@ -45,7 +45,7 @@ describe("public API", () => {
     }
   });
 
-  it("pins the op layer, stamp helpers, and ADR-004 follower read surface", () => {
+  it("pins the op layer, stamp helpers, and ADR-DISTRIBUTION-0004 follower read surface", () => {
     expect(publicApi).toEqual(
       expect.objectContaining({
         mint: expect.any(Function),

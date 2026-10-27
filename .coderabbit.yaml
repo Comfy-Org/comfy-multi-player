@@ -30,6 +30,28 @@ reviews:
         skipped op_id record) is a blocking KA-4 issue (see issue #10); require
         validate-before-mutate. Any second op-to-document implementation is a
         blocking FC-3 issue.
+    - path: "{src/**,docs/adr/**}"
+      # source: .agents/checks/adr-compliance.md
+      instructions: >-
+        Treat accepted ADRs in docs/adr/ as constraints until a replacement is
+        itself Accepted; a Proposed replacement does not lift the existing
+        constraint. Treat proposed ADRs as directional guidance. For source
+        changes, read the decisions relevant to the affected op, state,
+        replication, API, ordering, validation, or distribution surface. Flag
+        only contradictions introduced by this diff, cite the full ADR
+        identifier, and distinguish a conflict with an accepted record from
+        disagreement with a proposal. If the diff establishes a durable
+        architecture boundary, changes an invariant, chooses among viable
+        system designs, or creates compatibility or migration policy without
+        recording the tradeoff in docs/adr/, ask for an ADR. Do not demand an
+        ADR for implementation detail, transient evidence, tests, or routine
+        maintenance. Context, Decision, Alternatives considered, What we
+        reject, Consequences, and Revisit triggers are recommended prompts, not
+        required headings; do not fail an ADR solely because one is omitted or
+        renamed. Review whether typed relations, testable proof, standing
+        rejections, known limits, measurable revisit conditions, compatibility,
+        and supersession are concrete and mutually consistent for the decision
+        at hand.
     - path: "{fixtures/**,.agents/checks/catalog-pinning.md}"
       # source: .agents/checks/catalog-pinning.md
       instructions: >-

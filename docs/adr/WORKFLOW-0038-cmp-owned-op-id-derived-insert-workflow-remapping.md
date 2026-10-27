@@ -1,11 +1,15 @@
-# ADR-038: cmp-owned, op-id-derived ID remapping for `insert_workflow`
+# ADR-WORKFLOW-0038: cmp-owned, op-id-derived ID remapping for `insert_workflow`
 
-**Status**: accepted
-**Date**: 2026-09-12
+Date: 2026-09-12
+
+## Status
+
+Accepted
+
 **Implementation-status**: implemented
-**Renumbered**: was `ADR-031` from 2026-09-13 (`5a2355dc6b00`) to 2026-09-24 (`clean-5`). It
-collided with `ADR-031-renderer-provided-layout-port-for-agent-materializer.md`, which was added
-first (2026-09-10, `50a0a2752ebf`) and keeps the number. Any citation of "ADR-031" that concerns
+**Renumbered**: was `ADR-WORKFLOW-0031` from 2026-09-13 (`5a2355dc6b00`) to 2026-09-24 (`clean-5`). It
+collided with `ADR-WORKFLOW-0031-renderer-provided-layout-port-for-agent-materializer.md`, which was added
+first (2026-09-10, `50a0a2752ebf`) and keeps the number. Any citation of "ADR-WORKFLOW-0031" that concerns
 `insert_workflow`, op-id-derived remapping, or the rejection of producer-side pre-remapping means
 this ADR.
 

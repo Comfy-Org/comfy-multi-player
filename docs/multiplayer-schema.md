@@ -44,7 +44,7 @@ Normative inputs, in precedence order:
    `fixtures/` (the evidence: three replayable sessions, six LWW vectors, the
    exported catalog, machine-captured findings). Every DECISION below cites
    the spike finding that forced it.
-3. **ADR-022 / ADR-T8** — the local decision and accepted in-app-agent program
+3. **ADR-WORKFLOW-0031 / ADR-T8** — the local decision and accepted in-app-agent program
    TDD add `insert_workflow` as the eighth implemented op without moving the
    pinned comfy-cli vocabulary.
 
@@ -98,7 +98,7 @@ Winning stamps may have counter zero; reservations may not. Missing ledgers
 are empty, and neither a read nor a rejected admission creates them. Snapshot
 roots are typed without writing structs; sequence content is refused rather
 than silently viewed as an empty map. A malformed entry fails the entire scan.
-Store wrappers for one caller-owned document still share ADR-021's weakly keyed
+Store wrappers for one caller-owned document still share ADR-ORDERING-0021's weakly keyed
 transaction queue; no durable counter lives outside that document.
 
 ### 1.1 Per-node Y.Map
@@ -968,7 +968,7 @@ and first-class definitions (§5.1) only shrink these):
 | `connect` (autogrow) | ~4 → **+2 under A7** | yes — `grow_id` identity keeps replays non-clobbering; A7 adds the `("grow", …)` stamp and the `("grow_request", …)` row, plus renames bounded by the family's concurrent-grow count |
 | `delete_node` | 4.7–5 / 6 → **+1 under A7** | yes — writes bounded by the node's degree, plus the `("node", id)` stamp; the dangling-reference *scan* is O(nodes) read cost, accepted |
 | `set_node_field` (package-local, A21) | 2 — one node/nested-flag write + one field stamp | yes |
-| `clear` | O(doc), **+1 stamp per `removed_nodes` entry under A7** | **no — inherent.** Rare; standalone-only at the *authoring* surface (vocabulary §1.5: `apply_specs` rejects a spec batch containing it, code `workflow_clear_not_batchable`) — the *replay* surface (`apply_op` / `applyOps`, §4 abort-remainder) accepts it in any position and must, per `docs/portability.md`. SHOULD be host-mediated and never merged casually |
+| `clear` | O(doc), **+1 stamp per `removed_nodes` entry under A7** | **no — inherent.** Rare; standalone-only at the *authoring* surface (vocabulary §1.5: `apply_specs` rejects a spec batch containing it, code `workflow_clear_not_batchable`) — the *replay* surface (`apply_op` / `applyOps`, §4 abort-remainder) accepts it in any position and must, per `docs/adr/PORTABILITY-0001-op-layer-contract.md`. SHOULD be host-mediated and never merged casually |
 
 ---
 
@@ -1371,7 +1371,7 @@ A3 is not wrong; it is incomplete. This amendment supersedes A3's first rule bul
 - **An OLDER document is refused, not migrated in place.** `project()` is a read ANY replica may
   call, browser follower included; migrating inside it would make a read WRITE the shared
   document. (Stated as a rule about the API, not an observation about callers: no follower calls it
-  today — the frontend does not depend on this package at all, exactly as ADR-004 records.
+  today — the frontend does not depend on this package at all, exactly as ADR-DISTRIBUTION-0004 records.
   `follower-boundary.md` requires treating such an API as a blocking violation "even if current
   callers behave correctly".) That breaks KA-6/FC-5 outright (followers never write the shared doc), and a follower
   that self-migrated becomes an independently edited replica, which is the FC-1 raw-struct
@@ -1437,7 +1437,7 @@ consumer repositories at their current revisions, not by analogy to A3:
 - **The op producer never constructs a document at all.** `comfy-cli` emits ops as plain JSON; it has
   no Yjs dependency, no `Y.Doc`, no snapshot handling.
 - **At the time of this amendment, the frontend did not consume this package.** That historical
-  observation does not establish present consumer compatibility. ADR-006 requires consumers to pin
+  observation does not establish present consumer compatibility. ADR-DISTRIBUTION-0006 requires consumers to pin
   the same exact published npm version; frontend source migration is deferred and package development
   remains in standalone `Comfy-Org/comfy-multi-player`. Future changes require fresh consumer checks.
 - **Two endpoints reach `project()`**, both in the doc-host sidecar: `/project` and `/apply` (whose
@@ -1822,7 +1822,7 @@ over a v2 document.
 materializing no root — and **returns its empty value** for a document that
 carries **nothing**.
 
-**Why the condition, since a conditional gate deserves a reason.** ADR-004's
+**Why the condition, since a conditional gate deserves a reason.** ADR-DISTRIBUTION-0004's
 frontend follower reads a document that has no roots at all between
 construction and its first `doc_update` frame. There is no content there to
 mis-key, and KA-11 is a rule about MIS-PROJECTING an incompatible document,
@@ -2185,7 +2185,7 @@ schema at that integration was v3; A20 advances it to v4.
 
 ## Amendment A19 — 2026-09-11 — atomic workflow-template insertion
 
-ADR-031 adds the standalone-only `insert_workflow` op. Its payload is one
+ADR-WORKFLOW-0031 adds the standalone-only `insert_workflow` op. Its payload is one
 authoritative workflow containing required top-level `nodes` and optional
 `links`, `groups`, and `definitions`. The applier deterministically remaps every
 inserted id from the immutable `op_id`, graph scope, id kind, and original id,
@@ -2214,7 +2214,7 @@ in [frontend PR #16644](https://github.com/Comfy-Org/ComfyUI_frontend/pull/16644
 identified `commitCounter()` writing non-write-target reservations into
 `__stamps`, which the public `readStamps()` returns as the LWW ledger. §1.6
 moves those rows to `__clock_reservations`, preserving their identity and tuple.
-ADR-021 Amendment CLK-3 records the clock contract and test scope. Prior QA is
+ADR-ORDERING-0021 Amendment CLK-3 records the clock contract and test scope. Prior QA is
 historical evidence, not approval of this new layout.
 
 **Version decision (KA-11): bump 3 → 4.** A v3 clock scans only `__stamps` and
@@ -2251,7 +2251,7 @@ whole-node `add_node` upsert is not an equivalent substitute: it rewrites the
 node payload and clears widget stamps, which can clobber concurrent work.
 
 This operation is package-local and provisional. comfy-cli's pinned
-`op-vocabulary-v1.md` does not yet define it, so ADR-032 and the FC-10 row in
+`op-vocabulary-v1.md` does not yet define it, so ADR-OPS-NODE-0032 and the FC-10 row in
 `docs/decisions/EXCEPTIONS.md` require reconciliation when upstream adopts a
 field-write operation. A language-neutral hand-authored session in
 `fixtures/golden-vectors/session-node-fields.session.jsonl` covers all four fields in the
@@ -2390,7 +2390,11 @@ A node carrying the field is **self-described**, and for it:
   or occurrence `order` does not list is `unknown_widget`, exactly as a
   missing `widget_order` entry would be. Amendment A25 narrows that closed-list
   statement for ARRAY forms only: a pinned dynamic-combo option child is also
-  legal and a winning selector persists the recomputed realized order;
+  legal and a winning selector persists the recomputed realized order.
+  Amendment A26 uses supplied `dynamic_groups` metadata only for count
+  validation: it checks the row-count bounds and refuses a change from the
+  addressed occurrence's stored count that would require replacing the
+  declaration;
 - `project()` rebuilds `widgets_values` in the shape the producer serialized —
   an array of `order.length`, or the object in its original key order with each
   declared widget taking its live value and every other key its verbatim
@@ -2591,3 +2595,9 @@ persists, so KA-11 does not require a layout bump or migration.
 - Reverting the array-form catalog overlay in `validateWidgetName` makes the
   named child-first vector fail `unknown_widget`; reverting selector-order
   refresh makes the selector-first vector project the stale option-A layout.
+
+## Amendment A26 — 2026-10-05 — DynamicGroup catalog layout
+
+An opt-in `dynamic_groups` catalog entry expands a saved row-count controller into indexed widget identities. These use the existing name-keyed registers; no op kind or on-document key changes. The new catalog hash requires coordinated reader adoption. Existing documents retain their original catalog and are re-minted to adopt the new layout.
+
+Count writes change the projected layout, retaining hidden registers and applying fresh-row defaults only at read time. They do not delete rows or links. Explicit `widgets_values_form` declarations remain authoritative; supplied group metadata adds row-count bound validation (`min` to the allocation bound) and rejects a count change requiring a new declaration before mutation. This validation applies to the addressed occurrence in top-level, interior, and promoted writes. Without group metadata, the package cannot identify count fields; compatible producer/catalog/reader admission remains the caller's responsibility. See [DynamicGroup catalog support](dynamic-groups.md) for the producer contract, bounds, and fixture provenance.
