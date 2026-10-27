@@ -10,8 +10,8 @@ this package uses semantic versioning.
 ## 0.3.13 - 2026-10-27
 
 DynamicGroup support in the shared document (#276), with its decision records
-(ADR-039, ADR-040) and replay proof (#295). No wire key, op kind or schema
-version changes.
+(ADR-039, ADR-040), replay proof (#295) and its own rejection codes (#283). No
+wire key, op kind or schema version changes.
 
 ### Added
 
@@ -22,6 +22,13 @@ version changes.
 - Group fields keep their identities across import, projection, top-level,
   interior and promoted writes, and replay, including two groups on one node,
   DynamicCombo composition, trailing widgets and seed companions.
+- Rejection codes `dynamic_group_count_out_of_range` (a row count outside `min`
+  to the allocation bound, on `set_widget` or as a saved count in an
+  `add_node`, `insert_workflow` or `define_subgraph` payload) and
+  `dynamic_group_form_mismatch` (a count change that would require replacing an
+  explicit `widgets_values_form`). A row-field name beyond the bound stays
+  `unknown_widget`, and a catalog whose group `min` exceeds the bound stays
+  `apply_failed` (#283).
 
 ### Changed
 
@@ -38,7 +45,9 @@ version changes.
   allocation bound, row-field indices beyond that bound, count changes that
   would require replacing an explicit `widgets_values_form`, and catalogs with
   duplicate controllers, conflicting generated names, or a controller that a
-  selector could lay out twice.
+  selector could lay out twice. A selector write on a declared ARRAY form is
+  refused, before the selector is written, when the newly selected option
+  would lay out a stored count outside the group range (#297).
 
 ### Compatibility
 
