@@ -7,6 +7,48 @@ this package uses semantic versioning.
 
 ## Unreleased
 
+## 0.3.13 - 2026-10-27
+
+DynamicGroup support in the shared document (#276), with its decision records
+(ADR-039, ADR-040) and replay proof (#295). No wire key, op kind or schema
+version changes.
+
+### Added
+
+- Catalog entries may declare `dynamic_groups`: a row-count controller with
+  integer `min`/`max` bounds (`0 <= min <= max`), relative row `widgets` and
+  fresh-row `defaults`. Rows expand after their controller as
+  `<controller>.<index>.<field>`. See `docs/dynamic-groups.md`.
+- Group fields keep their identities across import, projection, top-level,
+  interior and promoted writes, and replay, including two groups on one node,
+  DynamicCombo composition, trailing widgets and seed companions.
+
+### Changed
+
+- A count change only changes projection. Hidden row fields keep their
+  name-keyed registers and reappear with their retained values when the count
+  grows; newly visible fields without a stored value project template defaults
+  (ADR-039).
+- Agent row changes are whole-group replacement over existing `set_widget`
+  ops, not a structural row operation (ADR-040).
+
+### Fixed
+
+- Refuse, before mutation: counts below the group `min` or above the
+  allocation bound, row-field indices beyond that bound, count changes that
+  would require replacing an explicit `widgets_values_form`, and catalogs with
+  duplicate controllers, conflicting generated names, or a controller that a
+  selector could lay out twice.
+
+### Compatibility
+
+- Adopt this reader everywhere before pinning a catalog that contains
+  `dynamic_groups`. Readers up to and including 0.3.12 use the same schema v5
+  but do not understand `dynamic_groups`: they can bind trailing writes to a
+  row position, throw on a document with stored row values, and drop rows that
+  have none. This is the reverse of the usual order, where the catalog pin
+  moves first.
+
 ## 0.3.12 - 2026-10-21
 
 The first MIT release of the current line. (0.3.11 is a maintenance release of
