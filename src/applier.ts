@@ -1610,15 +1610,17 @@ function writeWidgetValue(
 ): void {
   const widgets = widgetsOf(node);
   const key = widgetStorageKey(widget, occurrence);
+  // Lay out exactly what will be stored, as the stored-then-refreshed order did.
+  const stored = structuredClone(value);
   const form = storedWidgetFormOf(node);
   const entry = form?.shape === "array" ? catalogEntry(catalog, String(node.get("type") ?? "")) : undefined;
   // Lay out the prospective selection before writing: the refresh can refuse
   // it (a stored row count outside the group range), and a rejected op must
   // leave the document untouched (KA-4).
   const order = form && entry?.dynamic_combos && Object.hasOwn(entry.dynamic_combos, widget)
-    ? widgetOrderForProducerOrder(entry, form.order, widgets, { key, value })
+    ? widgetOrderForProducerOrder(entry, form.order, widgets, { key, value: stored })
     : undefined;
-  mset(widgets, key, structuredClone(value));
+  mset(widgets, key, stored);
   if (!form || !order) return;
   if (order.length === form.order.length && order.every((name, index) => name === form.order[index])) return;
   mset(node, WIDGET_FORM_KEY, { ...structuredClone(form), order: [...order] });
