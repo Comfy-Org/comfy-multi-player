@@ -524,7 +524,7 @@ describe("DynamicGroup catalog layout", () => {
     node.widgets_values = ["first", "off", count, "last"];
     node.widgets_values_form = { order: ["before", "mode", "loras", "after"] };
 
-    assertRejectedWithoutMutation(workflow, edit("mode", "on"), "apply_failed", conditionalCatalog,
+    assertRejectedWithoutMutation(workflow, edit("mode", "on"), "dynamic_group_count_out_of_range", conditionalCatalog,
       edit("after", "must not run", 2));
   });
 
