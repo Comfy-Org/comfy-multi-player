@@ -166,12 +166,15 @@ export function widgetOrderForWidgets(
  * write wins. `producerOrder` may already contain the previous selection's
  * children; {@link expand} removes every catalog-owned child before expanding
  * the selectors from their stored values, so repeated A→B→A switches remain
- * anchored to the same producer-local order.
+ * anchored to the same producer-local order. `pending` overlays one register
+ * write that has not been stored yet, so a caller can lay out the prospective
+ * selection and refuse it before mutating anything (KA-4).
  */
 export function widgetOrderForProducerOrder(
   entry: WidgetCatalogEntry,
   producerOrder: readonly string[],
   widgets: Y.Map<unknown> | undefined,
+  pending?: { key: string; value: unknown },
 ): readonly string[] {
   const combos = combosOf(entry);
   if (!combos) return [...producerOrder];
@@ -180,7 +183,10 @@ export function widgetOrderForProducerOrder(
   return expand(
     entry,
     combos,
-    (name, _index, occurrence) => widgets?.get(widgetStorageKey(name, occurrence)),
+    (name, _index, occurrence) => {
+      const key = widgetStorageKey(name, occurrence);
+      return pending?.key === key ? pending.value : widgets?.get(key);
+    },
     producerOrder,
     declaredGroups,
   ).order;
