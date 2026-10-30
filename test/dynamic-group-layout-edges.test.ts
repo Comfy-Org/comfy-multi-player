@@ -102,8 +102,8 @@ describe("widget order for DynamicGroup values", () => {
     expect(widgetOrderForValues(entry, { tail: "t" })).toEqual(["loras", "tail"]);
   });
 
-  it("refuses a selected layout that repeats a controller", () => {
-    const repeated: WidgetCatalogEntry = {
+  it("refuses a catalog whose selectors can both offer one controller", () => {
+    const shared: WidgetCatalogEntry = {
       widget_order: ["first", "second"],
       dynamic_groups: { loras: group },
       dynamic_combos: {
@@ -112,7 +112,7 @@ describe("widget order for DynamicGroup values", () => {
       },
     };
 
-    expect(() => widgetOrderForValues(repeated, ["on", 0, "on", 0])).toThrow("DynamicGroup controller 'loras' is duplicated");
+    expect(() => widgetOrderForValues(shared, ["on", 0, "on", 0])).toThrow("DynamicGroup controller 'loras' can");
   });
 
   it("keeps the producer's order for a group node with no selector", () => {
