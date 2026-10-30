@@ -31,6 +31,11 @@ describe("#21091 same-index add versus peer edit (ADR-039 V1 residual)", () => {
     for (const op of [...first, ...second]) applyOps(doc, [op], catalog);
     const node = project(doc, catalog).nodes[0]!;
     const state = { values: node.widgets_values, named: node.widgets_values_named };
+    const settled = Y.encodeStateAsUpdate(doc);
+    for (const op of [...first, ...second]) {
+      expect(applyOps(doc, [op], catalog).outcomes[0]?.outcome).toBe("no-op");
+      expect(Y.encodeStateAsUpdate(doc)).toEqual(settled);
+    }
     doc.destroy();
     return state;
   };
