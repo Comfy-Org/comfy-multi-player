@@ -176,9 +176,16 @@ describe("creator-owned Lamport counter", () => {
     expect(observedDocCounter(mint({ nodes: [], links: [] }, catalog), { skipMalformed: true }))
       .toEqual({ counter: undefined, skipped: 0 });
     expect(() => observedDocCounter(new Y.Doc(), { skipMalformed: true })).toThrow(/schema/);
+    // An unreadable reservations root is one more skipped entry in lenient mode (the strict read and
+    // the clock store still refuse it); an unreadable __stamps root still throws in either mode.
     const brokenRoot = mint({ nodes: [], links: [] }, catalog);
+    brokenRoot.getMap<unknown>("__stamps").set('["widget","1","0","seed"]', [12, "agent:t:1", "a".repeat(32)]);
     brokenRoot.getArray("__clock_reservations").push([[5, "agent:clock", "x"]]);
-    expect(() => observedDocCounter(replicaOf(brokenRoot), { skipMalformed: true })).toThrow(/non-map content/);
+    expect(() => observedDocCounter(replicaOf(brokenRoot))).toThrow(/non-map content/);
+    expect(observedDocCounter(replicaOf(brokenRoot), { skipMalformed: true })).toEqual({ counter: 12, skipped: 1 });
+    const brokenStamps = replicaOf(mint({ nodes: [], links: [] }, catalog));
+    brokenStamps.getArray("__stamps").push([[5, "agent:clock", "x"]]);
+    expect(() => observedDocCounter(replicaOf(brokenStamps), { skipMalformed: true })).toThrow(/non-map content/);
   });
 
   it("keeps a malformed row's readable counter in the lenient floor", () => {

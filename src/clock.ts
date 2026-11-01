@@ -113,7 +113,8 @@ export interface LenientDocCounter {
  * readable counters instead (a malformed row whose first element is a valid
  * counter still raises it), plus the count of malformed rows (companion rows
  * are not counted). A caller that sees `skipped > 0` should log it. An
- * unreadable schema or ledger root still throws.
+ * unreadable reservations root counts as one skipped entry; an unreadable
+ * schema or `__stamps` root still throws.
  */
 export function observedDocCounter(doc: Y.Doc): number | undefined;
 export function observedDocCounter(doc: Y.Doc, options: { skipMalformed: true }): LenientDocCounter;
@@ -129,8 +130,17 @@ export function observedDocCounter(
     if (root === undefined) continue;
     // Snapshot roots arrive as AbstractType, not Y.Map. Type only an existing
     // root; reject sequence content before getMap can hide it in a map view.
-    if (root._start !== null) throw new TypeError(`${name} root contains non-map content`);
-    const ledger = doc.getMap<unknown>(name); // throws for a different concrete Y type
+    let ledger: Y.Map<unknown>;
+    try {
+      if (root._start !== null) throw new TypeError(`${name} root contains non-map content`);
+      ledger = doc.getMap<unknown>(name); // throws for a different concrete Y type
+    } catch (error) {
+      // Lenient mode passes over an unreadable reservations root as one skipped
+      // entry. Winning counters live in __stamps, whose root must stay readable.
+      if (options?.skipMalformed !== true || name !== ROOT_CLOCK_RESERVATIONS) throw error;
+      skipped++;
+      continue;
+    }
     ledger.forEach((value, key) => {
       if (name === ROOT_STAMPS && isCompanionRow(key, value)) return;
       let counter: number | undefined;
