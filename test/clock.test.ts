@@ -169,14 +169,43 @@ describe("creator-owned Lamport counter", () => {
     doc.getMap<unknown>("__clock_reservations").set("not json", [98, "someone", "not json"]);
 
     expect(() => observedDocCounter(doc)).toThrow(/Lamport counter|malformed stamp tuple/);
-    expect(observedDocCounter(doc, { skipMalformed: true })).toEqual({ counter: 20, skipped: 4 });
-    expect(observedDocCounter(replicaOf(doc), { skipMalformed: true })).toEqual({ counter: 20, skipped: 4 });
+    // The mis-keyed reservation (producer "someone" vs key "other") is malformed but its counter 99 is
+    // readable: a floor below it would let the producer mint under a counter already in the document.
+    expect(observedDocCounter(doc, { skipMalformed: true })).toEqual({ counter: 99, skipped: 4 });
+    expect(observedDocCounter(replicaOf(doc), { skipMalformed: true })).toEqual({ counter: 99, skipped: 4 });
     expect(observedDocCounter(mint({ nodes: [], links: [] }, catalog), { skipMalformed: true }))
       .toEqual({ counter: undefined, skipped: 0 });
     expect(() => observedDocCounter(new Y.Doc(), { skipMalformed: true })).toThrow(/schema/);
     const brokenRoot = mint({ nodes: [], links: [] }, catalog);
     brokenRoot.getArray("__clock_reservations").push([[5, "agent:clock", "x"]]);
     expect(() => observedDocCounter(replicaOf(brokenRoot), { skipMalformed: true })).toThrow(/non-map content/);
+  });
+
+  it("keeps a malformed row's readable counter in the lenient floor", () => {
+    const doc = mint({ nodes: [], links: [] }, catalog);
+    const stamps = doc.getMap<unknown>("__stamps");
+    stamps.set('["widget","1","0","seed"]', [50, "agent:t:1", "a".repeat(32)]);
+    stamps.set('["widget","1","0","cfg"]', [900, 42, "b".repeat(32)]);
+    expect(() => observedDocCounter(doc)).toThrow(/malformed stamp tuple/);
+    expect(observedDocCounter(doc, { skipMalformed: true })).toEqual({ counter: 900, skipped: 1 });
+    expect(observedDocCounter(replicaOf(doc), { skipMalformed: true })).toEqual({ counter: 900, skipped: 1 });
+  });
+
+  it("skips a companion-keyed row only when its value has the companion shape", () => {
+    const counted = mint({ nodes: [], links: [] }, catalog);
+    counted.getMap<unknown>("__stamps").set('["grow_request","1","9","images"]', [50, "agent:t:1", "a".repeat(32)]);
+    counted.getMap<unknown>("__stamps").set('["interior_route","3","inc"]', [60, "agent:t:1", "b".repeat(32)]);
+    expect(observedDocCounter(counted)).toBe(60);
+    for (const value of [{ x: 1 }, 5, ["images.image0", null], ["images.image0", 3, false]]) {
+      const odd = mint({ nodes: [], links: [] }, catalog);
+      odd.getMap<unknown>("__stamps").set('["grow_request","1","9","images"]', value);
+      expect(() => observedDocCounter(odd), JSON.stringify(value)).toThrow(TypeError);
+    }
+    const route = mint({ nodes: [], links: [] }, catalog);
+    route.getMap<unknown>("__stamps").set('["interior_route","3","inc"]', ["images.image0", null, false]);
+    expect(() => observedDocCounter(route)).toThrow(TypeError);
+    route.getMap<unknown>("__stamps").set('["interior_route","3","inc"]', "definition-id");
+    expect(observedDocCounter(route)).toBeUndefined();
   });
 
   it("keeps reservations out of public readStamps and preserves their identity tuple", async () => {

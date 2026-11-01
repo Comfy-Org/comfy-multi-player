@@ -72,8 +72,30 @@ export class DocDerivedLamportClockStore implements LamportClockStore {
 }
 
 // Counterless `__stamps` rows (doc.ts companion tags), matched on the canonical
-// JSON.stringify key prefix the applier writes.
-const COMPANION_KEY_PREFIXES = [GROW_REQUEST_TAG, INTERIOR_ROUTE_TAG].map((tag) => `["${tag}",`);
+// JSON.stringify key prefix the applier writes AND on the value shape the
+// applier stores there, so a counter under a companion-looking key is never
+// silently dropped from the floor.
+const GROW_REQUEST_PREFIX = `["${GROW_REQUEST_TAG}",`;
+const INTERIOR_ROUTE_PREFIX = `["${INTERIOR_ROUTE_TAG}",`;
+
+function isCompanionRow(key: string, value: unknown): boolean {
+  if (key.startsWith(INTERIOR_ROUTE_PREFIX)) return typeof value === "string";
+  if (key.startsWith(GROW_REQUEST_PREFIX)) {
+    // applier GrowRequest: [name, widget | null, isInputcount]
+    return Array.isArray(value) && value.length === 3 && typeof value[0] === "string" &&
+      (value[1] === null || typeof value[1] === "string") && typeof value[2] === "boolean";
+  }
+  return false;
+}
+
+// A malformed row still raises a lenient floor when its first element is a
+// valid counter: over-estimating the floor is safe, under-estimating it lets a
+// producer mint under a counter already in the document.
+function salvageCounter(value: unknown): number | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const counter: unknown = value[0];
+  return typeof counter === "number" && Number.isSafeInteger(counter) && counter >= 0 ? counter : undefined;
+}
 
 /** Result of a lenient floor read: the maximum valid counter and how many rows were unreadable. */
 export interface LenientDocCounter {
@@ -89,9 +111,10 @@ export interface LenientDocCounter {
  *
  * By default a malformed row throws (fail closed, ADR-021). With
  * `skipMalformed`, a producer that must keep minting gets the maximum over the
- * readable rows instead, plus the count of malformed rows skipped (companion
- * rows are not counted); an unreadable
- * schema or ledger root still throws.
+ * readable counters instead (a malformed row whose first element is a valid
+ * counter still raises it), plus the count of malformed rows (companion rows
+ * are not counted). A caller that sees `skipped > 0` should log it. An
+ * unreadable schema or ledger root still throws.
  */
 export function observedDocCounter(doc: Y.Doc): number | undefined;
 export function observedDocCounter(doc: Y.Doc, options: { skipMalformed: true }): LenientDocCounter;
@@ -110,14 +133,15 @@ export function observedDocCounter(
     if (root._start !== null) throw new TypeError(`${name} root contains non-map content`);
     const ledger = doc.getMap<unknown>(name); // throws for a different concrete Y type
     ledger.forEach((value, key) => {
-      if (name === ROOT_STAMPS && COMPANION_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) return;
-      let counter: number;
+      if (name === ROOT_STAMPS && isCompanionRow(key, value)) return;
+      let counter: number | undefined;
       try {
         counter = ledgerRowCounter(name, key, value);
       } catch (error) {
         if (options?.skipMalformed !== true) throw error;
         skipped++;
-        return;
+        counter = salvageCounter(value);
+        if (counter === undefined) return;
       }
       maximum = maximum === undefined ? counter : Math.max(maximum, counter);
     });
