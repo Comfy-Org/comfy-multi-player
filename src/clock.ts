@@ -80,11 +80,10 @@ const INTERIOR_ROUTE_PREFIX = `["${INTERIOR_ROUTE_TAG}",`;
 
 function isCompanionRow(key: string, value: unknown): boolean {
   if (key.startsWith(INTERIOR_ROUTE_PREFIX)) return typeof value === "string";
-  if (key.startsWith(GROW_REQUEST_PREFIX)) {
-    // applier GrowRequest: [name, widget | null, isInputcount]
-    return Array.isArray(value) && value.length === 3 && typeof value[0] === "string" &&
-      (value[1] === null || typeof value[1] === "string") && typeof value[2] === "boolean";
-  }
+  // applier GrowRequest: [name, widget, isInputcount]. The applier stores the
+  // grow's widget field as sent, so only the leading position is load-bearing:
+  // a row whose first element is not a number cannot carry a counter.
+  if (key.startsWith(GROW_REQUEST_PREFIX)) return Array.isArray(value) && typeof value[0] !== "number";
   return false;
 }
 

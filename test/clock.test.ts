@@ -196,7 +196,7 @@ describe("creator-owned Lamport counter", () => {
     counted.getMap<unknown>("__stamps").set('["grow_request","1","9","images"]', [50, "agent:t:1", "a".repeat(32)]);
     counted.getMap<unknown>("__stamps").set('["interior_route","3","inc"]', [60, "agent:t:1", "b".repeat(32)]);
     expect(observedDocCounter(counted)).toBe(60);
-    for (const value of [{ x: 1 }, 5, ["images.image0", null], ["images.image0", 3, false]]) {
+    for (const value of [{ x: 1 }, 5, [7, null, false]]) {
       const odd = mint({ nodes: [], links: [] }, catalog);
       odd.getMap<unknown>("__stamps").set('["grow_request","1","9","images"]', value);
       expect(() => observedDocCounter(odd), JSON.stringify(value)).toThrow(TypeError);
@@ -206,6 +206,24 @@ describe("creator-owned Lamport counter", () => {
     expect(() => observedDocCounter(route)).toThrow(TypeError);
     route.getMap<unknown>("__stamps").set('["interior_route","3","inc"]', "definition-id");
     expect(observedDocCounter(route)).toBeUndefined();
+  });
+
+  it("keeps the strict floor readable after a real grow whose widget is not a string", () => {
+    const io = (name: string, links: object) => ({ name, type: "IMAGE", ...links });
+    const doc = mint({
+      nodes: [
+        { id: 1, type: "Source", pos: [0, 0], inputs: [], outputs: [io("out", { links: [] })], widgets_values: [] },
+        { id: 2, type: "Destination", pos: [0, 0], inputs: [io("fixed", { link: null })], outputs: [], widgets_values: [] },
+      ],
+      links: [],
+    } as unknown as WorkflowJSON, growCatalog);
+    applyOps(doc, [{
+      op: "connect", op_id: "d".repeat(32), actor: "agent:t:1", base_version: 7, stamp: [7, "agent:t:1"],
+      link_id: 9, from_node: 1, from_slot: 0, to_node: 2, link_type: "IMAGE",
+      grow: { name: "images.image0", type: "IMAGE", widget: 5 },
+    } as unknown as Parameters<typeof applyOps>[1][number]], growCatalog);
+    expect(observedDocCounter(doc)).toBe(7);
+    expect(observedDocCounter(replicaOf(doc))).toBe(7);
   });
 
   it("keeps reservations out of public readStamps and preserves their identity tuple", async () => {
