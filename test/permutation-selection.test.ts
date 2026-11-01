@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const suite = "test/permutation/full-op-pool.permutation.test.ts";
+const SPAWN_TIMEOUT_MS = 60_000;
 const manifest: { scripts: Record<string, string> } =
   JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -24,15 +25,19 @@ describe("permutation scheduling contract", () => {
     if (script === "test") args.push(suite);
     args.push("--no-static-parse");
     const result = spawnSync(process.execPath, ["node_modules/vitest/vitest.mjs", "list", ...args, "--json"], {
-      cwd: root, encoding: "utf8", timeout: 10_000,
+      // A cold `vitest list` collection can take well over 10 s on a loaded
+      // machine; a killed child reports status null and reads as a contract
+      // failure. Keep the kill as a hang guard only.
+      cwd: root, encoding: "utf8", timeout: SPAWN_TIMEOUT_MS,
     });
+    expect(result.error, result.stderr).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
     const tests = JSON.parse(result.stdout) as Array<{ name: string }>;
     expect(tests.map(({ name }) => name)).toEqual([
       `full op-pool permutation equivalence ('${tier}') > covers every declared op-kind pair across representative state, stamp, actor, order, and batch dimensions`,
       `full op-pool permutation equivalence ('${tier}') > samples reproducible length-3-to-6 full-vocabulary streams with shrinking enabled`,
     ]);
-  });
+  }, SPAWN_TIMEOUT_MS + 15_000);
 
   it("runs exhaustive coverage in an unconditional, failure-propagating CI job", () => {
     const workflow = parse(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
