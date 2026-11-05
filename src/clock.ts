@@ -1,5 +1,5 @@
 import * as Y from "yjs";
-import { ROOT_CLOCK_RESERVATIONS, ROOT_STAMPS } from "./doc.js";
+import { GROW_REQUEST_TAG, INTERIOR_ROUTE_TAG, ROOT_CLOCK_RESERVATIONS, ROOT_STAMPS } from "./doc.js";
 import { assertReadableSchema } from "./schema-version.js";
 import type { Actor } from "./types.js";
 
@@ -29,13 +29,14 @@ const documentTransactionTails = new WeakMap<Y.Doc, Promise<void>>();
  * counter: the Y.Doc is the caller-owned lineage snapshot and this store's
  * transaction queue is the serialization boundary.
  *
- * Both ledgers are validated rather than silently skipped. Malformed state
+ * Both ledgers are validated rather than silently skipped; only `__stamps`
+ * companion rows, which hold no counter, are passed over. Malformed state
  * must fail closed before a producer mints an unsafe counter.
  * Incarnation-qualified target keys all belong to this document lineage, so
  * old node lives remain part of the observed floor (DQ-11 / ADR-ORDERING-0021). A
  * successful transaction writes `__clock_reservations` so the next transaction
  * observes it even before the producer's semantic op is applied. `__stamps`
- * remains exclusively the semantic write-target ledger exposed by readStamps.
+ * remains the semantic write-target ledger exposed by readStamps.
  */
 export class DocDerivedLamportClockStore implements LamportClockStore {
   public constructor(private readonly doc: Y.Doc) {}
@@ -70,32 +71,100 @@ export class DocDerivedLamportClockStore implements LamportClockStore {
   }
 }
 
+// Counterless `__stamps` rows (doc.ts companion tags), matched on the canonical
+// JSON.stringify key prefix the applier writes AND on the value shape the
+// applier stores there, so a counter under a companion-looking key is never
+// silently dropped from the floor.
+const GROW_REQUEST_PREFIX = `["${GROW_REQUEST_TAG}",`;
+const INTERIOR_ROUTE_PREFIX = `["${INTERIOR_ROUTE_TAG}",`;
+
+function isCompanionRow(key: string, value: unknown): boolean {
+  if (key.startsWith(INTERIOR_ROUTE_PREFIX)) return typeof value === "string";
+  // applier GrowRequest: [name, widget, isInputcount]. The applier stores the
+  // grow's widget field as sent, so only the leading position is load-bearing:
+  // a row whose first element is not a number cannot carry a counter.
+  if (key.startsWith(GROW_REQUEST_PREFIX)) return Array.isArray(value) && typeof value[0] !== "number";
+  return false;
+}
+
+// A malformed row still raises a lenient floor when its first element is a
+// valid counter: over-estimating the floor is safe, under-estimating it lets a
+// producer mint under a counter already in the document.
+function salvageCounter(value: unknown): number | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const counter: unknown = value[0];
+  return typeof counter === "number" && Number.isSafeInteger(counter) && counter >= 0 ? counter : undefined;
+}
+
+/** Result of a lenient floor read: the maximum valid counter and how many rows were unreadable. */
+export interface LenientDocCounter {
+  counter: number | undefined;
+  skipped: number;
+}
+
 /**
  * Maximum counter across winning stamps and reservations in a current-schema
  * document. Missing ledgers are empty; missing/unsupported schema is refused.
+ * Companion rows in `__stamps` carry no counter and are skipped.
  * Reads neither write structs nor create absent roots.
+ *
+ * By default a malformed row throws (fail closed, ADR-021). With
+ * `skipMalformed`, a producer that must keep minting gets the maximum over the
+ * readable counters instead (a malformed row whose first element is a valid
+ * counter still raises it), plus the count of malformed rows (companion rows
+ * are not counted). A caller that sees `skipped > 0` should log it. An
+ * unreadable reservations root counts as one skipped entry; an unreadable
+ * schema or `__stamps` root still throws.
  */
-export function observedDocCounter(doc: Y.Doc): number | undefined {
+export function observedDocCounter(doc: Y.Doc): number | undefined;
+export function observedDocCounter(doc: Y.Doc, options: { skipMalformed: true }): LenientDocCounter;
+export function observedDocCounter(
+  doc: Y.Doc,
+  options?: { skipMalformed: true },
+): number | undefined | LenientDocCounter {
   assertReadableSchema(doc, "observedDocCounter");
   let maximum: number | undefined;
+  let skipped = 0;
   for (const name of [ROOT_STAMPS, ROOT_CLOCK_RESERVATIONS]) {
     const root = doc.share.get(name);
     if (root === undefined) continue;
     // Snapshot roots arrive as AbstractType, not Y.Map. Type only an existing
     // root; reject sequence content before getMap can hide it in a map view.
-    if (root._start !== null) throw new TypeError(`${name} root contains non-map content`);
-    const ledger = doc.getMap<unknown>(name); // throws for a different concrete Y type
+    let ledger: Y.Map<unknown>;
+    try {
+      if (root._start !== null) throw new TypeError(`${name} root contains non-map content`);
+      ledger = doc.getMap<unknown>(name); // throws for a different concrete Y type
+    } catch (error) {
+      // Lenient mode passes over an unreadable reservations root as one skipped
+      // entry. Winning counters live in __stamps, whose root must stay readable.
+      if (options?.skipMalformed !== true || name !== ROOT_CLOCK_RESERVATIONS) throw error;
+      skipped++;
+      continue;
+    }
     ledger.forEach((value, key) => {
-      if (!Array.isArray(value) || value.length !== 3 || typeof value[1] !== "string" ||
-          typeof value[2] !== "string" || value[2].length === 0) {
-        throw new TypeError(`${name} contains a malformed stamp tuple`);
+      if (name === ROOT_STAMPS && isCompanionRow(key, value)) return;
+      let counter: number | undefined;
+      try {
+        counter = ledgerRowCounter(name, key, value);
+      } catch (error) {
+        if (options?.skipMalformed !== true) throw error;
+        skipped++;
+        counter = salvageCounter(value);
+        if (counter === undefined) return;
       }
-      if (name === ROOT_CLOCK_RESERVATIONS) validateReservation(key, value[1], value[2]);
-      const counter = validateLamportCounter(value[0], name === ROOT_STAMPS);
       maximum = maximum === undefined ? counter : Math.max(maximum, counter);
     });
   }
-  return maximum;
+  return options?.skipMalformed === true ? { counter: maximum, skipped } : maximum;
+}
+
+function ledgerRowCounter(name: string, key: string, value: unknown): number {
+  if (!Array.isArray(value) || value.length !== 3 || typeof value[1] !== "string" ||
+      typeof value[2] !== "string" || value[2].length === 0) {
+    throw new TypeError(`${name} contains a malformed stamp tuple`);
+  }
+  if (name === ROOT_CLOCK_RESERVATIONS) validateReservation(key, value[1], value[2]);
+  return validateLamportCounter(value[0], name === ROOT_STAMPS);
 }
 
 function validateReservation(key: string, producer: string, storedKey: string): void {

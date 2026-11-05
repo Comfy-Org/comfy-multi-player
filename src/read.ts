@@ -472,7 +472,8 @@ export function readApplied(doc: Y.Doc): Readonly<Record<string, unknown>> {
  * The LWW ledger as plain frozen data: write-target key →
  * `[base_version, actor, op_id]` (schema §3/§4). This is where per-op actor
  * attribution is durably observable, and it is what a cross-language
- * conformance harness compares — no projection contains it.
+ * conformance harness compares — no projection contains it. It also carries
+ * counterless `grow_request` / `interior_route` companion rows.
  */
 export function readStamps(doc: Y.Doc): Readonly<Record<string, unknown>> {
   assertSnapshotReadable(doc, "readStamps");

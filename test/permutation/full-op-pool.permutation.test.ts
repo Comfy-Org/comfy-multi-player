@@ -26,6 +26,7 @@ import {
   FROZEN_OPS,
   applyOps,
   mint,
+  observedDocCounter,
   project,
   type Op,
   type WireOp,
@@ -287,6 +288,8 @@ function run(
     }
   }
   for (const group of groups) applyGroup(group);
+  // Every document this pool produces must keep a readable Lamport floor.
+  expect(() => observedDocCounter(doc)).not.toThrow();
   const appliedIds = new Set(doc.getMap("__applied").keys());
   for (const outcome of outcomes) {
     if (outcome.outcome === "rejected") expect(appliedIds.has(outcome.opId)).toBe(false);
