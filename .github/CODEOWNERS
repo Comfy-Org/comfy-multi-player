@@ -1,0 +1,22 @@
+# The shared CRDT applier and versioned contracts are this package's production core.
+# New paths stay with frontend developers until included in the allow-list below.
+* @Comfy-Org/comfy_frontend_devs
+
+# Last match wins. Either team can approve these development and documentation paths.
+/test/ @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/bench/ @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/examples/ @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/scripts/bench-growth.mjs @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/scripts/bench-read.mjs @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/scripts/growth-matrix.mjs @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/scripts/growth-matrix.d.mts @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/README.md @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/CHANGELOG.md @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/CONTRIBUTING.md @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/docs/ROADMAP.md @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/docs/mutation-testing.md @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/docs/release-handoff.md @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/docs/spike-report-v1-007.md @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/fixtures/README.md @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/.github/ISSUE_TEMPLATE/ @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
+/.github/PULL_REQUEST_TEMPLATE.md @Comfy-Org/comfy_frontend_devs @Comfy-Org/comfy-standard-approver
