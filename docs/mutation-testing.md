@@ -21,6 +21,19 @@ Incremental mode reuses a result only when Stryker determines that the mutant an
 Each workflow run uses a unique cache save key and restores the newest compatible
 report, avoiding immutable cache-key reuse while carrying results forward.
 
+The nightly workflow is sharded. A cold run of the whole glob takes longer than a
+GitHub job may run, and the incremental report is only written by a run that
+completes, so the unsharded nightly never seeded its cache and failed every night
+from 2026-10-30 (issue #303). Each shard in `.github/workflows/mutation.yml`
+mutates one line range of the same files through `stryker.shard.config.mjs`,
+which changes only the `mutate` range, the incremental and report file names, and
+drops the per-shard break threshold. Every scoring knob comes unchanged from
+`stryker.config.mjs`. Each shard keeps its own incremental cache. The `merge` job
+runs `scripts/merge-mutation-reports.mjs`, which refuses (exit 2) a run with a
+missing shard or a `mutate` file with no mutants, writes
+`reports/mutation/mutation.json` with the configured thresholds, and then runs
+`check:mutation-report` on the merged report.
+
 ## Baseline policy
 
 No measured baseline is published here without retained output from `npm run check:mutation-report`. The available archived report belongs to a different historical checkout and configuration, so it cannot validate the figures formerly quoted here or in `stryker.config.mjs`.
@@ -54,4 +67,4 @@ Use Node 22 or newer. Do not quote a score unless the checker passes and its out
 
 INCONCLUSIVE is not a pass. Re-run on a suitable host and retain the checker output; do not record the score.
 
-Stryker writes local HTML and JSON reports plus the incremental report under `reports/`. Generated reports and `.stryker-tmp/` are ignored. `.github/workflows/mutation.yml` runs nightly and by manual dispatch, caches the incremental report, and uploads `reports/mutation/` as an artifact.
+Stryker writes local HTML and JSON reports plus the incremental report under `reports/`. Generated reports and `.stryker-tmp/` are ignored. `.github/workflows/mutation.yml` runs nightly and by manual dispatch, caches one incremental report per shard, and uploads each shard report plus the merged `reports/mutation/` as artifacts.
