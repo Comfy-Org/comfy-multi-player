@@ -7,6 +7,35 @@ this package uses semantic versioning.
 
 ## Unreleased
 
+## 0.3.14 - 2026-11-19
+
+A Lamport floor fix (#300). No wire key, op kind or schema version changes.
+
+### Fixed
+
+- `observedDocCounter` no longer throws `__stamps contains a malformed stamp
+  tuple` on documents with an autogrow connect or a deleted subgraph instance.
+  The applier's own counterless `grow_request` and `interior_route` companion
+  rows are passed over; a counter-shaped row under a companion-looking key is
+  still counted. Producers that read the floor (the cloud doc host's Lamport
+  lift) work on those documents again (schema Amendment A27).
+
+### Added
+
+- Opt-in `observedDocCounter(doc, { skipMalformed: true })` returns
+  `{ counter, skipped }` and keeps any readable counter from a malformed row,
+  for producers that must keep minting. An unreadable `__clock_reservations`
+  root counts as one skipped entry in this mode. The one-argument call and
+  `DocDerivedLamportClockStore` stay fail-closed. `LenientDocCounter` is
+  exported.
+
+### Tests
+
+- The full op-pool permutation sweep asserts every generated document's floor
+  is readable (#300); add-versus-edit and DynamicGroup layout edges are pinned
+  (#299); the permutation-selection test no longer fails on a slow
+  `vitest list` (#301).
+
 ## 0.3.13 - 2026-10-28
 
 DynamicGroup support in the shared document (#276), with its decision records
