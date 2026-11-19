@@ -40,7 +40,7 @@ A Lamport floor fix (#300). No wire key, op kind or schema version changes.
 ## 0.3.13 - 2026-10-28
 
 DynamicGroup support in the shared document (#276), with its decision records
-(ADR-039, ADR-040), replay proof (#295) and its own rejection codes (#283). No
+(ADR-OPS-WIDGET-0039, ADR-OPS-WIDGET-0040), replay proof (#295) and its own rejection codes (#283). No
 wire key, op kind or schema version changes.
 
 ### Added
@@ -65,9 +65,9 @@ wire key, op kind or schema version changes.
 - A count change only changes projection. Hidden row fields keep their
   name-keyed registers and reappear with their retained values when the count
   grows; newly visible fields without a stored value project template defaults
-  (ADR-039).
+  (ADR-OPS-WIDGET-0039).
 - Agent row changes are whole-group replacement over existing `set_widget`
-  ops, not a structural row operation (ADR-040).
+  ops, not a structural row operation (ADR-OPS-WIDGET-0040).
 
 ### Fixed
 

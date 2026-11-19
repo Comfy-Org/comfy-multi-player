@@ -1,9 +1,18 @@
-# ADR-040: DynamicGroup row changes are whole-group replacement, not row operations
+# ADR-OPS-WIDGET-0040: DynamicGroup row changes are whole-group replacement, not row operations
 
-- **Status:** Accepted for V1. No structural row operation is added to this package.
-- **Date:** 2026-10-23
+Date: 2026-10-23
+
+Relation: Builds on ADR-OPS-WIDGET-0039; hidden rows remain retained, not deleted.
+
+## Status
+
+Accepted
+
+Status note: accepted for V1. No structural row operation is added to this package.
+**Renumbered**: was `ADR-040` in `docs/decisions/` until it moved to `docs/adr/`.
+
 - **Decider:** in-app Agent program, `operator:delivery`, row `dgarch-2`
-- **Depends on:** [ADR-039](ADR-039-hidden-dynamic-group-rows-are-retained-not-deleted.md)
+- **Depends on:** [ADR-OPS-WIDGET-0039](OPS-WIDGET-0039-hidden-dynamic-group-rows-are-retained-not-deleted.md)
   (hidden rows are retained, not deleted). Retention keeps a shrink from claiming
   a peer's hidden field registers and makes surplus losing writes non-destructive.
 - **Constrains:** this package's op vocabulary; comfy-cli's `docs/op-vocabulary-v1.md`
@@ -71,7 +80,7 @@ accident:
 **Concurrent edits — two actors changing different rows.** Two replacements at equal
 Lamport counters tie on the counter, so the actor comparison decides *every* contended
 register the same way. When both producers write the same register set, one actor's
-complete list survives intact and the other's is lost whole. With ADR-039 retaining the
+complete list survives intact and the other's is lost whole. With ADR-OPS-WIDGET-0039 retaining the
 loser's surplus hidden registers, the projection is exactly one of the two intended lists.
 
 There is one bounded exception: a producer omits a linked or promoted row that it observed
@@ -100,17 +109,17 @@ The only identities external readers hold durably — a link's input slot and a 
 proxy — are protected by refusal (rule 3), not by rewriting. **Accepted as an explicit
 non-property.**
 
-**Hidden rows.** Governed by ADR-039: a shrink retains the vacated rows' registers. A
+**Hidden rows.** Governed by ADR-OPS-WIDGET-0039: a shrink retains the vacated rows' registers. A
 count-only regrow (remote, load, or undo/redo of a count-only transition) surfaces them
 rather than template defaults; a human's explicit local Add creates a default-valued row
 and announces those defaults. Replacement does not read hidden state and must not clear
 it — clearing would claim registers the producer does not own and would destroy a peer's
-concurrent edit at that index, which is the same objection ADR-039 raises against a delete
+concurrent edit at that index, which is the same objection ADR-OPS-WIDGET-0039 raises against a delete
 op. The consequence is real and new: before #1004 the Agent could not shrink a group, so
 an Agent shrink followed by a count-only regrow, such as a remote count write or an undo
 across the shrink, now surfaces the Agent's discarded rows. A follower must restore those
 retained values rather than template defaults, and must not report hidden-row keys as
-missing widgets. That is ADR-039's two
+missing widgets. That is ADR-OPS-WIDGET-0039's two
 must-change frontend readers (`changed()` widening and `reportMissingWidgets()`); the
 added-row announce stays. **Accepted, gated on those reader fixes, including idempotent
 retry when a frame regrows a row and then fails to restore one of its retained fields.**

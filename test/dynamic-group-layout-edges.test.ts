@@ -17,7 +17,7 @@ const write = (widget: string, value: unknown, stamp: number, actor: string) => 
   op_id: `${actor.padEnd(2, "0")}${stamp.toString(16).padStart(30, "0")}`, actor, base_version: 1, stamp: [stamp, actor],
 } satisfies TopLevelSetWidgetOp);
 
-describe("#21091 same-index add versus peer edit (ADR-039 V1 residual)", () => {
+describe("#21091 same-index add versus peer edit (ADR-OPS-WIDGET-0039 V1 residual)", () => {
   const addAndAnnounce = (stamp: number) => [
     write("loras", 1, stamp, "aa"),
     write("loras.0.lora_name", "default.safetensors", stamp + 2, "aa"),

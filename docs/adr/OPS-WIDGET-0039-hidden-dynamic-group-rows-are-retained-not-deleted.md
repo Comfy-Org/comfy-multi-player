@@ -1,7 +1,14 @@
-# ADR-039: Hidden DynamicGroup rows are retained, not deleted
+# ADR-OPS-WIDGET-0039: Hidden DynamicGroup rows are retained, not deleted
 
-- **Status:** Accepted. No document delete operation will be added for widget registers.
-- **Date:** 2026-10-23
+Date: 2026-10-23
+
+## Status
+
+Accepted
+
+Status note: no document delete operation will be added for widget registers.
+**Renumbered**: was `ADR-039` in `docs/decisions/` until it moved to `docs/adr/`.
+
 - **Decider:** in-app Agent program, `operator:delivery`, row `dgarch-4`
 - **Supersedes nothing. Constrains:** this package's op vocabulary, and the
   `ComfyUI_frontend` readers enumerated below.
