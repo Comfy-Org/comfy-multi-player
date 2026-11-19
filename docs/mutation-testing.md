@@ -25,14 +25,19 @@ The nightly workflow is sharded. A cold run of the whole glob takes longer than 
 GitHub job may run, and the incremental report is only written by a run that
 completes, so the unsharded nightly never seeded its cache and failed every night
 from 2026-10-30 (issue #303). Each shard in `.github/workflows/mutation.yml`
-mutates one line range of the same files through `stryker.shard.config.mjs`,
+mutates part k of n of one `mutate` file through `stryker.shard.config.mjs`,
 which changes only the `mutate` range, the incremental and report file names, and
 drops the per-shard break threshold. Every scoring knob comes unchanged from
-`stryker.config.mjs`. Each shard keeps its own incremental cache. The `merge` job
-runs `scripts/merge-mutation-reports.mjs`, which refuses (exit 2) a run with a
-missing shard or a `mutate` file with no mutants, writes
-`reports/mutation/mutation.json` with the configured thresholds, and then runs
-`check:mutation-report` on the merged report.
+`stryker.config.mjs`. Part edges fall only between top-level statements: Stryker
+emits a mutant only when its node lies wholly inside a `mutate` range, so an edge
+inside a function would silently drop the mutants that cross it. Each shard keeps
+its own incremental cache and records the range it owned. The `merge` job runs
+`scripts/merge-mutation-reports.mjs`, which drops any result outside its shard's
+range (incremental mode can carry a relocated cached result there) and refuses
+(exit 2) a missing shard or range, parts that do not tile a file, a `mutate` file
+with no mutants, or a mutant counted twice. It writes
+`reports/mutation/mutation.json` with the configured thresholds, and
+`check:mutation-report` then runs on the merged report.
 
 ## Baseline policy
 

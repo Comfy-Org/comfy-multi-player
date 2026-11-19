@@ -26,27 +26,27 @@ jobs:
       # suite, so a cold run is many hours; every nightly from 2026-10-30 to
       # 2026-11-18 hit the 330-minute step cap with no report. `incremental: true`
       # only writes its report on a run that COMPLETES, so the cache never
-      # seeded and every run paid full cost (issue #303). Each shard mutates a
-      # line range of the same glob with the same pinned scoring knobs
-      # (stryker.shard.config.mjs), finishes on its own, and seeds its own
-      # incremental cache. The ranges must cover every `mutate` file in
-      # stryker.config.mjs: the merge job refuses a merged report missing one.
-      # When a file grows past its last range, the open-ended upper bound keeps
-      # it covered. Keep `merge`'s expected shard count equal to this list.
+      # seeded and every run paid full cost (issue #303). Each shard mutates
+      # part k of n of one `mutate` file with the same pinned scoring knobs
+      # (stryker.shard.config.mjs). Part edges fall only between top-level
+      # statements, so no mutant's node crosses an edge, and the parts of a
+      # file tile it. Every `mutate` file in stryker.config.mjs needs its parts
+      # here: the merge job refuses a merged report missing a file or a part.
+      # Keep `merge`'s expected shard count equal to this list.
       matrix:
         include:
-          - { id: applier-1, mutate: "src/applier.ts:1-550" }
-          - { id: applier-2, mutate: "src/applier.ts:551-1100" }
-          - { id: applier-3, mutate: "src/applier.ts:1101-1650" }
-          - { id: applier-4, mutate: "src/applier.ts:1651-2200" }
-          - { id: applier-5, mutate: "src/applier.ts:2201-2750" }
-          - { id: applier-6, mutate: "src/applier.ts:2751-3300" }
-          - { id: applier-7, mutate: "src/applier.ts:3301-99999" }
-          - { id: doc-1, mutate: "src/doc.ts:1-570" }
-          - { id: doc-2, mutate: "src/doc.ts:571-99999" }
-          - { id: project, mutate: "src/project.ts" }
-          - { id: mint, mutate: "src/mint.ts" }
-          - { id: stamps, mutate: "src/stamps.ts" }
+          - { id: applier-1, file: src/applier.ts, part: 1/7 }
+          - { id: applier-2, file: src/applier.ts, part: 2/7 }
+          - { id: applier-3, file: src/applier.ts, part: 3/7 }
+          - { id: applier-4, file: src/applier.ts, part: 4/7 }
+          - { id: applier-5, file: src/applier.ts, part: 5/7 }
+          - { id: applier-6, file: src/applier.ts, part: 6/7 }
+          - { id: applier-7, file: src/applier.ts, part: 7/7 }
+          - { id: doc-1, file: src/doc.ts, part: 1/2 }
+          - { id: doc-2, file: src/doc.ts, part: 2/2 }
+          - { id: project, file: src/project.ts, part: 1/1 }
+          - { id: mint, file: src/mint.ts, part: 1/1 }
+          - { id: stamps, file: src/stamps.ts, part: 1/1 }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,9 +64,9 @@ jobs:
         run: npm run build
 
       # Use a unique save key per run and restore the newest compatible report
-      # for this shard. Including the lockfile and both Stryker configs prevents
-      # results produced with different dependencies, measurement pins or shard
-      # ranges from being reused.
+      # for this shard. Including the lockfile, both Stryker configs and this
+      # workflow prevents results produced with different dependencies,
+      # measurement pins or shard layout from being reused.
       - name: Restore incremental mutation report
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -83,7 +83,8 @@ jobs:
       - name: Mutation tests
         timeout-minutes: 330
         env:
-          MUTATION_SHARD: ${{ matrix.mutate }}
+          MUTATION_SHARD_FILE: ${{ matrix.file }}
+          MUTATION_SHARD_PART: ${{ matrix.part }}
           MUTATION_SHARD_ID: ${{ matrix.id }}
         run: npx stryker run stryker.shard.config.mjs
 
@@ -118,8 +119,10 @@ jobs:
           path: reports/mutation/shards/
           merge-multiple: true
 
-      # Refuses (exit 2) when any shard report is missing or a mutate file has
-      # no mutants, so a partial run can never be scored as the whole.
+      # Refuses (exit 2) when a shard report or range is missing, a file's parts
+      # do not tile it, a mutate file has no mutants or a mutant is counted twice,
+      # so a partial run can never be scored as the whole. Drops cached results
+      # that incremental mode carried outside their shard's range.
       - name: Merge shard reports
         run: node scripts/merge-mutation-reports.mjs 12
 
