@@ -96,6 +96,48 @@ describe("ADR validation", () => {
     expect(() => run(root)).toThrow(/missing a valid Date field/);
   });
 
+  test("rejects ADR-numbered records outside docs/adr", () => {
+    const root = fixture();
+    mkdirSync(join(root, "docs", "notes"), { recursive: true });
+    writeFileSync(
+      join(root, "docs", "notes", "ADR-039-legacy-decision.md"),
+      "# Legacy decision\n",
+    );
+    expect(() => run(root)).toThrow(
+      /ADR records outside docs\/adr: docs\/notes\/ADR-039-legacy-decision\.md/,
+    );
+  });
+
+  test("rejects ADR-headed records outside docs/adr", () => {
+    const root = fixture();
+    writeFileSync(
+      join(root, "docs", "hidden-rows.md"),
+      "# ADR-CRDT-0002: Misplaced decision\n",
+    );
+    expect(() => run(root)).toThrow(/ADR records outside docs\/adr: docs\/hidden-rows\.md/);
+  });
+
+  test("rejects records in docs/decisions other than the exceptions log", () => {
+    const root = fixture();
+    mkdirSync(join(root, "docs", "decisions"), { recursive: true });
+    writeFileSync(join(root, "docs", "decisions", "EXCEPTIONS.md"), "# Invariant exceptions\n");
+    writeFileSync(join(root, "docs", "decisions", "row-contract.md"), "# Row contract\n");
+    expect(() => run(root)).toThrow(
+      /ADR records outside docs\/adr: docs\/decisions\/row-contract\.md$/m,
+    );
+  });
+
+  test("allows the exceptions log and the ADR template outside docs/adr", () => {
+    const root = fixture();
+    mkdirSync(join(root, "docs", "decisions"), { recursive: true });
+    writeFileSync(join(root, "docs", "decisions", "EXCEPTIONS.md"), "# Invariant exceptions\n");
+    writeFileSync(
+      join(root, "docs", "ADR-TEMPLATE.md"),
+      "# ADR-<DOMAIN>[-<SUBDOMAIN>]-<NNNN>: Decision title\n",
+    );
+    expect(run(root)).toContain("ADR validation passed");
+  });
+
   test("rejects companion directories without a matching ADR", () => {
     const root = fixture();
     mkdirSync(join(root, "docs", "adr", "CRDT-0002-evidence"));

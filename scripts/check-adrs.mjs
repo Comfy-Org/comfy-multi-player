@@ -1,10 +1,47 @@
 #!/usr/bin/env node
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 
 const ADR_FILE_PATTERN =
   /^([A-Z][A-Z0-9]*(?:-[A-Z][A-Z0-9]*)?-\d{4})-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
+
+const ADR_NUMBER_PATTERN = /ADR-\d/i;
+const ADR_HEADING_PATTERN = /^# ADR-[A-Z0-9]/;
+const SKIPPED_DIRECTORIES = new Set(["node_modules", "dist", "reports"]);
+const DECISIONS_DIRECTORY = join("docs", "decisions");
+const DECISIONS_ALLOWED = new Set(["EXCEPTIONS.md"]);
+
+function isAdrLike(root, path) {
+  const rel = relative(root, path);
+  const name = rel.split(sep).pop() ?? "";
+  if (ADR_NUMBER_PATTERN.test(name)) return true;
+  if (
+    rel.startsWith(`${DECISIONS_DIRECTORY}${sep}`) &&
+    !DECISIONS_ALLOWED.has(rel.slice(DECISIONS_DIRECTORY.length + 1))
+  ) {
+    return true;
+  }
+  return ADR_HEADING_PATTERN.test(readFileSync(path, "utf8").split(/\r?\n/, 1)[0] ?? "");
+}
+
+export function findStrayAdrs(root) {
+  const adrDirectory = join(root, "docs", "adr");
+  const strays = [];
+  const walk = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name.startsWith(".") || SKIPPED_DIRECTORIES.has(entry.name)) continue;
+        if (path !== adrDirectory) walk(path);
+      } else if (entry.isFile() && entry.name.endsWith(".md") && isAdrLike(root, path)) {
+        strays.push(relative(root, path).split(sep).join("/"));
+      }
+    }
+  };
+  walk(root);
+  return strays.sort();
+}
 
 export function validateAdrDirectory(directory) {
   const entries = readdirSync(directory, { withFileTypes: true });
@@ -73,5 +110,11 @@ export function validateAdrDirectory(directory) {
 
 if (process.argv[1] && existsSync(process.argv[1])) {
   validateAdrDirectory(join(process.cwd(), "docs", "adr"));
+  const strays = findStrayAdrs(process.cwd());
+  if (strays.length > 0) {
+    throw new Error(
+      `ADR records outside docs/adr: ${strays.join(", ")}`,
+    );
+  }
   process.stdout.write("ADR validation passed\n");
 }
