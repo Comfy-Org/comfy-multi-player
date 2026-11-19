@@ -26,7 +26,8 @@ A Lamport floor fix (#300). No wire key, op kind or schema version changes.
   `{ counter, skipped }` and keeps any readable counter from a malformed row,
   for producers that must keep minting. An unreadable `__clock_reservations`
   root counts as one skipped entry in this mode. The one-argument call and
-  `DocDerivedLamportClockStore` stay fail-closed. `LenientDocCounter` is
+  `DocDerivedLamportClockStore` stay fail-closed on every other row; only the
+  companion-shaped rows above are passed over. `LenientDocCounter` is
   exported.
 
 ### Tests
