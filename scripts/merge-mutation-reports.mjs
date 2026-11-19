@@ -15,7 +15,8 @@
  *
  * Exits 2 (INCONCLUSIVE, as `check:mutation-report` uses the code) rather than
  * score part of the mutate glob as the whole: a missing or unreadable shard, a
- * file whose shard ranges do not tile it from line 1 without gaps or overlap, a
+ * file whose shard parts are not all present or do not tile it from line 1 to
+ * its last line, a
  * `mutate` file with no mutants, or the same mutant reported twice.
  */
 
@@ -63,7 +64,7 @@ for (const id of ids) {
   const report = readJson(`${id}.json`);
   if (!existsSync(join(shardDir, `${id}.range.json`))) inconclusive(`shard ${id} has no ${id}.range.json`);
   const range = readJson(`${id}.range.json`);
-  (ranges[range.file] ??= []).push([range.startLine, range.endLine, id]);
+  (ranges[range.file] ??= []).push({ ...range, id });
   schemaVersion ??= report.schemaVersion;
   for (const [path, file] of Object.entries(report.files ?? {})) {
     const target = (files[path] ??= { language: file.language, source: file.source, mutants: [] });
@@ -82,11 +83,19 @@ for (const id of ids) {
 }
 
 for (const [path, parts] of Object.entries(ranges)) {
-  parts.sort((a, b) => a[0] - b[0]);
+  parts.sort((a, b) => a.startLine - b.startLine);
+  const n = Number(String(parts[0].part).split("/")[1]);
+  const got = parts.map((r) => r.part).sort().join(",");
+  const want = Array.from({ length: n }, (_, i) => `${i + 1}/${n}`).sort().join(",");
+  if (!(n >= 1) || got !== want) inconclusive(`shard parts for ${path} are [${got}], expected [${want}]`);
   let next = 1;
-  for (const [start, end, id] of parts) {
-    if (start !== next) inconclusive(`shard ranges for ${path} do not tile it: ${id} starts at line ${start}, expected ${next}`);
-    next = end + 1;
+  for (const { startLine, endLine, id } of parts) {
+    if (startLine !== next) inconclusive(`shard ranges for ${path} do not tile it: ${id} starts at line ${startLine}, expected ${next}`);
+    next = endLine + 1;
+  }
+  const last = parts.at(-1);
+  if (last.endLine !== last.lastLine) {
+    inconclusive(`shard ranges for ${path} stop at line ${last.endLine}, but the file has ${last.lastLine} lines`);
   }
 }
 

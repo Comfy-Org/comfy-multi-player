@@ -39,34 +39,41 @@ export function topLevelParts(source, n) {
   const file = ts.createSourceFile("x.ts", source, ts.ScriptTarget.Latest, true);
   const lineOf = (pos) => file.getLineAndCharacterOfPosition(pos).line + 1;
   const lastLine = lineOf(source.length);
-  const ends = file.statements.map((s) => lineOf(s.getEnd()));
-  if (n > ends.length) throw new Error(`cannot split ${ends.length} top-level statements into ${n} parts`);
+  const statements = file.statements;
+  // A legal edge is the end line of statement i when statement i + 1 starts on a
+  // later line; two statements sharing a line can never be separated.
+  const edges = [];
+  for (let i = 0; i + 1 < statements.length; i++) {
+    const end = lineOf(statements[i].getEnd());
+    if (lineOf(statements[i + 1].getStart(file)) > end) edges.push(end);
+  }
+  if (n - 1 > edges.length) throw new Error(`cannot split ${edges.length + 1} top-level line groups into ${n} parts`);
   const parts = [];
   let start = 1;
   let next = 0;
-  for (let k = 1; k <= n; k++) {
-    if (k === n) {
-      parts.push([start, lastLine]);
-      break;
-    }
+  for (let k = 1; k < n; k++) {
     const target = Math.round((lastLine * k) / n);
-    // Leave at least one statement for each remaining part.
-    const maxIndex = ends.length - (n - k) - 1;
+    // Leave at least one edge for each remaining part.
+    const maxIndex = edges.length - (n - k);
     let i = next;
-    while (i < maxIndex && ends[i] < target) i++;
-    parts.push([start, ends[i]]);
-    start = ends[i] + 1;
+    while (i < maxIndex && edges[i] < target) i++;
+    parts.push([start, edges[i]]);
+    start = edges[i] + 1;
     next = i + 1;
   }
+  parts.push([start, lastLine]);
   return parts;
 }
 
 const file = process.env.MUTATION_SHARD_FILE;
-const part = /^(\d+)\/(\d+)$/.exec(process.env.MUTATION_SHARD_PART ?? "");
+const rawPart = process.env.MUTATION_SHARD_PART;
+const part = /^(\d+)\/(\d+)$/.exec(rawPart ?? "");
 const id = process.env.MUTATION_SHARD_ID;
 
 let config = base;
-if (file !== undefined || part !== null || id !== undefined) {
+// Any shard variable set, valid or not, means a shard was asked for: never fall
+// back to the full unsharded run on a half-configured environment.
+if (file !== undefined || rawPart !== undefined || id !== undefined) {
   if (!file || !part || !id || !/^[a-z0-9-]+$/.test(id)) {
     throw new Error("stryker.shard.config.mjs needs MUTATION_SHARD_FILE, MUTATION_SHARD_PART (k/n) and MUTATION_SHARD_ID ([a-z0-9-]+)");
   }
@@ -74,9 +81,14 @@ if (file !== undefined || part !== null || id !== undefined) {
   const k = Number(part[1]);
   const n = Number(part[2]);
   if (k < 1 || k > n) throw new Error(`MUTATION_SHARD_PART ${k}/${n} is out of range`);
-  const [startLine, endLine] = topLevelParts(readFileSync(file, "utf8"), n)[k - 1];
+  const source = readFileSync(file, "utf8");
+  const [startLine, endLine] = topLevelParts(source, n)[k - 1];
+  const lastLine = source.split("\n").length;
   mkdirSync("reports/mutation/shards", { recursive: true });
-  writeFileSync(`reports/mutation/shards/${id}.range.json`, JSON.stringify({ file, part: `${k}/${n}`, startLine, endLine }));
+  writeFileSync(
+    `reports/mutation/shards/${id}.range.json`,
+    JSON.stringify({ file, part: `${k}/${n}`, startLine, endLine, lastLine }),
+  );
   config = {
     ...base,
     mutate: [`${file}:${startLine}-${endLine}`],

@@ -42,8 +42,8 @@ function shard(path: string, mutants: Mutant[]) {
   });
 }
 
-function range(file: string, startLine: number, endLine: number) {
-  return JSON.stringify({ file, part: "1/1", startLine, endLine });
+function range(file: string, startLine: number, endLine: number, part = "1/1", lastLine = endLine) {
+  return JSON.stringify({ file, part, startLine, endLine, lastLine });
 }
 
 function runMerge(files: Record<string, string>, expected: number) {
@@ -65,9 +65,9 @@ function runMerge(files: Record<string, string>, expected: number) {
 
 const complete = (): Record<string, string> => ({
   "a-1.json": shard("src/a.ts", [{ status: "Killed", line: 2 }, { status: "Survived", line: 9 }]),
-  "a-1.range.json": range("src/a.ts", 1, 10),
+  "a-1.range.json": range("src/a.ts", 1, 10, "1/2", 20),
   "a-2.json": shard("src/a.ts", [{ status: "Killed", line: 15 }]),
-  "a-2.range.json": range("src/a.ts", 11, 20),
+  "a-2.range.json": range("src/a.ts", 11, 20, "2/2", 20),
   "b.json": shard("src/b.ts", [{ status: "Timeout", line: 1 }]),
   "b.range.json": range("src/b.ts", 1, 5),
 });
@@ -106,8 +106,6 @@ describe("merge-mutation-reports", () => {
 
   it("is INCONCLUSIVE when the same mutant is reported by two shards", () => {
     const files = complete();
-    files["a-2.range.json"] = range("src/a.ts", 11, 20);
-    files["a-1.range.json"] = range("src/a.ts", 1, 10);
     files["a-2.json"] = shard("src/a.ts", [{ status: "Killed", line: 15 }, { status: "Killed", line: 15 }]);
     const { run } = runMerge(files, 3);
     expect(run.status).toBe(2);
@@ -132,10 +130,27 @@ describe("merge-mutation-reports", () => {
 
   it("is INCONCLUSIVE when the ranges leave a gap in a file", () => {
     const files = complete();
-    files["a-2.range.json"] = range("src/a.ts", 12, 20);
+    files["a-2.range.json"] = range("src/a.ts", 12, 20, "2/2", 20);
     const { run } = runMerge(files, 3);
     expect(run.status).toBe(2);
     expect(run.stderr).toContain("do not tile it: a-2 starts at line 12, expected 11");
+  });
+
+  it("is INCONCLUSIVE when the parts stop before the end of the file", () => {
+    const files = complete();
+    files["a-1.range.json"] = range("src/a.ts", 1, 10, "1/3", 30);
+    files["a-2.range.json"] = range("src/a.ts", 11, 20, "2/3", 30);
+    const { run } = runMerge(files, 3);
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain("shard parts for src/a.ts are [1/3,2/3], expected [1/3,2/3,3/3]");
+  });
+
+  it("is INCONCLUSIVE when the last part ends before the file's last line", () => {
+    const files = complete();
+    files["a-2.range.json"] = range("src/a.ts", 11, 20, "2/2", 25);
+    const { run } = runMerge(files, 3);
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain("stop at line 20, but the file has 25 lines");
   });
 
   it("is INCONCLUSIVE when a mutate file has no mutants, even with an empty entry", () => {
@@ -193,7 +208,13 @@ describe("topLevelParts", () => {
     }
   });
 
-  it("refuses more parts than top-level statements", () => {
-    expect(() => topLevelParts("const a = 1;\n", 2)).toThrow(/cannot split 1 top-level statements into 2 parts/);
+  it("never separates two top-level statements that share a line", () => {
+    const shared = "const a = 1; function f() {\n  return true;\n}\nconst b = 2;\n";
+    expect(topLevelParts(shared, 2)).toEqual([[1, 3], [4, 5]]);
+    expect(() => topLevelParts("const a = 1; function f() {\n  return true;\n}\n", 2)).toThrow(/cannot split 1 top-level line groups into 2 parts/);
+  });
+
+  it("refuses more parts than top-level line groups", () => {
+    expect(() => topLevelParts("const a = 1;\n", 2)).toThrow(/cannot split 1 top-level line groups into 2 parts/);
   });
 });

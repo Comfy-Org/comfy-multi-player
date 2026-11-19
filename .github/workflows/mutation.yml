@@ -64,16 +64,19 @@ jobs:
         run: npm run build
 
       # Use a unique save key per run and restore the newest compatible report
-      # for this shard. Including the lockfile, both Stryker configs and this
-      # workflow prevents results produced with different dependencies,
-      # measurement pins or shard layout from being reused.
+      # for this shard. Including the lockfile and stryker.config.mjs prevents
+      # results produced with different dependencies or measurement pins from
+      # being reused. The shard layout is deliberately NOT in the key: Stryker
+      # re-runs any mutant whose code or tests changed, and the merge drops a
+      # cached result outside its shard's current range, so moving an edge
+      # costs only the moved mutants, not a cold run of every shard.
       - name: Restore incremental mutation report
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: reports/stryker-incremental-${{ matrix.id }}.json
-          key: stryker-incremental-${{ runner.os }}-${{ matrix.id }}-${{ hashFiles('package-lock.json', 'stryker.config.mjs', 'stryker.shard.config.mjs', '.github/workflows/mutation.yml') }}-${{ github.run_id }}
+          key: stryker-incremental-${{ runner.os }}-${{ matrix.id }}-${{ hashFiles('package-lock.json', 'stryker.config.mjs') }}-${{ github.run_id }}
           restore-keys: |
-            stryker-incremental-${{ runner.os }}-${{ matrix.id }}-${{ hashFiles('package-lock.json', 'stryker.config.mjs', 'stryker.shard.config.mjs', '.github/workflows/mutation.yml') }}-
+            stryker-incremental-${{ runner.os }}-${{ matrix.id }}-${{ hashFiles('package-lock.json', 'stryker.config.mjs') }}-
 
       # Step-level, and deliberately tighter than the job cap above: a step that
       # times out is marked FAILED and the job keeps going, so the upload step
