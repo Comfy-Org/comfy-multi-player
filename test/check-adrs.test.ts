@@ -117,6 +117,24 @@ describe("ADR validation", () => {
     expect(() => run(root)).toThrow(/ADR records outside docs\/adr: docs\/hidden-rows\.md/);
   });
 
+  test("rejects canonically named ADRs outside docs/adr", () => {
+    const root = fixture();
+    mkdirSync(join(root, "docs", "notes"), { recursive: true });
+    writeFileSync(join(root, "docs", "notes", "OPS-WIDGET-0041-row-policy.md"), "# Row policy\n");
+    expect(() => run(root)).toThrow(
+      /ADR records outside docs\/adr: docs\/notes\/OPS-WIDGET-0041-row-policy\.md/,
+    );
+  });
+
+  test("rejects non-Markdown files in docs/decisions", () => {
+    const root = fixture();
+    mkdirSync(join(root, "docs", "decisions"), { recursive: true });
+    writeFileSync(join(root, "docs", "decisions", "row-contract.txt"), "Row contract\n");
+    expect(() => run(root)).toThrow(
+      /ADR records outside docs\/adr: docs\/decisions\/row-contract\.txt/,
+    );
+  });
+
   test("rejects records in docs/decisions other than the exceptions log", () => {
     const root = fixture();
     mkdirSync(join(root, "docs", "decisions"), { recursive: true });

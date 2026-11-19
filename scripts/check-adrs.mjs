@@ -15,13 +15,11 @@ const DECISIONS_ALLOWED = new Set(["EXCEPTIONS.md"]);
 function isAdrLike(root, path) {
   const rel = relative(root, path);
   const name = rel.split(sep).pop() ?? "";
-  if (ADR_NUMBER_PATTERN.test(name)) return true;
-  if (
-    rel.startsWith(`${DECISIONS_DIRECTORY}${sep}`) &&
-    !DECISIONS_ALLOWED.has(rel.slice(DECISIONS_DIRECTORY.length + 1))
-  ) {
-    return true;
+  if (rel.startsWith(`${DECISIONS_DIRECTORY}${sep}`)) {
+    return !DECISIONS_ALLOWED.has(rel.slice(DECISIONS_DIRECTORY.length + 1));
   }
+  if (!name.endsWith(".md")) return false;
+  if (ADR_NUMBER_PATTERN.test(name) || ADR_FILE_PATTERN.test(name)) return true;
   return ADR_HEADING_PATTERN.test(readFileSync(path, "utf8").split(/\r?\n/, 1)[0] ?? "");
 }
 
@@ -34,7 +32,7 @@ export function findStrayAdrs(root) {
       if (entry.isDirectory()) {
         if (entry.name.startsWith(".") || SKIPPED_DIRECTORIES.has(entry.name)) continue;
         if (path !== adrDirectory) walk(path);
-      } else if (entry.isFile() && entry.name.endsWith(".md") && isAdrLike(root, path)) {
+      } else if (entry.isFile() && isAdrLike(root, path)) {
         strays.push(relative(root, path).split(sep).join("/"));
       }
     }

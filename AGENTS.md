@@ -55,10 +55,10 @@ domain. The heading must be `# ADR-<IDENTIFIER>: Title`, followed by a
 `Date: YYYY-MM-DD` line and a `## Status` value of `Proposed`, `Accepted`,
 `Rejected`, `Deprecated`, or `Superseded`. Start from `docs/ADR-TEMPLATE.md`.
 Run `npm run check:adrs`; CI enforces naming, metadata, identifier uniqueness,
-companion-directory ownership, links to ADR files, and that no ADR-numbered or
-ADR-headed Markdown (or anything in `docs/decisions/` besides `EXCEPTIONS.md`)
-lives outside `docs/adr/`. Superseded records stay
-in place and link to their replacement. Relate records with Builds on, Refines,
+companion-directory ownership, links to ADR files, and that no ADR-numbered,
+ADR-named, or ADR-headed Markdown lives outside `docs/adr/` (nothing but
+`EXCEPTIONS.md` may live in `docs/decisions/`). Superseded records stay in
+place and link to their replacement. Relate records with Builds on, Refines,
 Amends, or Supersedes and state what remains true. An Accepted record remains
 binding until its replacement is also Accepted; a Proposed replacement is review
 context, not permission to contradict it. `Context`, `Decision`, `Alternatives
