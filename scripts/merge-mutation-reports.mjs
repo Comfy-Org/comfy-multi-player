@@ -17,7 +17,12 @@
  * score part of the mutate glob as the whole: a missing or unreadable shard, a
  * file whose shard parts are not all present or do not tile it from line 1 to
  * its last line, a
- * `mutate` file with no mutants, or the same mutant reported twice.
+ * `mutate` file with no mutants, the same mutant reported twice, or a mutant
+ * reported Survived after running zero tests. With `coverageAnalysis: "all"` a
+ * covered mutant runs the suite, so a zero-test survivor means the test runner
+ * selected nothing: @stryker-mutator/vitest-runner 10.0.0 under vitest 5 built
+ * its test-name filter with the old separator, skipped every test and scored
+ * 3152 mutants Survived (run 44459712384, 25.19%).
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -60,6 +65,7 @@ const ranges = {};
 const seen = new Set();
 let schemaVersion;
 let dropped = 0;
+const ranNothing = [];
 for (const id of ids) {
   const report = readJson(`${id}.json`);
   if (!existsSync(join(shardDir, `${id}.range.json`))) inconclusive(`shard ${id} has no ${id}.range.json`);
@@ -77,6 +83,7 @@ for (const id of ids) {
       const key = JSON.stringify([path, mutant.mutatorName, mutant.replacement, mutant.location]);
       if (seen.has(key)) inconclusive(`mutant ${key} is reported by more than one shard`);
       seen.add(key);
+      if (mutant.status === "Survived" && mutant.testsCompleted === 0) ranNothing.push(`${path}:${start.line}`);
       target.mutants.push({ ...mutant, id: `${id}-${mutant.id}` });
     }
   }
@@ -97,6 +104,12 @@ for (const [path, parts] of Object.entries(ranges)) {
   if (last.endLine !== last.lastLine) {
     inconclusive(`shard ranges for ${path} stop at line ${last.endLine}, but the file has ${last.lastLine} lines`);
   }
+}
+
+if (ranNothing.length > 0) {
+  inconclusive(
+    `${ranNothing.length} mutant(s) reported Survived after running zero tests (first: ${ranNothing.slice(0, 3).join(", ")}): the test runner selected no tests, so they were never measured`,
+  );
 }
 
 const missing = config.mutate.filter((path) => !files[path]?.mutants.length);

@@ -35,7 +35,12 @@ its own incremental cache and records the range it owned. The `merge` job runs
 `scripts/merge-mutation-reports.mjs`, which drops any result outside its shard's
 range (incremental mode can carry a relocated cached result there) and refuses
 (exit 2) a missing shard or range, parts that do not tile a file, a `mutate` file
-with no mutants, or a mutant counted twice. It writes
+with no mutants, a mutant counted twice, or a mutant reported Survived after
+running zero tests. That last check exists because the first sharded run
+(2026-11-19) scored 25.19%: `@stryker-mutator/vitest-runner` 10.0.0 under vitest 5
+built its test-name filter with the old separator, so every filtered mutant run
+skipped all tests and 3152 mutants were scored Survived without being tested.
+10.1.1 fixes the separator; keep the runner at 10.1.1 or later. It writes
 `reports/mutation/mutation.json` with the configured thresholds, and
 `check:mutation-report` then runs on the merged report.
 

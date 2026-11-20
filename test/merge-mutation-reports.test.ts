@@ -20,7 +20,7 @@ const fixtures: string[] = [];
 
 const config = `export default { mutate: ["src/a.ts", "src/b.ts"], thresholds: { break: 84, low: 84, high: 90 } };\n`;
 
-type Mutant = { status: string; line: number; endLine?: number; name?: string };
+type Mutant = { status: string; line: number; endLine?: number; name?: string; testsCompleted?: number };
 
 function shard(path: string, mutants: Mutant[]) {
   return JSON.stringify({
@@ -36,6 +36,7 @@ function shard(path: string, mutants: Mutant[]) {
           mutatorName: m.name ?? "BooleanLiteral",
           replacement: "x",
           location: { start: { line: m.line, column: 1 }, end: { line: m.endLine ?? m.line, column: 2 } },
+          ...(m.testsCompleted === undefined ? {} : { testsCompleted: m.testsCompleted }),
         })),
       },
     },
@@ -159,6 +160,21 @@ describe("merge-mutation-reports", () => {
     const { run } = runMerge(files, 3);
     expect(run.status).toBe(2);
     expect(run.stderr).toContain("no mutants from src/b.ts");
+  });
+
+  it("is INCONCLUSIVE when a mutant survived without running a single test", () => {
+    const files = complete();
+    files["a-2.json"] = shard("src/a.ts", [{ status: "Survived", line: 15, testsCompleted: 0 }]);
+    const { run } = runMerge(files, 3);
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain("1 mutant(s) reported Survived after running zero tests (first: src/a.ts:15)");
+  });
+
+  it("accepts a survivor that ran tests", () => {
+    const files = complete();
+    files["a-2.json"] = shard("src/a.ts", [{ status: "Survived", line: 15, testsCompleted: 12 }]);
+    const { run } = runMerge(files, 3);
+    expect(run.status).toBe(0);
   });
 
   it("is INCONCLUSIVE on an unreadable shard", () => {
