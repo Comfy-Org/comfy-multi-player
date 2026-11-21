@@ -16,6 +16,8 @@
  *
  * @type {import('@stryker-mutator/api/core').PartialStrykerOptions}
  */
+import thresholds from "./stryker.thresholds.mjs";
+
 export default {
   testRunner: "vitest",
   // `src/doc.ts` and `src/mint.ts` joined the glob in MUT-GLOB-KA4-1. They had
@@ -51,15 +53,8 @@ export default {
   timeoutFactor: 1.5,
   // Fixed worker count so the measurement does not vary with core count.
   concurrency: 4,
-  // Threshold must sit strictly under a checker-validated score, not at it. A
-  // threshold equal to the measurement passes with zero margin and turns red on
-  // the first uncovered line any sibling PR adds, a failure that would say
-  // "mutation score regression" while meaning "new code arrived". Raise it
-  // whenever the score is raised; the margin is for new code, NOT for
-  // measurement noise. Pinning alone does not prove noise is zero.
-  thresholds: {
-    break: 84,
-    low: 84,
-    high: 90,
-  },
+  // Pass/fail gate only; it does not change how any mutant is measured. Kept in
+  // its own file so the workflow's cache key (lockfile + this file) does not
+  // change when the gate moves. See stryker.thresholds.mjs.
+  thresholds,
 };
