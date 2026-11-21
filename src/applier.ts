@@ -159,6 +159,7 @@ import {
 import { addInteriorLinkOrder, removeInteriorLinkOrder } from "./interior-link-order.js";
 import { DynamicGroupCountError, groupCountRefusal, groupOf, isDynamicGroupField } from "./dynamic-groups.js";
 import {
+  catalogPlacesDynamicName,
   optionOwnedWidgets,
   projectedLength,
   widgetLayoutForWidgets,
@@ -1498,7 +1499,7 @@ function validateWidgetName(
   // stored and not projected until that option is selected.
   const widgets = node?.get("widgets");
   const order = widgetOrderForWidgets(entry, widgets instanceof Y.Map ? widgets : undefined);
-  if (widgetIndexOf(order, widget, occurrence) < 0 && !(occurrence === 0 && (optionOwnedWidgets(entry).has(widget) || isDynamicGroupField(entry, widget)))) {
+  if (widgetIndexOf(order, widget, occurrence) < 0 && !catalogPlacesDynamicName(entry, widget, occurrence)) {
     throw new OpRejectedError(
       "unknown_widget",
       `widget '${widget}' not found on ${nodeType}; available: ${order.join(", ") || "(none — all inputs are links)"}`,

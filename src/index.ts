@@ -43,6 +43,11 @@
  *    `hasNode`, `hasAppliedOp`, `appliedOpIds`, `readApplied`, `readStamps`) for
  *    consumers
  *    that do not need ADR-DISTRIBUTION-0004's live follower handles — see src/read.ts;
+ *  - the ADR-API-0023 widget-identity and placeability questions
+ *    (`catalogPlacesDynamicName`, `overflowWidgetName`,
+ *    `parseOverflowWidgetName`, `widgetStorageKey`,
+ *    `widgetIdentityFromStorageKey`) for a host guard that must agree with
+ *    this package on whether a stored name can be placed;
  *  - operation, workflow, catalog, and result types.
  *
  * Every other Y.Doc layout and low-level mutation helper is deliberately
@@ -94,6 +99,46 @@ export {
   type WidgetFormShape,
   type WidgetValuesForm,
 } from "./widget-form.js";
+/**
+ * ADR-API-0023 — the widget-identity and placeability questions a host guard
+ * must answer the same way this package does.
+ *
+ * These are READ-ONLY questions about a name and a pinned catalog entry. They
+ * are published because withholding them did not stop a second interpretation
+ * of the placement rule from being written — it forced one. The doc-host's
+ * `catalogpins.ts` guard, which must agree with this package or refuse
+ * documents the package itself just minted, carries five hand copies of the
+ * rules below, each added after a production lockout:
+ *
+ *  - 2026-10-08 (v0.448.0) — dynamic-combo option names, copied from
+ *    `optionOwnedWidgets`;
+ *  - 2026-10-12 and 2026-10-15 — selection-relative overflow slots, copied
+ *    from the `_extra_<n>` naming in `overflowWidgetName`;
+ *  - 2026-11-18 (v0.557.0) — dynamic-group row fields, copied from
+ *    `isDynamicGroupField`; 279 refused turns over 6 workflows, with the
+ *    documented stale-schema reseed also refused, so the class had no
+ *    automatic recovery.
+ *
+ * {@link catalogPlacesDynamicName} is the applier's own name check, called by
+ * it, so a consumer cannot answer it differently. `overflowWidgetName` /
+ * `parseOverflowWidgetName` and `widgetStorageKey` /
+ * `widgetIdentityFromStorageKey` are the two spellings a consumer must share
+ * to read a stored key at all; the overflow copy fails OPEN on a rename, which
+ * is why it is published rather than left to be copied again.
+ *
+ * This does NOT widen the mutation surface and is not a retreat from the
+ * closed-barrel rule (issue #18): no applier internal, no Y.Doc layout helper
+ * and no mutation path is exported, and deriving, validating and projecting a
+ * widget form stay owned by this package. A caller still changes shared state
+ * only through `applyOps`.
+ */
+export { catalogPlacesDynamicName } from "./dynamic-combos.js";
+export { overflowWidgetName, parseOverflowWidgetName } from "./doc.js";
+export {
+  widgetIdentityFromStorageKey,
+  widgetStorageKey,
+  type WidgetIdentity,
+} from "./widget-identity.js";
 export { applyOps, inspectOps } from "./applier.js";
 export { project } from "./project.js";
 export { mint } from "./mint.js";
