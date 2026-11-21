@@ -1,0 +1,21 @@
+/**
+ * Mutation score gate, imported by stryker.config.mjs and copied into the
+ * merged report by scripts/merge-mutation-reports.mjs.
+ *
+ * Kept OUT of stryker.config.mjs on purpose: the nightly workflow keys each
+ * shard's incremental cache on the lockfile and stryker.config.mjs, so that a
+ * change to a measurement knob starts clean. Thresholds do not change how any
+ * mutant is measured, so moving them must not force a cold run of every shard.
+ *
+ * Threshold must sit strictly under a checker-validated score, not at it. A
+ * threshold equal to the measurement passes with zero margin and turns red on
+ * the first uncovered line any sibling PR adds, a failure that would say
+ * "mutation score regression" while meaning "new code arrived". Raise it
+ * whenever the score is raised; the margin is for new code, NOT for
+ * measurement noise. Pinning alone does not prove noise is zero.
+ */
+export default {
+  break: 84,
+  low: 84,
+  high: 90,
+};

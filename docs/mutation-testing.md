@@ -52,11 +52,13 @@ The removed tables and withdrawn measurements remain in Git history; they are
 not a current baseline and must not be re-cited without their matching report,
 configuration, source revision, host conditions, and passing checker receipt.
 
-The configured break threshold is **75**, set from the first complete sharded run
+The configured break threshold remains **84** (`stryker.thresholds.mjs`). It was
+never measured on the current five-file scope, and the first complete sharded run
 ([run 44746876459](https://github.com/Comfy-Org/comfy-multi-player/actions/runs/44746876459),
-source fe1b3932, Stryker 10.1.1, pinned settings above, GitHub-hosted ubuntu runners).
-The old 84 was never measured on the current five-file scope. That run's merge
-reported no zero-test survivors, and `check:mutation-report` on its merged report gave:
+source fe1b3932, Stryker 10.1.1, pinned settings above, GitHub-hosted ubuntu runners)
+scores below it, so the nightly fails the gate until the score rises or the gate
+is re-baselined in its own change. That run's merge reported no zero-test
+survivors, and `check:mutation-report` on its merged report gave:
 
 ```text
 mutants        5633 (5 files)
@@ -69,7 +71,7 @@ score          75.54%
 timeouts-as-survivors floor  75.08%
 ```
 
-Against 84 the checker exited 1; against 75 the same report passes (exit 0).
+Against 84 the checker exited 1 (a real threshold failure, with the report uploaded).
 Per-file scores from that report (Killed + Timeout over valid mutants):
 
 | File | Detected / valid | Score |

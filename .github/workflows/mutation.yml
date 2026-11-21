@@ -66,7 +66,9 @@ jobs:
       # Use a unique save key per run and restore the newest compatible report
       # for this shard. Including the lockfile and stryker.config.mjs prevents
       # results produced with different dependencies or measurement pins from
-      # being reused. The shard layout is deliberately NOT in the key: Stryker
+      # being reused. The pass/fail thresholds live in stryker.thresholds.mjs,
+      # outside the key, because they do not change how a mutant is measured:
+      # raising the gate must not force a cold run of every shard. The shard layout is deliberately NOT in the key: Stryker
       # re-runs any mutant whose code or tests changed, and the merge drops a
       # cached result outside its shard's current range, so moving an edge
       # costs only the moved mutants, not a cold run of every shard.

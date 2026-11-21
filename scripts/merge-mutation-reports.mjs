@@ -10,8 +10,9 @@
  * This keeps only the mutants that lie inside their shard's range, so a cached
  * result that incremental mode carried out of range is not counted twice,
  * concatenates each file's mutants, and writes `reports/mutation/mutation.json`
- * with the break/low/high thresholds from `stryker.config.mjs`. Mutant ids
- * restart in every Stryker run, so each id is prefixed with its shard name.
+ * with the break/low/high thresholds from `stryker.config.mjs` (set in
+ * `stryker.thresholds.mjs`). Mutant ids restart in every Stryker run, so each
+ * id is prefixed with its shard name.
  *
  * Exits 2 (INCONCLUSIVE, as `check:mutation-report` uses the code) rather than
  * score part of the mutate glob as the whole: a missing or unreadable shard, a
