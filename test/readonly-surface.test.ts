@@ -799,6 +799,16 @@ describe("read-only surface — classification", () => {
     // exposes no shared-document write, replay, or merge-policy implementation.
     "COLLAB_TRACE_SCHEMA",
     "assertCollabReplayTraceV1",
+    // ADR-API-0023 widget identity and placeability. Classified here, beside
+    // `widgetTargetKey` and `opBoundsRefusal` rather than in READ_SURFACE,
+    // because none of them takes a document: each is a pure question about a
+    // name and a pinned catalog entry, so there is no live handle to prove
+    // absent and nothing for the no-live-handle sweep to exercise.
+    "catalogPlacesDynamicName",
+    "overflowWidgetName",
+    "parseOverflowWidgetName",
+    "widgetStorageKey",
+    "widgetIdentityFromStorageKey",
   ];
   const READ_SURFACE: readonly string[] = [
     "readGraph",
