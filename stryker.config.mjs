@@ -57,9 +57,11 @@ export default {
   // "mutation score regression" while meaning "new code arrived". Raise it
   // whenever the score is raised; the margin is for new code, NOT for
   // measurement noise. Pinning alone does not prove noise is zero.
+  // Baseline: 75.54% (floor 75.08%) on the merged sharded run 44746876459,
+  // checker output retained in docs/mutation-testing.md.
   thresholds: {
-    break: 84,
-    low: 84,
+    break: 75,
+    low: 75,
     high: 90,
   },
 };

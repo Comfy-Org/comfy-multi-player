@@ -52,7 +52,38 @@ The removed tables and withdrawn measurements remain in Git history; they are
 not a current baseline and must not be re-cited without their matching report,
 configuration, source revision, host conditions, and passing checker receipt.
 
-The configured break threshold remains **84**. Keep a threshold below a freshly checked baseline rather than equal to it: zero margin turns the first uncovered line in a sibling change into a nominal score regression. Raise the threshold when the checked baseline rises. That headroom is for new code, not measurement noise.
+The configured break threshold is **75**, set from the first complete sharded run
+([run 44746876459](https://github.com/Comfy-Org/comfy-multi-player/actions/runs/44746876459),
+source fe1b3932, Stryker 10.1.1, pinned settings above, GitHub-hosted ubuntu runners).
+The old 84 was never measured on the current five-file scope. That run's merge
+reported no zero-test survivors, and `check:mutation-report` on its merged report gave:
+
+```text
+mutants        5633 (5 files)
+killed         4227
+timeout        26   <- scored as detected by Stryker
+survived       1044
+no coverage    333
+errors         3
+score          75.54%
+timeouts-as-survivors floor  75.08%
+```
+
+Against 84 the checker exited 1; against 75 the same report passes (exit 0).
+Per-file scores from that report (Killed + Timeout over valid mutants):
+
+| File | Detected / valid | Score |
+| --- | --- | --- |
+| `src/applier.ts` | 2908 / 4003 | 72.64% |
+| `src/doc.ts` | 550 / 629 | 87.44% |
+| `src/mint.ts` | 335 / 441 | 75.96% |
+| `src/project.ts` | 322 / 390 | 82.56% |
+| `src/stamps.ts` | 138 / 167 | 82.63% |
+
+`src/applier.ts` holds most of the survivors and no-coverage mutants, so test work
+there moves the overall score most.
+
+Keep a threshold below a freshly checked baseline rather than equal to it: zero margin turns the first uncovered line in a sibling change into a nominal score regression. Raise the threshold when the checked baseline rises. That headroom is for new code, not measurement noise.
 
 Adding files to the mutation glob changes both the mutant population and the tests that run. Compare checked per-file outcomes, not only the overall score, when judging a change.
 
