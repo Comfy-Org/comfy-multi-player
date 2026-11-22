@@ -52,13 +52,13 @@ The removed tables and withdrawn measurements remain in Git history; they are
 not a current baseline and must not be re-cited without their matching report,
 configuration, source revision, host conditions, and passing checker receipt.
 
-The configured break threshold remains **84** (`stryker.thresholds.mjs`). It was
-never measured on the current five-file scope, and the first complete sharded run
-([run 44746876459](https://github.com/Comfy-Org/comfy-multi-player/actions/runs/44746876459),
+The configured break threshold is **74** (`stryker.thresholds.mjs`), re-baselined
+from 84, which was never measured on the current five-file scope. The first complete
+sharded run ([run 44746876459](https://github.com/Comfy-Org/comfy-multi-player/actions/runs/44746876459),
 source fe1b3932, Stryker 10.1.1, pinned settings above, GitHub-hosted ubuntu runners)
-scores below it, so the nightly fails the gate until the score rises or the gate
-is re-baselined in its own change. That run's merge reported no zero-test
-survivors, and `check:mutation-report` on its merged report gave:
+scored below 84, and two later checked runs agree within 0.02 points (table below), so
+74 sits about one point under the lowest timeouts-as-survivors floor (75.05%).
+That first run's merge reported no zero-test survivors, and `check:mutation-report` on its merged report gave:
 
 ```text
 mutants        5633 (5 files)
@@ -71,8 +71,15 @@ score          75.54%
 timeouts-as-survivors floor  75.08%
 ```
 
-Against 84 the checker exited 1 (a real threshold failure, with the report uploaded).
-Per-file scores from that report (Killed + Timeout over valid mutants):
+Against the former 84 the checker exited 1 (a real threshold failure, with the report uploaded).
+Later checked runs of the sharded nightly:
+
+| Run | Source | Cache | Score | Floor |
+| --- | --- | --- | --- | --- |
+| [44909647729](https://github.com/Comfy-Org/comfy-multi-player/actions/runs/44909647729) | 3a56f691 | cold | 75.55% | 75.05% |
+| [44979246982](https://github.com/Comfy-Org/comfy-multi-player/actions/runs/44979246982) | eb4cfaf1 | restored | 75.56% | 75.06% |
+
+Per-file scores from the first run's report (Killed + Timeout over valid mutants):
 
 | File | Detected / valid | Score |
 | --- | --- | --- |

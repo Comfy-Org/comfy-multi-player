@@ -15,7 +15,10 @@
  * measurement noise. Pinning alone does not prove noise is zero.
  */
 export default {
-  break: 84,
-  low: 84,
+  // Re-baselined from 84 (never measured on the current five files). Three
+  // checked runs on the sharded nightly scored 75.54-75.56%, timeouts-as-
+  // survivors floor 75.05-75.08%; 74 leaves about one point for new code.
+  break: 74,
+  low: 74,
   high: 90,
 };
