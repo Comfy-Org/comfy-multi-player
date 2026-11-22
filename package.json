@@ -50,8 +50,8 @@
     "yjs": "^13.6.27"
   },
   "devDependencies": {
-    "@stryker-mutator/core": "^10.0.0",
-    "@stryker-mutator/vitest-runner": "^10.0.0",
+    "@stryker-mutator/core": "^10.1.1",
+    "@stryker-mutator/vitest-runner": "^10.1.1",
     "@types/node": "^26.3.0",
     "@typescript-eslint/parser": "^8.68.0",
     "ajv6": "npm:ajv@6.15.0",

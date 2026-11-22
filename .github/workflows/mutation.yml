@@ -10,16 +10,43 @@ permissions:
 
 jobs:
   mutation:
-    name: Stryker mutation testing
+    name: Stryker mutation testing (${{ matrix.id }})
     runs-on: ubuntu-latest
     # A job that runs past GitHub's omitted-`timeout-minutes` 360 minute default
     # is CANCELLED, and a cancelled job skips its `if: always()` steps too — so
     # the 2026-09-18 run ended at 21617s (360.3 min, i.e. killed exactly by that
     # default) with no failed log and no uploaded report, leaving nothing to
     # diagnose (cifix-16989). Bound the job just under the default so the cap is
-    # ours and visible here. Deliberately NOT lowered further: the caps exist to
-    # make a runaway legible, not to shorten the budget a full cold run needs.
+    # ours and visible here.
     timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      # SHARDED because one cold run never fit. Measured 2026-09-20: 4766 mutants
+      # over 5 files, `coverageAnalysis: "all"`, concurrency 4 and a 58s full
+      # suite, so a cold run is many hours; every nightly from 2026-10-30 to
+      # 2026-11-18 hit the 330-minute step cap with no report. `incremental: true`
+      # only writes its report on a run that COMPLETES, so the cache never
+      # seeded and every run paid full cost (issue #303). Each shard mutates
+      # part k of n of one `mutate` file with the same pinned scoring knobs
+      # (stryker.shard.config.mjs). Part edges fall only between top-level
+      # statements, so no mutant's node crosses an edge, and the parts of a
+      # file tile it. Every `mutate` file in stryker.config.mjs needs its parts
+      # here: the merge job refuses a merged report missing a file or a part.
+      # Keep `merge`'s expected shard count equal to this list.
+      matrix:
+        include:
+          - { id: applier-1, file: src/applier.ts, part: 1/7 }
+          - { id: applier-2, file: src/applier.ts, part: 2/7 }
+          - { id: applier-3, file: src/applier.ts, part: 3/7 }
+          - { id: applier-4, file: src/applier.ts, part: 4/7 }
+          - { id: applier-5, file: src/applier.ts, part: 5/7 }
+          - { id: applier-6, file: src/applier.ts, part: 6/7 }
+          - { id: applier-7, file: src/applier.ts, part: 7/7 }
+          - { id: doc-1, file: src/doc.ts, part: 1/2 }
+          - { id: doc-2, file: src/doc.ts, part: 2/2 }
+          - { id: project, file: src/project.ts, part: 1/1 }
+          - { id: mint, file: src/mint.ts, part: 1/1 }
+          - { id: stamps, file: src/stamps.ts, part: 1/1 }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,47 +63,80 @@ jobs:
       - name: Build
         run: npm run build
 
-      # Use a unique save key per run and restore the newest compatible report.
-      # Including the lockfile and Stryker config prevents results produced with
-      # different dependencies or measurement pins from being reused.
+      # Use a unique save key per run and restore the newest compatible report
+      # for this shard. Including the lockfile and stryker.config.mjs prevents
+      # results produced with different dependencies or measurement pins from
+      # being reused. The pass/fail thresholds live in stryker.thresholds.mjs,
+      # outside the key, because they do not change how a mutant is measured:
+      # raising the gate must not force a cold run of every shard. The shard layout is deliberately NOT in the key: Stryker
+      # re-runs any mutant whose code or tests changed, and the merge drops a
+      # cached result outside its shard's current range, so moving an edge
+      # costs only the moved mutants, not a cold run of every shard.
       - name: Restore incremental mutation report
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: reports/stryker-incremental.json
-          key: stryker-incremental-${{ runner.os }}-${{ hashFiles('package-lock.json', 'stryker.config.mjs') }}-${{ github.run_id }}
+          path: reports/stryker-incremental-${{ matrix.id }}.json
+          key: stryker-incremental-${{ runner.os }}-${{ matrix.id }}-${{ hashFiles('package-lock.json', 'stryker.config.mjs') }}-${{ github.run_id }}
           restore-keys: |
-            stryker-incremental-${{ runner.os }}-${{ hashFiles('package-lock.json', 'stryker.config.mjs') }}-
+            stryker-incremental-${{ runner.os }}-${{ matrix.id }}-${{ hashFiles('package-lock.json', 'stryker.config.mjs') }}-
 
       # Step-level, and deliberately tighter than the job cap above: a step that
-      # times out is marked FAILED and the job keeps going, so the two
-      # `if: always()` steps below still run and still upload whatever
-      # reports/mutation/ holds. A job-level cancellation would skip them. This
-      # is what turns a runaway from "cancelled, no log" into a diagnosable red.
-      #
-      # This does NOT make a cold run fit. Measured 2026-09-20 on the cifix-16989
-      # fix: 4766 mutants over 5 files, `coverageAnalysis: "all"`, concurrency 4,
-      # and a 58s full suite — so a cold run is hours and 2026-09-18 exceeded 360
-      # minutes. `incremental: true` is supposed to absorb that, but the report is
-      # only written by a run that COMPLETES, and no run has completed since the
-      # cache key was adopted, so every run restores nothing and pays full cost.
-      # Breaking that bootstrap loop needs a measurement decision about the pinned
-      # knobs (or a sharded/seeded first run) and is deliberately left to its own
-      # change rather than smuggled in behind a timeout.
+      # times out is marked FAILED and the job keeps going, so the upload step
+      # below still runs. A job-level cancellation would skip it.
       # 330, not 345: the step cap has to leave the job cap enough room for
-      # checkout/install/build ahead of it and the report-check and upload steps
-      # after it, or a step timeout would be overtaken by a job cancellation and
-      # lose the very artifacts this arrangement exists to keep.
+      # checkout/install/build ahead of it and the upload after it.
       - name: Mutation tests
         timeout-minutes: 330
-        run: npm run test:mutation
+        env:
+          MUTATION_SHARD_FILE: ${{ matrix.file }}
+          MUTATION_SHARD_PART: ${{ matrix.part }}
+          MUTATION_SHARD_ID: ${{ matrix.id }}
+        run: npx stryker run stryker.shard.config.mjs
+
+      - name: Upload shard report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutation-shard-${{ matrix.id }}
+          path: reports/mutation/shards/
+          retention-days: 14
+          if-no-files-found: error
+
+  merge:
+    name: Mutation report
+    needs: mutation
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Download shard reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: mutation-shard-*
+          path: reports/mutation/shards/
+          merge-multiple: true
+
+      # Refuses (exit 2) when a shard report or range is missing, a file's parts
+      # do not tile it, a mutate file has no mutants or a mutant is counted twice,
+      # so a partial run can never be scored as the whole. Drops cached results
+      # that incremental mode carried outside their shard's range.
+      - name: Merge shard reports
+        run: node scripts/merge-mutation-reports.mjs 12
 
       # Stryker scores a `Timeout` as killed, so a loaded runner inflates the
       # score. `stryker.config.mjs` pins timeoutMS/concurrency; this re-derives
-      # the score from the JSON report, reports Timeout as its own outcome, and
-      # exits 2 INCONCLUSIVE when timeouts are material. Runs even when Stryker
-      # broke the threshold, so the failure is explained rather than just red.
+      # the score from the merged JSON report, reports Timeout as its own
+      # outcome, exits 1 below the break threshold and 2 INCONCLUSIVE when
+      # timeouts are material.
       - name: Check mutation report
-        if: always()
         run: npm run check:mutation-report
 
       # Without this the run discards reports/mutation/ and even a failure

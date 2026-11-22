@@ -21,6 +21,29 @@ Incremental mode reuses a result only when Stryker determines that the mutant an
 Each workflow run uses a unique cache save key and restores the newest compatible
 report, avoiding immutable cache-key reuse while carrying results forward.
 
+The nightly workflow is sharded. A cold run of the whole glob takes longer than a
+GitHub job may run, and the incremental report is only written by a run that
+completes, so the unsharded nightly never seeded its cache and failed every night
+from 2026-10-30 (issue #303). Each shard in `.github/workflows/mutation.yml`
+mutates part k of n of one `mutate` file through `stryker.shard.config.mjs`,
+which changes only the `mutate` range, the incremental and report file names, and
+drops the per-shard break threshold. Every scoring knob comes unchanged from
+`stryker.config.mjs`. Part edges fall only between top-level statements: Stryker
+emits a mutant only when its node lies wholly inside a `mutate` range, so an edge
+inside a function would silently drop the mutants that cross it. Each shard keeps
+its own incremental cache and records the range it owned. The `merge` job runs
+`scripts/merge-mutation-reports.mjs`, which drops any result outside its shard's
+range (incremental mode can carry a relocated cached result there) and refuses
+(exit 2) a missing shard or range, parts that do not tile a file, a `mutate` file
+with no mutants, a mutant counted twice, or a mutant reported Survived after
+running zero tests. That last check exists because the first sharded run
+(2026-11-19) scored 25.19%: `@stryker-mutator/vitest-runner` 10.0.0 under vitest 5
+built its test-name filter with the old separator, so every filtered mutant run
+skipped all tests and 3152 mutants were scored Survived without being tested.
+10.1.1 fixes the separator; keep the runner at 10.1.1 or later. It writes
+`reports/mutation/mutation.json` with the configured thresholds, and
+`check:mutation-report` then runs on the merged report.
+
 ## Baseline policy
 
 No measured baseline is published here without retained output from `npm run check:mutation-report`. The available archived report belongs to a different historical checkout and configuration, so it cannot validate the figures formerly quoted here or in `stryker.config.mjs`.
@@ -29,7 +52,40 @@ The removed tables and withdrawn measurements remain in Git history; they are
 not a current baseline and must not be re-cited without their matching report,
 configuration, source revision, host conditions, and passing checker receipt.
 
-The configured break threshold remains **84**. Keep a threshold below a freshly checked baseline rather than equal to it: zero margin turns the first uncovered line in a sibling change into a nominal score regression. Raise the threshold when the checked baseline rises. That headroom is for new code, not measurement noise.
+The configured break threshold remains **84** (`stryker.thresholds.mjs`). It was
+never measured on the current five-file scope, and the first complete sharded run
+([run 44746876459](https://github.com/Comfy-Org/comfy-multi-player/actions/runs/44746876459),
+source fe1b3932, Stryker 10.1.1, pinned settings above, GitHub-hosted ubuntu runners)
+scores below it, so the nightly fails the gate until the score rises or the gate
+is re-baselined in its own change. That run's merge reported no zero-test
+survivors, and `check:mutation-report` on its merged report gave:
+
+```text
+mutants        5633 (5 files)
+killed         4227
+timeout        26   <- scored as detected by Stryker
+survived       1044
+no coverage    333
+errors         3
+score          75.54%
+timeouts-as-survivors floor  75.08%
+```
+
+Against 84 the checker exited 1 (a real threshold failure, with the report uploaded).
+Per-file scores from that report (Killed + Timeout over valid mutants):
+
+| File | Detected / valid | Score |
+| --- | --- | --- |
+| `src/applier.ts` | 2908 / 4003 | 72.64% |
+| `src/doc.ts` | 550 / 629 | 87.44% |
+| `src/mint.ts` | 335 / 441 | 75.96% |
+| `src/project.ts` | 322 / 390 | 82.56% |
+| `src/stamps.ts` | 138 / 167 | 82.63% |
+
+`src/applier.ts` holds most of the survivors and no-coverage mutants, so test work
+there moves the overall score most.
+
+Keep a threshold below a freshly checked baseline rather than equal to it: zero margin turns the first uncovered line in a sibling change into a nominal score regression. Raise the threshold when the checked baseline rises. That headroom is for new code, not measurement noise.
 
 Adding files to the mutation glob changes both the mutant population and the tests that run. Compare checked per-file outcomes, not only the overall score, when judging a change.
 
@@ -54,4 +110,4 @@ Use Node 22 or newer. Do not quote a score unless the checker passes and its out
 
 INCONCLUSIVE is not a pass. Re-run on a suitable host and retain the checker output; do not record the score.
 
-Stryker writes local HTML and JSON reports plus the incremental report under `reports/`. Generated reports and `.stryker-tmp/` are ignored. `.github/workflows/mutation.yml` runs nightly and by manual dispatch, caches the incremental report, and uploads `reports/mutation/` as an artifact.
+Stryker writes local HTML and JSON reports plus the incremental report under `reports/`. Generated reports and `.stryker-tmp/` are ignored. `.github/workflows/mutation.yml` runs nightly and by manual dispatch, caches one incremental report per shard, and uploads each shard report plus the merged `reports/mutation/` as artifacts.
