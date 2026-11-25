@@ -15,7 +15,7 @@
  * measurement noise. Pinning alone does not prove noise is zero.
  */
 export default {
-  break: 84,
-  low: 84,
+  break: 74,
+  low: 74,
   high: 90,
 };

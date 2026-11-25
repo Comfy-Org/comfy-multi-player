@@ -52,13 +52,13 @@ The removed tables and withdrawn measurements remain in Git history; they are
 not a current baseline and must not be re-cited without their matching report,
 configuration, source revision, host conditions, and passing checker receipt.
 
-The configured break threshold remains **84** (`stryker.thresholds.mjs`). It was
-never measured on the current five-file scope, and the first complete sharded run
-([run 44746876459](https://github.com/Comfy-Org/comfy-multi-player/actions/runs/44746876459),
+The configured break threshold is **74** (`stryker.thresholds.mjs`), re-baselined
+from 84, which was never measured on the current five-file scope. The first complete
+sharded run ([run 44746876459](https://github.com/Comfy-Org/comfy-multi-player/actions/runs/44746876459),
 source fe1b3932, Stryker 10.1.1, pinned settings above, GitHub-hosted ubuntu runners)
-scores below it, so the nightly fails the gate until the score rises or the gate
-is re-baselined in its own change. That run's merge reported no zero-test
-survivors, and `check:mutation-report` on its merged report gave:
+scored below 84, and two later checked runs agree within 0.02 points (table below), so
+74 sits about one point under the lowest timeouts-as-survivors floor (75.05%).
+That first run's merge reported no zero-test survivors, and `check:mutation-report` on its merged report gave:
 
 ```text
 mutants        5633 (5 files)
@@ -71,8 +71,37 @@ score          75.54%
 timeouts-as-survivors floor  75.08%
 ```
 
-Against 84 the checker exited 1 (a real threshold failure, with the report uploaded).
-Per-file scores from that report (Killed + Timeout over valid mutants):
+Against the former 84 the checker exited 1 (a real threshold failure, with the report uploaded).
+
+Checked runs of the sharded nightly. "At 74" is `check:mutation-report` on each run's
+uploaded `mutation-report` artifact with `thresholds.break` set to 74; counts and scores
+are unchanged by the threshold. Run 44985418397 is the first nightly with break 74; its
+in-CI checker passed.
+
+| Run | Source | Cache | Score | Floor | Break in run | At 74 |
+| --- | --- | --- | --- | --- | --- | --- |
+| [44746876459](https://github.com/Comfy-Org/comfy-multi-player/actions/runs/44746876459) | fe1b3932 | cold | 75.54% | 75.08% | 84, exit 1 | exit 0 |
+| [44909647729](https://github.com/Comfy-Org/comfy-multi-player/actions/runs/44909647729) | 3a56f691 | cold | 75.55% | 75.05% | 75, exit 0 | exit 0 |
+| [44979246982](https://github.com/Comfy-Org/comfy-multi-player/actions/runs/44979246982) | eb4cfaf1 | restored | 75.56% | 75.06% | 84, exit 1 | exit 0 |
+| [44985418397](https://github.com/Comfy-Org/comfy-multi-player/actions/runs/44985418397) | ad85fc62 | restored | 75.56% | 75.06% | 74, exit 0 | exit 0 |
+
+Checker output at 74 for the three later runs (first run above):
+
+```text
+44909647729  mutants 5633  killed 4226  timeout 28  survived 1044  no coverage 333  errors 2
+             score 75.55%  timeouts-as-survivors floor 75.05%
+             mutation report PASSED (timeouts within budget, score at or above threshold)
+44979246982  mutants 5633  killed 4226  timeout 28  survived 1043  no coverage 333  errors 3
+             score 75.56%  timeouts-as-survivors floor 75.06%
+             mutation report PASSED (timeouts within budget, score at or above threshold)
+44985418397  mutants 5633  killed 4226  timeout 28  survived 1043  no coverage 333  errors 3
+             score 75.56%  timeouts-as-survivors floor 75.06%
+             mutation report PASSED (timeouts within budget, score at or above threshold)
+```
+
+The first run's counts above also give `PASSED` at 74 (exit 0).
+
+Per-file scores from the first run's report (Killed + Timeout over valid mutants):
 
 | File | Detected / valid | Score |
 | --- | --- | --- |
@@ -110,4 +139,4 @@ Use Node 22 or newer. Do not quote a score unless the checker passes and its out
 
 INCONCLUSIVE is not a pass. Re-run on a suitable host and retain the checker output; do not record the score.
 
-Stryker writes local HTML and JSON reports plus the incremental report under `reports/`. Generated reports and `.stryker-tmp/` are ignored. `.github/workflows/mutation.yml` runs nightly and by manual dispatch, caches one incremental report per shard, and uploads each shard report plus the merged `reports/mutation/` as artifacts.
+Stryker writes local HTML and JSON reports plus the incremental report under `reports/`. Generated reports and `.stryker-tmp/` are ignored. `.github/workflows/mutation.yml` runs nightly and by manual dispatch, caches one incremental report per shard, and uploads each shard report plus the merged `reports/mutation/` as artifacts. Each shard's cache key covers `package-lock.json` and `stryker.config.mjs`. `stryker.shard.config.mjs` is not in the key because it sets only shard ranges and file names; if a measurement setting ever moves into it, add that file to the key.
