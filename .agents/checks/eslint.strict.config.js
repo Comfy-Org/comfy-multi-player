@@ -9,7 +9,7 @@
  * touching package.json; the pure yjs-only production dep set is unaffected):
  *   npm i --no-save eslint eslint-plugin-sonarjs @typescript-eslint/parser
  *   npx eslint --no-config-lookup --config .agents/checks/eslint.strict.config.js \
- *     --format json {files}
+ *     --no-warn-ignored --format json {files}
  *
  * Notes:
  * - This package's src/** is TypeScript, so a TypeScript-aware parser is
