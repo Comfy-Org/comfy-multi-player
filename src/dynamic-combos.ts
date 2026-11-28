@@ -50,6 +50,41 @@ export function optionOwnedWidgets(entry: WidgetCatalogEntry | undefined): Set<s
 }
 
 /**
+ * Whether `entry` places `name` at `occurrence` through a dynamic layout rather
+ * than through `widget_order`: a dynamic-combo option owns it at any selection
+ * and any depth ({@link optionOwnedWidgets}), or a dynamic group generates it as
+ * a row field ({@link isDynamicGroupField}).
+ *
+ * This is the catalog-only half of the applier's name check in
+ * `validateWidgetName`, and that call site is the only definition of it — so a
+ * consumer asking this question gets the applier's answer by construction
+ * rather than by agreement. It is published from the package root for exactly
+ * that reason; see ADR-API-0023.
+ *
+ * Occurrence 0 only. The package keeps ONE slot per dynamically placed name,
+ * even when several options share it, so a second register of such a name has
+ * nowhere to go.
+ *
+ * Value-blind by design: it asks what the pinned catalog CAN place, not what
+ * the node's current selection or row count does place. Accepting only the
+ * current selection's names would make the outcome depend on whether the
+ * selector write arrived first (KA-2). A caller that needs the realized layout
+ * wants {@link widgetOrderForValues} or {@link widgetLayoutForWidgets}.
+ *
+ * Fail-closed on an absent or value-blind entry: an entry with neither
+ * `dynamic_combos` nor `dynamic_groups` places nothing here, so its dynamic
+ * names stay unplaceable rather than being projected through an order that
+ * would drop them.
+ */
+export function catalogPlacesDynamicName(
+  entry: WidgetCatalogEntry | undefined,
+  name: string,
+  occurrence = 0,
+): boolean {
+  return occurrence === 0 && (optionOwnedWidgets(entry).has(name) || isDynamicGroupField(entry, name));
+}
+
+/**
  * The option a selector value picks: the catalog default when the node holds
  * no value yet (a fresh node), `undefined` for a value no option has — which,
  * as in the frontend and comfy-cli, contributes no sub-slots.

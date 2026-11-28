@@ -25,6 +25,14 @@ const SANCTIONED_DOC_EXPORTS: readonly string[] = [
   "linksMap",
   "OPAQUE_WIDGETS_KEY",
   "encodingLosses",
+  // ADR-API-0023. These two are the `_extra_<n>` SPELLING, not layout access:
+  // both are pure string functions that touch no Y type and hand back no
+  // handle, so neither widens the mutation surface this guard exists for. They
+  // are published because the doc-host guard's hand copy of the same regex
+  // fails OPEN on a rename here — it stops recognising overflow slots — which
+  // is strictly worse than a shared definition.
+  "overflowWidgetName",
+  "parseOverflowWidgetName",
 ];
 
 describe("public API", () => {
