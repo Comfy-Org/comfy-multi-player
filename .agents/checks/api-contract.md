@@ -12,10 +12,25 @@ Catch breaking changes to this package's public surface. Applies to `src/index.t
 <!-- claim: read-only surface — the KA-11 read gate (#38) :: test/readonly-surface.test.ts -->
 <!-- claim: export * from "./limits.js"; :: src/index.ts -->
 2. **Op vocabulary** — op kind names, required fields, and the frozen/deferred sets are a contract shared with the server. Renaming an op kind, adding a required field to an existing op, or moving an op between frozen and deferred is breaking; cite the vocabulary section.
-3. **Wire envelope** — the `{ type, data }` shape and `data.v` protocol version are cross-repo. Changing an existing message type, its payload shape, or bumping `data.v` without a documented migration is breaking.
-4. **Stamp/order contract** — the total order key `[base_version, actor, op_id]` and `ApplyResult` shape (`applied`, `skipped`, `failed`, `version`) are consumed downstream; narrowing or reshaping them is breaking. **That field list is incomplete and known to be wrong — see "Known defects" below ([#73](https://github.com/Comfy-Org/comfy-multi-player/issues/73)); do not rely on it as an enumeration.**
+<!-- claim: export const FROZEN_OPS = [ :: src/types.ts -->
+<!-- claim: export const DEFERRED_OPS = ["reset_doc"] as const; :: src/types.ts -->
+<!-- claim: export type WireOp = Op | DeferredOp; :: src/types.ts -->
+3. **Exported event envelopes** — keep the two public event surfaces distinct. `AgentEvent` is the cross-repo `{ type, data }` broadcast envelope pinned against the vendored Go contract; it does not carry `data.v`. Caller-owned `CmpEvent` telemetry carries `schema_version` at the top level. Changing an existing event type, payload shape, or schema version without a documented migration is breaking.
+<!-- claim: type: "object", additionalProperties: false, required: ["type", "data"], :: src/event-schema.ts -->
+<!-- claim: export const CMP_EVENT_SCHEMA_VERSION = 1 as const; :: src/events.ts -->
+<!-- claim: readonly schema_version: typeof CMP_EVENT_SCHEMA_VERSION; :: src/events.ts -->
+4. **Stamp/order contract** — the total order key `[base_version, actor, op_id]` and ADR-API-0007's `ApplyResult` are consumed downstream. `ApplyResult.outcomes` has one ordered discriminated result per submitted op (`applied`, `no-op`, `lww-dropped`, or `rejected`), and `ops_seen` is the consumed-op ledger size rather than a CAS token. Narrowing or reshaping either contract is breaking.
+<!-- claim: export type StampKey = [baseVersion: number, actor: Actor, opId: string]; :: src/types.ts -->
+<!-- claim: | { op_id: string; outcome: "applied" } :: src/types.ts -->
+<!-- claim: | { op_id: string; outcome: "no-op" } :: src/types.ts -->
+<!-- claim: | { op_id: string; outcome: "lww-dropped" } :: src/types.ts -->
+<!-- claim: outcome: "rejected"; :: src/types.ts -->
+<!-- claim: outcomes: ApplyOutcome[]; :: src/types.ts -->
+<!-- claim: ops_seen: number; :: src/types.ts -->
    In private alpha, `base_version` is the creator-owned Lamport counter carried in the single op format. DQ-11 incarnation-qualified target keys must remain unchanged.
-5. **Schema/catalog versioning** — bump `SCHEMA_VERSION` when an old reader would mis-project a new doc, and document an explicit old-layout disposition (KA-11). The current schema-v4 implementation refuses old layouts without mutation or relabelling, provides no compatibility reader, and requires re-minting source workflows. Schema A20 requires coordinated reader adoption and frontend sign-off before rollout; source integration is not a package release or consumer acceptance. A future release must explicitly choose and document refusal, migration, or another disposition rather than universally promising migration support. Silently changing on-doc shape without a version bump is a breaking, fail-open change.
+5. **Schema/catalog versioning** — bump `SCHEMA_VERSION` when an old reader would mis-project a new doc, and document an explicit old-layout disposition (KA-11). The current schema-v5 implementation refuses old layouts without mutation or relabelling, provides no compatibility reader, and requires re-minting source workflows. Schema A22 requires coordinated reader adoption and frontend sign-off before rollout; source integration is not a package release or consumer acceptance. A future release must explicitly choose and document refusal, migration, or another disposition rather than universally promising migration support. Silently changing on-doc shape without a version bump is a breaking, fail-open change.
+<!-- claim: export const SCHEMA_VERSION = 5; :: src/types.ts -->
+<!-- claim: export function migrate(doc: Y.Doc, fromVersion: number): void { :: src/migrate.ts -->
 6. **Type narrowing / default changes** — an exported function that used to accept a wider input now rejecting part of it, or a changed default, can break callers.
 
 ## Rules
@@ -39,27 +54,5 @@ CI so the prose above cannot silently describe a contract that no longer exists.
 <!-- claim: export { assertReadableSchema, readSchemaVersion } from "./schema-version.js" :: src/index.ts -->
 <!-- claim: export * from "./types.js" :: src/index.ts -->
 <!-- claim: export * from "./stamps.js" :: src/index.ts -->
-
-## Known defects, left standing on purpose
-
-One finding about this profile and the contract it describes is **diagnosed, filed and not fixed
-here**. They are recorded as `known-defect` tombstones rather than as a line in a report, because a
-report is not something the repository can see: the `test-quality.md` rejection oracle was diagnosed
-independently by two merge reviews (#34, #58) and relayed into a third (#60), each of which correctly
-scoped it out, and every one of those findings was written outside this repo. Zero reviews and zero
-inline comments exist on those PRs. The defect outlived all three for want of one line. See
-[`README.md`](README.md#tombstones-for-a-defect-you-are-not-fixing). A tombstone never blocks the
-fix: it makes the fix a two-line change — correct the text, delete the marker — and reddens CI if the
-second line is forgotten.
-
-- **Rule 4 lists four `ApplyResult` fields and the interface has five** — `applied_count` is missing,
-  and its own doc-comment calls it the vocabulary §4 ack field, so a reviewer applying this profile
-  would not flag its removal as breaking. Filed as [#73](https://github.com/Comfy-Org/comfy-multi-player/issues/73),
-  together with the unanchored rules 2/3/5 that are the reason nothing caught it. The correction
-  itself is one word, and that is why it is not made here: rule 4 carries no claim marker, so a
-  one-word fix leaves the corrected sentence exactly as free to drift back as the wrong one was, and
-  #73's subject is the missing anchors for rules 2-5 rather than this one instance. Rule 4 above now
-  warns the reader in place, so nobody is misled while the tombstone stands.
-<!-- known-defect: #73 :: (`applied`, `skipped`, `failed`, `version`) :: .agents/checks/api-contract.md -->
 
 > Before reporting PASS for any check above, apply [vacuity.md](vacuity.md): P0 to every check, P1 to any guard this change adds, P10 to what that guard's test asserts on, P2 to any tool you ran, and P7 to any run you quote.

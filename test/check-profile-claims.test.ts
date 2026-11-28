@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,19 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const script = join(repoRoot, "scripts", "check-profile-claims.mjs");
+
+describe("api-contract profile claim coverage (FRONT-1733)", () => {
+  const profile = readFileSync(join(repoRoot, ".agents", "checks", "api-contract.md"), "utf8");
+
+  it.each([2, 3, 4, 5])("keeps rule %i inside the executable claim gate", (rule) => {
+    const start = profile.indexOf(`${rule}. **`);
+    const end = profile.indexOf(`\n${rule + 1}. **`, start);
+
+    expect(start, `rule ${rule} must exist`).toBeGreaterThan(-1);
+    expect(end, `rule ${rule} must end before rule ${rule + 1}`).toBeGreaterThan(start);
+    expect(profile.slice(start, end), `rule ${rule} must retain a presence claim`).toContain("<!-- claim:");
+  });
+});
 
 /** Run the gate against an isolated fixture root (its own checks dir + targets). */
 function runAgainst(root: string) {
